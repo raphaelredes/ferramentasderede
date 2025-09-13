@@ -1,0 +1,10 @@
+customtkinter
+Pillow
+wakeonlan
+cryptography
+pypsrp[credssp,kerberos]
+pywinrm
+pyperclip
+psutil
+requests
+pywin32; platform_system == "Windows"

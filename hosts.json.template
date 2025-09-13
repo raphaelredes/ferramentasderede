@@ -1,0 +1,18 @@
+[
+    {
+        "name": "localhost",
+        "ip": "127.0.0.1",
+        "mac": "",
+        "nickname": "",
+        "current_ip": "127.0.0.1",
+        "resolved_hostname": "localhost"
+    },
+    {
+        "name": "example.local",
+        "ip": "192.168.1.100",
+        "mac": "",
+        "nickname": "Example Server",
+        "resolved_hostname": "example.local",
+        "current_ip": "192.168.1.100"
+    }
+]

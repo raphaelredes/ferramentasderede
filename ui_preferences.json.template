@@ -1,0 +1,11 @@
+{
+    "theme": "dark",
+    "language": "pt-BR",
+    "window_geometry": "1200x800+100+100",
+    "last_selected_tab": 0,
+    "auto_refresh_interval": 60,
+    "show_tooltips": true,
+    "default_scan_type": "network",
+    "ping_timeout": 1000,
+    "max_concurrent_scans": 10
+}
