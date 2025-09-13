@@ -23,7 +23,7 @@ class SystemInfoController(BaseToolController):
         self._start_command("get_sysinfo", self._get_system_info_worker,
             args_tuple=(store_only,),
             needs_auth=True,
-            loading_text=self.app.translate("loading_getting_sysinfo"))
+            loading_text="")
 
     def _get_system_info_worker(self, username, password, store_only):
         sys_info_data = self.system_tools.get_remote_system_info_raw(self.host['ip'], username, password)
@@ -102,7 +102,7 @@ class SystemInfoController(BaseToolController):
                 command_name = "restart" if action_flag == "/r" else "shutdown"
                 self._start_command(command_name, self._shutdown_restart_worker,
                     args_tuple=(action_flag, message, delay_seconds), needs_auth=True,
-                    loading_text=self.app.translate("loading_scheduling_action"))
+                    loading_text="")
             except (ValueError, IndexError):
                 self.app.show_error(self.app.translate("Formato inválido. Use: minutos, mensagem"))
 
@@ -136,7 +136,7 @@ class SystemInfoController(BaseToolController):
         ):
             return
         self._start_command("cancel_shutdown", self._cancel_shutdown_worker, needs_auth=True,
-            loading_text=self.app.translate("loading_cancelling_schedule"))
+            loading_text="")
 
     def update_countdown(self):
         if self.countdown_end_time and self.countdown_label and self.countdown_label.winfo_exists():

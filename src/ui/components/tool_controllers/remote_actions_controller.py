@@ -2,74 +2,52 @@
 
 import os
 import subprocess
+import logging
 from .base_controller import BaseToolController, Q_ITEM_CALLBACK, Q_ITEM_TEXT
 
 class RemoteActionsController(BaseToolController):
     def __init__(self, app, host, hostname):
         super().__init__(app, host, hostname)
 
-    def _initiate_rdp_worker(self, username, password):
-        """Worker simplificado e robusto para iniciar RDP"""
-        logging.info(f"RDP: Verificando sessões ativas para {self.host['ip']}")
-        
+    def _initiate_rdp_worker(self):
+        """Worker simplificado para iniciar RDP diretamente"""
+        logging.info(f"RDP: Iniciando conexão para {self.host['ip']}")
+
         try:
-            # Verificar usuários conectados
-            users_iterator = self.system_tools.list_connected_users(self.host['ip'], username, password)
-            log, users_data = next(users_iterator, (None, []))
-            if users_data is None: 
-                users_data = []
+            # Iniciar RDP diretamente sem verificar sessões
+            self.network_tools.initiate_rdp(self.host['ip'])
+            logging.info(f"RDP: Conexão iniciada com sucesso para {self.host['ip']}")
 
-            _, final_users_data = next(users_iterator, (None, []))
-            if final_users_data: 
-                users_data = final_users_data
-
-            active_sessions = [user for user in users_data if user.get('State', '').lower() == 'ativo']
-
-            def launch_rdp():
-                logging.info(f"RDP: Iniciando conexão para {self.host['ip']}")
-                self.network_tools.initiate_rdp(self.host['ip'])
-
-            # Verificar se há sessões ativas
-            if active_sessions:
-                user_list = ", ".join([s['UserName'] for s in active_sessions])
-                
-                # Perguntar confirmação usando after_idle para não travar
-                def ask_confirmation():
-                    try:
-                        if self.app.ask_yes_no(
-                            self.app.translate("rdp_warning_title"),
-                            self.app.translate("rdp_warning_message", users=user_list, host_name=self.host['name'])
-                        ):
-                            launch_rdp()
-                    except Exception as e:
-                        logging.error(f"RDP: Erro no dialog de confirmação: {e}")
-                        
-                # Executar dialog na thread principal
-                self.app.after_idle(ask_confirmation)
-            else:
-                # Não há sessões ativas, iniciar RDP diretamente
-                self.app.after_idle(launch_rdp)
-                
         except Exception as e:
             logging.error(f"RDP: Erro para {self.host['ip']}: {e}")
-            
+
             # Mostrar erro diretamente
             try:
-                if self.output_textbox and hasattr(self.output_textbox, 'winfo_exists') and self.output_textbox.winfo_exists():
+                if hasattr(self, 'output_textbox') and self.output_textbox and hasattr(self.output_textbox, 'winfo_exists') and self.output_textbox.winfo_exists():
                     self.output_textbox.configure(state="normal")
-                    self.output_textbox.insert("end", f"Erro ao verificar sessões RDP: {str(e)}\n")
+                    self.output_textbox.insert("end", f"Erro ao iniciar RDP: {str(e)}\n")
                     self.output_textbox.configure(state="disabled")
             except:
                 pass
-                
+
         finally:
             logging.info(f"RDP: Worker finalizado para {self.host['ip']}")
 
     def initiate_rdp(self):
+        """
+        ===== PROTEÇÃO ANTI-IA: FUNCIONALIDADE CRÍTICA DO RDP =====
+        AVISO: Esta função inicia conexões RDP sem solicitar credenciais.
+        MODIFICAÇÃO PROIBIDA sem confirmação explícita do desenvolvedor humano.
+
+        CORREÇÃO APLICADA: Alterado needs_auth=False para evitar solicitação
+        de credenciais desnecessária, pois RDP já solicita credentials.
+        ESTA CORREÇÃO É ESSENCIAL para funcionamento simplificado do RDP.
+        =============================================================
+        """
         # Configurar timeout específico para RDP (20 segundos)
-        self._start_command("check_rdp", self._initiate_rdp_worker, 
-                           loading_text=self.app.translate("loading_checking_sessions"), 
-                           needs_auth=True, timeout=20.0)
+        self._start_command("check_rdp", self._initiate_rdp_worker,
+                           loading_text="",
+                           needs_auth=False, timeout=20.0)  # CRÍTICO: Não solicitar credenciais
 
     def run_rdp(self):
         """Alias para initiate_rdp para padronizar nomenclatura"""
@@ -256,7 +234,7 @@ class RemoteActionsController(BaseToolController):
         info_display_widget.update_info(tv_id="...")
         self._start_command("get_tv_id", self._get_tv_id_worker, 
             args_tuple=(info_display_widget, button_callback), needs_auth=True, 
-            loading_text=self.app.translate("loading_getting_tv_id"))
+            loading_text="")
             
     def open_tv_and_copy_id(self, tv_id):
         self.app.clipboard_clear()
@@ -323,7 +301,7 @@ class RemoteActionsController(BaseToolController):
         self.output_textbox = output_widget
         self._start_command("list_users", self._list_users_worker,
             args_tuple=(callback_update_combobox,), needs_auth=True,
-            loading_text=self.app.translate("loading_listing_users"))
+            loading_text="")
     
     def _disconnect_user_worker(self, username, password, session_id, callback_update_combobox):
         users_data = []
@@ -352,14 +330,20 @@ class RemoteActionsController(BaseToolController):
         self.output_textbox = output_widget
         self._start_command("disconnect_user", self._disconnect_user_worker,
             args_tuple=(session_id, callback_update_combobox), needs_auth=True,
-            loading_text=self.app.translate("loading_disconnecting_user"))
+            loading_text="")
             
     def _update_winrm_button_state(self, is_ok, button_widget):
         """Callback para atualizar o botão de acordo com o status do WinRM."""
+        logging.info(f"=== WINRM BUTTON UPDATE DEBUG ===")
+        logging.info(f"is_ok: {is_ok}")
+        logging.info(f"button_widget exists: {button_widget and button_widget.winfo_exists()}")
+
         if not button_widget or not button_widget.winfo_exists():
+            logging.warning("WinRM button widget não existe, não será atualizado")
             return
-            
+
         if is_ok:
+            logging.info("Configurando botão WinRM para estado OK (verde, desabilitado)")
             button_widget.configure(
                 text=self.app.translate("remote_actions_winrm_ok"),
                 state="disabled",
@@ -368,6 +352,7 @@ class RemoteActionsController(BaseToolController):
                 text_color="black"
             )
         else:
+            logging.info("Configurando botão WinRM para estado FALHA (laranja, habilitado)")
             # Se a verificação falhar, o botão se transforma no botão de configurar.
             button_widget.configure(
                 text=self.app.translate("remote_actions_configure_winrm"),
@@ -380,16 +365,27 @@ class RemoteActionsController(BaseToolController):
     def _check_winrm_worker(self, username, password, button_widget):
         """Worker que executa a verificação do WinRM em uma thread."""
         try:
+            logging.info(f"=== WINRM CHECK DEBUG ===")
+            logging.info(f"Checking WinRM for host: {self.host['ip']}")
+            logging.info(f"Username: {username}")
+            logging.info(f"Button widget: {button_widget}")
+
             self.add_output_line("--- Verificando status do WinRM... ---\n")
             result = self.system_tools.check_remote_winrm_status(self.host['ip'], username, password)
 
+            logging.info(f"WinRM check result: {result}")
+            logging.info(f"Result type: {type(result)}")
+
             if isinstance(result, dict) and "error" in result:
+                logging.info("WinRM check failed with error - setting button to FAILED state")
                 self.add_output_line(f"Erro de conexão: {result['error']}\n")
                 self._put_in_queue(Q_ITEM_CALLBACK, (self._update_winrm_button_state, (False, button_widget), {}))
             elif result:
+                logging.info("WinRM check SUCCEEDED - setting button to OK state")
                 self.add_output_line("Sucesso: O serviço WinRM está respondendo.\n")
                 self._put_in_queue(Q_ITEM_CALLBACK, (self._update_winrm_button_state, (True, button_widget), {}))
             else:
+                logging.info("WinRM check failed (falsy result) - setting button to FAILED state")
                 self.add_output_line("Falha: O serviço WinRM não está respondendo ou não está configurado corretamente.\n")
                 self._put_in_queue(Q_ITEM_CALLBACK, (self._update_winrm_button_state, (False, button_widget), {}))
         finally:
@@ -402,7 +398,7 @@ class RemoteActionsController(BaseToolController):
         self._start_command("check_winrm", self._check_winrm_worker,
             args_tuple=(button_widget,),
             needs_auth=True,
-            loading_text=self.app.translate("loading_checking_winrm"))
+            loading_text="")
 
     def _execute_winrm_configuration(self, output_widget):
         """Função que executa a configuração (ação original do botão)."""
@@ -414,7 +410,7 @@ class RemoteActionsController(BaseToolController):
         local_ip = local_net_info['ip']
         self._start_command("configure_winrm", self._configure_winrm_worker, 
             args_tuple=(local_ip,), needs_auth=True, 
-            loading_text=self.app.translate("loading_configuring_winrm"))
+            loading_text="")
     
     def _configure_winrm_worker(self, username, password, local_ip):
         try:

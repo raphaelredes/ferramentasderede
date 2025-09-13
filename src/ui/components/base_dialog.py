@@ -22,9 +22,9 @@ class BaseDialog(customtkinter.CTkToplevel):
     Uma classe base para diálogos que usa a barra de título padrão do sistema
     operacional para garantir estabilidade máxima de foco e eventos.
     O diálogo é modal e sempre centralizado no monitor da janela principal.
-    Inclui proteção anti-travamento com timeout automático.
+    Inclui proteção anti-travamento com timeout automático e layout responsivo.
     """
-    def __init__(self, app, title="", timeout_seconds=60):
+    def __init__(self, app, title="", timeout_seconds=60, min_width=300, min_height=200, max_width=800, max_height=600):
         super().__init__(app)
         self.app = app
         self._timeout_seconds = timeout_seconds
@@ -32,19 +32,31 @@ class BaseDialog(customtkinter.CTkToplevel):
         self._dialog_result = None
         self._is_modal_active = False
         
+        # Parâmetros de responsividade
+        self._min_width = min_width
+        self._min_height = min_height
+        self._max_width = max_width
+        self._max_height = max_height
+        self._auto_resize = True
+        
         self.title(title)
         self.transient(app)
-        self.resizable(False, False)
+        
+        # Permitir redimensionamento controlado para responsividade
+        self.resizable(True, True)
+        self.minsize(min_width, min_height)
+        self.maxsize(max_width, max_height)
 
         # Manter a janela oculta inicialmente para evitar ghosting
         self.withdraw()
 
-        # Configurar grid
+        # Configurar grid responsivo
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
         # Configurar eventos
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.bind("<Configure>", self._on_configure)
         
         # Aguardar que a janela seja construída e então centralizar
         self.after(1, self._schedule_smart_centering)
@@ -54,6 +66,57 @@ class BaseDialog(customtkinter.CTkToplevel):
         self._cancel_timeout()
         self._dialog_result = None
         self.destroy()
+    
+    def _on_configure(self, event=None):
+        """Manipula eventos de redimensionamento para manter responsividade."""
+        if event and event.widget == self and self._auto_resize:
+            try:
+                # Verificar se a janela está dentro dos limites
+                current_width = self.winfo_width()
+                current_height = self.winfo_height()
+                
+                # Ajustar se necessário
+                new_width = max(self._min_width, min(current_width, self._max_width))
+                new_height = max(self._min_height, min(current_height, self._max_height))
+                
+                if new_width != current_width or new_height != current_height:
+                    self.geometry(f"{new_width}x{new_height}")
+                    
+            except Exception as e:
+                logging.debug(f"Erro em _on_configure: {e}")
+    
+    def set_responsive_size(self, preferred_width=None, preferred_height=None):
+        """Define um tamanho preferido responsivo baseado no conteúdo."""
+        try:
+            self.update_idletasks()
+            
+            # Obter tamanho necessário do conteúdo
+            req_width = self.winfo_reqwidth()
+            req_height = self.winfo_reqheight()
+            
+            # Usar valores preferidos ou calculados
+            width = preferred_width or max(req_width, self._min_width)
+            height = preferred_height or max(req_height, self._min_height)
+            
+            # Garantir que está dentro dos limites
+            width = max(self._min_width, min(width, self._max_width))
+            height = max(self._min_height, min(height, self._max_height))
+            
+            # Aplicar tamanho
+            self.geometry(f"{width}x{height}")
+            
+        except Exception as e:
+            logging.debug(f"Erro em set_responsive_size: {e}")
+    
+    def disable_auto_resize(self):
+        """Desabilita o redimensionamento automático."""
+        self._auto_resize = False
+        self.resizable(False, False)
+    
+    def enable_auto_resize(self):
+        """Habilita o redimensionamento automático."""
+        self._auto_resize = True
+        self.resizable(True, True)
         
     def _cancel_timeout(self):
         """Cancela o timer de timeout se estiver ativo."""
@@ -136,9 +199,12 @@ class BaseDialog(customtkinter.CTkToplevel):
     
     def _center_with_app_method(self):
         """
-        Centraliza usando um método simples e confiável.
+        Centraliza usando um método responsivo e confiável.
         """
         try:
+            # Ajustar tamanho responsivo primeiro
+            self.set_responsive_size()
+            
             # Mostrar temporariamente para calcular o tamanho real
             self.deiconify()
             self.update_idletasks()
@@ -147,11 +213,11 @@ class BaseDialog(customtkinter.CTkToplevel):
             width = self.winfo_width()
             height = self.winfo_height()
             
-            # Se as dimensões são muito pequenas, usar valores padrão
-            if width < 50:
-                width = 400
-            if height < 50:
-                height = 200
+            # Se as dimensões são muito pequenas, usar valores mínimos
+            if width < self._min_width:
+                width = self._min_width
+            if height < self._min_height:
+                height = self._min_height
             
             # Obter info do monitor da aplicação principal (VERSÃO MELHORADA)
             try:
@@ -164,29 +230,41 @@ class BaseDialog(customtkinter.CTkToplevel):
                 monitor_width = self.winfo_screenwidth()
                 monitor_height = self.winfo_screenheight()
             
+            # Verificar se a janela cabe na tela
+            if width > monitor_width * 0.9:
+                width = int(monitor_width * 0.9)
+            if height > monitor_height * 0.9:
+                height = int(monitor_height * 0.9)
+            
             # Calcular posição central
             x = monitor_x + (monitor_width - width) // 2
             y = monitor_y + (monitor_height - height) // 2
             
-            # Aplicar posição
-            self.geometry(f"+{x}+{y}")
+            # Garantir que não sai da tela
+            x = max(monitor_x, min(x, monitor_x + monitor_width - width))
+            y = max(monitor_y, min(y, monitor_y + monitor_height - height))
+            
+            # Aplicar posição e tamanho
+            self.geometry(f"{width}x{height}+{x}+{y}")
             
             # Configurar como modal
             self.lift()
             self.focus_set()
             self.grab_set()
             
-            logging.debug(f"Dialog centralizado em ({x}, {y})")
+            logging.debug(f"Dialog responsivo centralizado em ({x}, {y}) com tamanho {width}x{height}")
             
         except Exception as e:
-            logging.error(f"Erro na centralização: {e}")
+            logging.error(f"Erro na centralização responsiva: {e}")
             # Fallback final - centralizar na tela principal
             try:
                 self.deiconify()
                 self.update_idletasks()
-                x = (self.winfo_screenwidth() - self.winfo_width()) // 2
-                y = (self.winfo_screenheight() - self.winfo_height()) // 2
-                self.geometry(f"+{x}+{y}")
+                width = max(self.winfo_width(), self._min_width)
+                height = max(self.winfo_height(), self._min_height)
+                x = (self.winfo_screenwidth() - width) // 2
+                y = (self.winfo_screenheight() - height) // 2
+                self.geometry(f"{width}x{height}+{x}+{y}")
                 self.lift()
                 self.focus_set()
                 self.grab_set()

@@ -23,7 +23,7 @@ class SysInfoController(BaseToolController):
         self._start_command("get_sysinfo", self._get_sysinfo_worker,
                             args_tuple=(callback_update_general, callback_update_disks),
                             needs_auth=True,
-                            loading_text=self.app.translate("loading_getting_sysinfo"))
+                            loading_text="")
 
     def get_sysinfo(self, store_only=False):
         """Busca informações do sistema. Se store_only=True, apenas armazena os dados."""
@@ -225,8 +225,7 @@ class SysInfoController(BaseToolController):
             self.app.translate("Tem certeza que deseja cancelar o agendamento no host {full_display_name}?", full_display_name=full_display_name)
         ):
             return
-        self._start_command("cancel_shutdown", self._cancel_shutdown_worker, needs_auth=True,
-            loading_text=self.app.translate("loading_cancelling_schedule"))
+        self._start_command("cancel_shutdown", self._cancel_shutdown_worker, needs_auth=True)
 
     def _shutdown_restart_handler(self, action_flag, output_widget, countdown_label):
         """Handler para shutdown e restart."""
@@ -258,8 +257,7 @@ class SysInfoController(BaseToolController):
 
                 command_name = "restart" if action_flag == "/r" else "shutdown"
                 self._start_command(command_name, self._shutdown_restart_worker,
-                    args_tuple=(action_flag, message, delay_seconds), needs_auth=True,
-                    loading_text=self.app.translate("loading_scheduling_action"))
+                    args_tuple=(action_flag, message, delay_seconds), needs_auth=True)
             except (ValueError, IndexError):
                 self.app.show_error(self.app.translate("Formato inválido. Use: minutos, mensagem"))
 

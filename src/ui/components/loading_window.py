@@ -6,11 +6,13 @@ import logging
 from .base_dialog import BaseDialog
 
 class LoadingWindow(BaseDialog):
-    """Cria uma janela de carregamento para operações demoradas com opção de cancelar."""
+    """Cria uma janela de carregamento com auto-destruição garantida."""
     def __init__(self, master, description="Carregando...", on_cancel=None):
-        # Inicializar flag antes de chamar super().__init__
+        # Flags de controle
         self._destroyed = False
+        self._should_close = False
         self._on_cancel = on_cancel
+        self._check_timer_id = None
         
         super().__init__(master, title="Carregando...")
         
@@ -38,20 +40,90 @@ class LoadingWindow(BaseDialog):
             self.protocol("WM_DELETE_WINDOW", self._on_close_request)
         except Exception:
             pass
+            
+        # SOLUÇÃO RADICAL: Timer de auto-verificação a cada 500ms
+        self._start_auto_check()
+        
+        # SOLUÇÃO RADICAL: Auto-destruição em 30 segundos NO MÁXIMO
+        self._max_lifetime_id = self.after(30000, self._force_destroy)
+        
+    def _start_auto_check(self):
+        """Inicia verificação automática para fechar quando necessário"""
+        if not self._destroyed:
+            self._check_timer_id = self.after(500, self._auto_check)
+            
+    def _auto_check(self):
+        """Verifica se deve fechar automaticamente"""
+        try:
+            if self._destroyed:
+                return
+                
+            # Se foi sinalizada para fechar, fechar imediatamente
+            if self._should_close:
+                logging.info("LoadingWindow: Auto-check detectou sinal para fechar")
+                self._force_destroy()
+                return
+                
+            # Reagendar próxima verificação
+            if not self._destroyed:
+                self._check_timer_id = self.after(500, self._auto_check)
+                
+        except Exception as e:
+            logging.error(f"LoadingWindow: Erro no auto-check: {e}")
+            self._force_destroy()
+            
+    def _force_destroy(self):
+        """Força destruição imediata da janela"""
+        if self._destroyed:
+            return
+            
+        logging.info("LoadingWindow: Iniciando destruição forçada")
+        self._destroyed = True
+        
+        try:
+            # Cancelar timers
+            if self._check_timer_id:
+                self.after_cancel(self._check_timer_id)
+                self._check_timer_id = None
+        except:
+            pass
+            
+        try:
+            if self._max_lifetime_id:
+                self.after_cancel(self._max_lifetime_id)
+                self._max_lifetime_id = None
+        except:
+            pass
+        
+        try:
+            # Parar progressbar
+            if hasattr(self, 'progressbar') and self.progressbar:
+                self.progressbar.stop()
+        except:
+            pass
+            
+        try:
+            # Destruir janela
+            if self.winfo_exists():
+                self.destroy()
+                logging.info("LoadingWindow: Destruição forçada concluída")
+        except:
+            pass
 
     def _on_close_request(self):
-        """Chamado ao clicar no X: tenta cancelar a operação em andamento com segurança."""
+        """Chamado ao clicar no X: usar sistema de destruição forçada"""
+        logging.info("LoadingWindow: Usuário clicou em fechar")
+        
+        # Tentar cancelar a operação se um callback foi fornecido
         try:
             if callable(self._on_cancel):
-                try:
-                    self._on_cancel()
-                except Exception:
-                    pass
-        finally:
-            try:
-                self.destroy()
-            except Exception:
-                self._destroyed = True
+                logging.info("LoadingWindow: Chamando callback de cancelamento")
+                self._on_cancel()
+        except Exception as e:
+            logging.error(f"LoadingWindow: Erro no callback de cancelamento: {e}")
+        
+        # Forçar destruição imediata
+        self._force_destroy()
 
     def wm_state(self, newstate=None):
         """Sobrescreve wm_state para evitar erros quando a janela foi destruída."""
@@ -146,31 +218,9 @@ class LoadingWindow(BaseDialog):
             self._destroyed = True
 
     def destroy(self):
-        """Sobrescreve destroy para parar a progressbar antes de destruir."""
-        if self._destroyed:
-            return
-            
-        self._destroyed = True
-        
-        try:
-            if hasattr(self, 'progressbar') and self.progressbar.winfo_exists():
-                self.progressbar.stop()
-                try:
-                    # Destruir explicitamente a progressbar para cancelar qualquer loop interno
-                    self.progressbar.destroy()
-                except Exception as e:
-                    logging.debug(f"Error destroying progressbar: {e}")
-        except Exception as e:
-            logging.debug(f"Error stopping progressbar: {e}")
-        
-        try:
-            # Verificar se a janela ainda existe antes de destruir
-            if self.winfo_exists():
-                super().destroy()
-        except Exception as e:
-            logging.debug(f"Error destroying LoadingWindow: {e}")
-            # Se não conseguir destruir, pelo menos marcar como destruída
-            self._destroyed = True
+        """Sobrescreve destroy para usar sistema de destruição forçada"""
+        logging.info("LoadingWindow: destroy() chamado - redirecionando para _force_destroy()")
+        self._force_destroy()
 
     def update_status(self, text):
         """Atualiza o texto da label de status de forma thread-safe."""

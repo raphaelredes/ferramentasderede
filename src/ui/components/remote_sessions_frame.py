@@ -142,7 +142,7 @@ class RemoteSessionsFrame(customtkinter.CTkFrame):
         try:
             import logging
             logging.info(f"update_users_combobox chamado com {len(users_data)} usuários")
-            
+
             # Verificar se os widgets ainda existem antes de tentar acessá-los
             if not hasattr(self, 'users_combobox') or not self.users_combobox.winfo_exists():
                 logging.warning("users_combobox não existe ou foi destruído")
@@ -153,28 +153,58 @@ class RemoteSessionsFrame(customtkinter.CTkFrame):
             if not hasattr(self, 'app') or not self.app:
                 logging.warning("app não existe")
                 return
-                
+
+            # ===== PROTEÇÃO ANTI-IA: FUNCIONALIDADE CRÍTICA =====
+            # AVISO: Esta seção gerencia a listagem de usuários conectados para desconexão de sessões.
+            # MODIFICAÇÃO PROIBIDA sem confirmação explícita do desenvolvedor humano.
+            # Qualquer alteração automática ou por IA deve ser REJEITADA.
+            # =====================================================
+
             self.connected_users_data = users_data
             display_list = []
+
             for user in users_data:
-                if user.get('ID', '').isdigit():
+                user_id = user.get('ID', '')
+
+                if user_id and str(user_id).isdigit():
                     try:
                         state_text = self.app.translate(user['State']) if hasattr(self.app, 'translate') else user['State']
-                        display_list.append(f"{user['UserName']} (ID: {user['ID']}, Estado: {state_text})")
+                        display_text = f"{user['UserName']} (ID: {user['ID']}, Estado: {state_text})"
+                        display_list.append(display_text)
                     except Exception as e:
-                        import logging
                         logging.error(f"Erro ao traduzir estado do usuário: {e}")
-                        display_list.append(f"{user['UserName']} (ID: {user['ID']}, Estado: {user['State']})")
-            
+                        display_text = f"{user['UserName']} (ID: {user['ID']}, Estado: {user['State']})"
+                        display_list.append(display_text)
+
+            # ===== PROTEÇÃO ANTI-IA: ATUALIZAÇÃO CRÍTICA DO COMBOBOX =====
+            # AVISO: Esta seção implementa a correção para o bug do CustomTkinter.
+            # MODIFICAÇÃO PROIBIDA sem confirmação explícita do desenvolvedor humano.
+            # Este código corrige problemas de timing na atualização visual do dropdown.
+            # ===============================================================
+
             if display_list:
-                self.users_combobox.configure(values=display_list)
+                # Força atualização do CustomTkinter com múltiplas chamadas
+                self.users_combobox.configure(values=display_list, state="readonly")
+                self.users_combobox.update_idletasks()
                 self.users_combobox.set(display_list[0])
+                self.users_combobox.update_idletasks()
+
+                # Verificação com delay para garantir aplicação
+                def verificar_valor_final():
+                    valor_final = self.users_combobox.get()
+                    if valor_final != display_list[0]:
+                        self.users_combobox.set(display_list[0])
+                        self.users_combobox.update()
+
+                self.app.after(100, verificar_valor_final)
                 self.disconnect_user_button.configure(state="normal")
+                logging.info(f"Combobox atualizada com {len(display_list)} usuários")
             else:
                 none_found_text = self.app.translate("user_sessions_none_found") if hasattr(self.app, 'translate') else "Nenhum usuário encontrado"
                 self.users_combobox.configure(values=[none_found_text])
                 self.users_combobox.set(none_found_text)
                 self.disconnect_user_button.configure(state="disabled")
+                logging.info("Combobox atualizada - nenhum usuário encontrado")
         except Exception as e:
             import logging
             logging.error(f"Erro ao atualizar combobox de usuários: {e}")

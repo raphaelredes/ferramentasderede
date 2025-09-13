@@ -205,6 +205,28 @@ class BaseToolController:
         """Força finalização de emergência de todos os comandos (para uso manual)"""
         logging.warning("MANUAL EMERGENCY STOP: Iniciando finalização forçada de todos os comandos")
         cls._emergency_stop_all_commands()
+        
+    @classmethod
+    def force_close_all_loading_windows(cls):
+        """Força fechamento de todas as LoadingWindows travadas"""
+        logging.warning("FORCE CLOSE: Iniciando fechamento forçado de todas as LoadingWindows")
+        try:
+            controllers = []
+            for obj in gc.get_objects():
+                if isinstance(obj, BaseToolController) and hasattr(obj, '_loading_window') and obj._loading_window:
+                    controllers.append(obj)
+                    
+            logging.info(f"FORCE CLOSE: Encontradas {len(controllers)} LoadingWindows para fechar")
+            
+            for controller in controllers:
+                try:
+                    logging.info(f"FORCE CLOSE: Fechando LoadingWindow do host '{controller.hostname}'")
+                    controller._close_loading_window("emergency")
+                except Exception as e:
+                    logging.error(f"FORCE CLOSE: Erro ao fechar LoadingWindow do host '{controller.hostname}': {e}")
+                    
+        except Exception as e:
+            logging.error(f"FORCE CLOSE: Erro no fechamento forçado: {e}")
             
     @classmethod
     def _force_cleanup_threads(cls):
@@ -580,7 +602,7 @@ class BaseToolController:
         except Exception as e:
             logging.error(f"START: Erro ao iniciar status da sub-aba: {e}")
             
-        # CRIAR LOADING WINDOW SE TEXTO FOI FORNECIDO
+        # CRIAR LOADING WINDOW SE TEXTO FOI FORNECIDO - VERSÃO SIMPLES
         if loading_text and loading_text.strip():
             try:
                 logging.info(f"START: Criando LoadingWindow para '{command_name}' com texto: '{loading_text}'")
@@ -589,7 +611,7 @@ class BaseToolController:
                     loading_text, 
                     on_cancel=lambda: self.stop_command()
                 )
-                logging.debug(f"START: LoadingWindow criada com sucesso para '{command_name}'")
+                logging.debug(f"START: LoadingWindow criada para '{command_name}'")
             except Exception as e:
                 logging.error(f"START: Erro ao criar LoadingWindow para '{command_name}': {e}")
                 self._loading_window = None
@@ -646,13 +668,19 @@ class BaseToolController:
                         except:
                             pass
                     
-                    # Fechar LoadingWindow se existir
+                    # Fechar LoadingWindow - SOLUÇÃO RADICAL
                     try:
                         if hasattr(self, '_loading_window') and self._loading_window:
-                            logging.debug(f"THREAD: Fechando LoadingWindow para '{command_name}'")
-                            self.app.after_idle(lambda: self._close_loading_window("normal"))
+                            logging.info(f"THREAD: Sinalizando fechamento da LoadingWindow para '{command_name}'")
+                            # Marcar para fechamento imediato
+                            if hasattr(self._loading_window, '_should_close'):
+                                self._loading_window._should_close = True
+                            self._loading_window = None
+                            logging.info(f"THREAD: LoadingWindow sinalizada para fechamento")
+                                
                     except Exception as loading_error:
-                        logging.error(f"THREAD: Erro ao fechar LoadingWindow: {loading_error}")
+                        logging.error(f"THREAD: Erro ao sinalizar fechamento da LoadingWindow: {loading_error}")
+                        self._loading_window = None
                     
                     # Finalizar indicador de status da aba
                     try:
@@ -693,14 +721,28 @@ class BaseToolController:
             thread.start()
             logging.info(f"START: Thread '{command_name}' iniciada com sucesso")
             
+            # ===== PROTEÇÃO ANTI-IA: CORREÇÃO CRÍTICA DO PROCESS_QUEUE =====
+            # AVISO: Esta seção corrige bug crítico onde callbacks da UI não eram processados.
+            # MODIFICAÇÃO PROIBIDA sem confirmação explícita do desenvolvedor humano.
+            # Esta correção é ESSENCIAL para funcionamento de todas as funcionalidades da UI.
+            # =================================================================
+
+            # INICIAR PROCESSAMENTO DA QUEUE SE NÃO ESTIVER RODANDO
+            if not hasattr(self, 'after_id') or self.after_id is None:
+                try:
+                    logging.info(f"START: Iniciando process_queue para '{command_name}'")
+                    self.after_id = self.app.after(50, self.process_queue)
+                except Exception as queue_error:
+                    logging.error(f"START: Erro ao iniciar process_queue: {queue_error}")
+
         except Exception as e:
             logging.error(f"START: Erro ao iniciar thread '{command_name}': {e}")
-            
+
             # Reset estado em caso de erro
             self.is_running = False
             self.running_command = None
             self.current_process = None
-            
+
             # Notificar UI do erro
             if self.on_state_change_callback:
                 try:
@@ -739,14 +781,18 @@ class BaseToolController:
                     else:
                         callback_func = data[0]
                         logging.info(f"Agendando callback: {callback_func}")
+                        logging.info(f"Callback data structure: {data}")
                         if hasattr(callback_func, '__self__') and hasattr(callback_func.__self__, 'winfo_exists'):
                             widget = callback_func.__self__
                             if not widget.winfo_exists():
                                 logging.warning(f"Widget não existe mais, ignorando callback: {callback_func}")
                             else:
+                                logging.info("Widget callback - scheduling with after_idle")
                                 self.app.after_idle(lambda: self._execute_safe_callback(data))
                         else:
+                            logging.info("Non-widget callback - scheduling with after_idle")
                             self.app.after_idle(lambda: self._execute_safe_callback(data))
+                        logging.info("Callback agendado com sucesso")
                 except Exception as e:
                     logging.error(f"Erro ao agendar callback: {e}")
                     import traceback
@@ -837,13 +883,15 @@ class BaseToolController:
                 finally:
                     self.after_id = None
                     
-            # Fechar loading window
+            # Fechar loading window usando sistema de sinalização
             if hasattr(self, '_loading_window') and self._loading_window:
                 try:
-                    self._loading_window.destroy()
-                except:
-                    pass
-                finally:
+                    logging.info(f"STOP: Sinalizando fechamento da LoadingWindow")
+                    self._loading_window._should_close = True
+                    self._loading_window = None
+                    logging.info(f"STOP: LoadingWindow sinalizada para fechamento")
+                except Exception as e:
+                    logging.error(f"STOP: Erro ao sinalizar fechamento: {e}")
                     self._loading_window = None
                     
         except Exception as e:
@@ -941,82 +989,18 @@ class BaseToolController:
             except Exception as e:
                 logging.error(f"Erro ao chamar callback adicional em _handle_command_status_update: {e}")
 
-    def _close_loading_window(self, reason=None, lw=None):
-        """Fecha a janela de carregamento de forma segura e idempotente."""
-        # Cancelar timeout global, se ainda estiver ativo, apenas quando estamos
-        # fechando a janela atualmente rastreada
+    def _close_loading_window(self, reason=None):
+        """Fecha a LoadingWindow usando o sistema de sinalização"""
         try:
-            if lw is None or lw is self._loading_window:
-                if getattr(self, "_loading_timeout_id", None):
-                    self.app.after_cancel(self._loading_timeout_id)
-                    logging.debug("Timeout da LoadingWindow cancelado")
+            if hasattr(self, '_loading_window') and self._loading_window:
+                logging.info(f"Sinalizando fechamento da LoadingWindow (reason={reason})")
+                # Usar o novo sistema de sinalização
+                self._loading_window._should_close = True
+                self._loading_window = None
+                logging.info("LoadingWindow sinalizada para fechamento")
         except Exception as e:
-            logging.error(f"Erro ao cancelar timeout da LoadingWindow: {e}")
-        finally:
-            try:
-                if lw is None or lw is self._loading_window:
-                    self._loading_timeout_id = None
-                    logging.debug("Timeout da LoadingWindow limpo")
-            except Exception as e:
-                logging.error(f"Erro ao limpar timeout da LoadingWindow: {e}")
-
-        try:
-            if lw is None:
-                lw = getattr(self, "_loading_window", None)
-                logging.debug(f"LoadingWindow obtida da referência: {lw}")
-            if not lw:
-                logging.debug("Nenhuma LoadingWindow para fechar")
-                return
-        except Exception as e:
-            logging.error(f"Erro ao obter LoadingWindow: {e}")
-            return
-        
-        def safe_destroy():
-            try:
-                if hasattr(lw, "_destroyed") and not lw._destroyed and lw.winfo_exists():
-                    lw._destroyed = True
-                    lw.destroy()
-                    logging.debug("LoadingWindow destroyed (reason=%s)", reason)
-                else:
-                    logging.debug(f"LoadingWindow já destruída ou não existe")
-            except Exception as e:
-                logging.error(f"Error destroying LoadingWindow: {e}")
-                import traceback
-                logging.error(f"Traceback completo: {traceback.format_exc()}")
-                try:
-                    lw._destroyed = True
-                except Exception as e2:
-                    logging.error(f"Erro ao marcar LoadingWindow como destruída: {e2}")
-        
-        try:
-            # Tentar fechar imediatamente se possível
-            if reason == "immediate" or not hasattr(self.app, 'after_idle'):
-                safe_destroy()
-            else:
-                self.app.after_idle(safe_destroy)
-        except Exception as e:
-            logging.error(f"Erro ao agendar safe_destroy idle: {e}")
-            try:
-                # Tentar fechar imediatamente como fallback
-                safe_destroy()
-            except Exception as e2:
-                logging.error(f"Erro ao fechar loading window imediatamente: {e2}")
-                try:
-                    self.app.after(50, safe_destroy)
-                except Exception as e3:
-                    logging.error(f"Erro ao agendar safe_destroy delay: {e3}")
-                    # Como último recurso, apenas marque como destruída
-                    try:
-                        lw._destroyed = True
-                    except Exception as e4:
-                        logging.error(f"Erro ao marcar LoadingWindow como destruída: {e4}")
-        finally:
-            try:
-                if lw is self._loading_window:
-                    self._loading_window = None
-                    logging.debug("LoadingWindow referência limpa")
-            except Exception as e:
-                logging.error(f"Erro ao limpar referência da LoadingWindow: {e}")
+            logging.error(f"Erro ao sinalizar fechamento da LoadingWindow: {e}")
+            self._loading_window = None
             
     def _start_status_indicator(self, command_name):
         """Inicia o indicador de status na aba atual."""

@@ -1,0 +1,26 @@
+[
+    {
+        "name": "localhost",
+        "ip": "127.0.0.1",
+        "mac": "",
+        "nickname": "",
+        "current_ip": "127.0.0.1",
+        "resolved_hostname": "localhost"
+    },
+    {
+        "name": "CMI-10947.saude.betim",
+        "ip": "10.5.5.48",
+        "mac": "",
+        "nickname": "",
+        "resolved_hostname": "CMI-10947.saude.betim",
+        "current_ip": "10.5.5.48"
+    },
+    {
+        "name": "HPRB-25889.saude.betim",
+        "ip": "10.5.6.190",
+        "mac": "",
+        "nickname": "",
+        "resolved_hostname": "HPRB-25889.saude.betim",
+        "current_ip": "10.5.6.190"
+    }
+]

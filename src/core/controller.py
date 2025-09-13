@@ -16,6 +16,7 @@ from src.ui.components.add_host_dialog import AddHostDialog
 from src.ui.components.remove_host_dialog import RemoveHostDialog
 from src.ui.components.custom_input_dialog import CustomInputDialog
 from src.ui.components.tab_settings_dialog import TabSettingsDialog
+from src.ui.components.loading_window import LoadingWindow
 from src.config.settings import (FAVORITES_FILE, UI_PREFS_FILE, DISCOVERY_CACHE_FILE, 
                      HOST_CHECK_BATCH_SIZE, HOST_CHECK_BATCH_DELAY)
 
@@ -234,63 +235,136 @@ class AppController:
                 self.app.show_error(self.app.translate("error_invalid_format_add"))
                 return
             
-            # Mostrar indicador de carregamento
-            self.app.show_loading_indicator(f"Resolvendo informações para {name}...")
-            
-            # Resolver IP e hostname automaticamente
-            logging.info(f"Resolvendo informações para o host: {name}")
-            resolved_ip, resolved_hostname = self.network_tools.resolve_ip_and_hostname(ip)
-            
-            # Usar os dados resolvidos se disponíveis
-            if resolved_ip and resolved_ip not in ["Erro", "Inválido"]:
-                ip = resolved_ip
-                logging.debug(f"IP resolvido: {ip}")
-            
-            if resolved_hostname and resolved_hostname not in ["N/A", "Erro", "Inválido"]:
-                # Se o nome original era igual ao IP, usar o hostname resolvido
-                if name == parts[0] and parts[0] == parts[0]:  # Se era apenas um valor
-                    name = resolved_hostname
-                    logging.debug(f"Nome atualizado para hostname resolvido: {name}")
-            
-            # Esconder indicador de carregamento
-            self.app.hide_loading_indicator()
-            
-            new_host = {
-                "name": name, 
-                "ip": ip, 
-                "mac": mac, 
-                "nickname": "",
-                "resolved_hostname": resolved_hostname if resolved_hostname not in ["N/A", "Erro", "Inválido"] else None,
-                "current_ip": ip
+            # Variáveis para armazenar resultados da resolução
+            resolution_data = {
+                'resolved_ip': None,
+                'resolved_hostname': None,
+                'completed': False,
+                'cancelled': False
             }
             
-            nickname_dialog = CustomInputDialog(
-                app=self.app,
-                title=self.app.translate("ask_nickname_title"),
-                text=self.app.translate("ask_nickname_text")
+            # Criar janela de carregamento
+            loading_window = LoadingWindow(
+                self.app,
+                description=f"Resolvendo informações para {name}...",
+                on_cancel=lambda: self._cancel_resolution(resolution_data, loading_window)
             )
-            self.app.center_popup_on_main_window(nickname_dialog, 400, 250)
-            nickname_input = nickname_dialog.get_input()
-            if nickname_input is not None:
-                new_host["nickname"] = nickname_input.strip()
+            self.app.center_popup_on_main_window(loading_window, 400, 150)
+            
+            def resolve_host_info():
+                """Função para resolver informações do host em thread separada"""
+                try:
+                    logging.info(f"Resolvendo informações para o host: {name}")
+                    
+                    # Verificar cancelamento antes de iniciar
+                    if resolution_data['cancelled']:
+                        return
+                    
+                    # Resolver IP e hostname automaticamente
+                    resolved_ip, resolved_hostname = self.network_tools.resolve_ip_and_hostname(ip)
+                    
+                    # Verificar cancelamento após resolução
+                    if resolution_data['cancelled']:
+                        return
+                    
+                    # Atualizar dados de resolução
+                    resolution_data['resolved_ip'] = resolved_ip
+                    resolution_data['resolved_hostname'] = resolved_hostname
+                    resolution_data['completed'] = True
+                    
+                    # Continuar processamento na thread principal
+                    self.app.after(0, lambda: self._complete_host_addition(
+                        parts, name, ip, mac, resolution_data, loading_window
+                    ))
+                    
+                except Exception as e:
+                    logging.error(f"Erro ao resolver informações do host: {e}")
+                    resolution_data['completed'] = True
+                    # Continuar mesmo com erro
+                    self.app.after(0, lambda: self._complete_host_addition(
+                        parts, name, ip, mac, resolution_data, loading_window
+                    ))
+            
+            # Executar resolução em thread separada (não bloqueia UI)
+            resolution_thread = threading.Thread(target=resolve_host_info, daemon=True)
+            resolution_thread.start()
+            
+            # A partir daqui, o processamento continua em _complete_host_addition
+            return
+    
+    def _cancel_resolution(self, resolution_data, loading_window):
+        """Cancela a resolução de host em andamento"""
+        resolution_data['cancelled'] = True
+        logging.info("Resolução de host cancelada pelo usuário")
+        try:
+            loading_window.destroy()
+        except:
+            pass
+    
+    def _complete_host_addition(self, parts, original_name, original_ip, mac, resolution_data, loading_window):
+        """Completa a adição do host após a resolução (ou cancelamento)"""
+        try:
+            # Fechar janela de carregamento
+            loading_window.destroy()
+        except:
+            pass
+        
+        # Verificar se foi cancelado
+        if resolution_data['cancelled']:
+            return
+        
+        name = original_name
+        ip = original_ip
+        resolved_ip = resolution_data.get('resolved_ip')
+        resolved_hostname = resolution_data.get('resolved_hostname')
+        
+        # Usar os dados resolvidos se disponíveis
+        if resolved_ip and resolved_ip not in ["Erro", "Inválido"]:
+            ip = resolved_ip
+            logging.debug(f"IP resolvido: {ip}")
+        
+        if resolved_hostname and resolved_hostname not in ["N/A", "Erro", "Inválido"]:
+            # Se o nome original era igual ao IP, usar o hostname resolvido
+            if name == parts[0] and parts[0] == parts[0]:  # Se era apenas um valor
+                name = resolved_hostname
+                logging.debug(f"Nome atualizado para hostname resolvido: {name}")
+        
+        new_host = {
+            "name": name, 
+            "ip": ip, 
+            "mac": mac, 
+            "nickname": "",
+            "resolved_hostname": resolved_hostname if resolved_hostname not in ["N/A", "Erro", "Inválido"] else None,
+            "current_ip": ip
+        }
+        
+        nickname_dialog = CustomInputDialog(
+            app=self.app,
+            title=self.app.translate("ask_nickname_title"),
+            text=self.app.translate("ask_nickname_text")
+        )
+        self.app.center_popup_on_main_window(nickname_dialog, 400, 250)
+        nickname_input = nickname_dialog.get_input()
+        if nickname_input is not None:
+            new_host["nickname"] = nickname_input.strip()
 
-            success, message = self.host_manager.add_host(new_host)
-            if success:
-                logging.info(f"Host '{name}' ({ip}) adicionado com sucesso.")
-                self.app.favorites = self.host_manager.get_all_hosts()
-                
-                # Recarrega e retorna para a aba Home após adicionar novo host
-                self.reload_all_hosts_and_tabs(select_tab_named="Home")
-                
-                # Verificar status do host e atualizar indicador (de forma assíncrona)
-                self._check_and_update_host_status_async(new_host)
-                
-                # Mostrar notificação de sucesso
-                self.app.show_toast_notification(f"Host '{name}' adicionado com sucesso.")
-                
-            else:
-                logging.warning(f"Falha ao adicionar host '{name}' ({ip}): {message}")
-                self.app.show_error(self.app.translate("error_host_exists"))
+        success, message = self.host_manager.add_host(new_host)
+        if success:
+            logging.info(f"Host '{name}' ({ip}) adicionado com sucesso.")
+            self.app.favorites = self.host_manager.get_all_hosts()
+            
+            # Recarrega e retorna para a aba Home após adicionar novo host
+            self.reload_all_hosts_and_tabs(select_tab_named="Home")
+            
+            # Verificar status do host e atualizar indicador (de forma assíncrona)
+            self._check_and_update_host_status_async(new_host)
+            
+            # Mostrar notificação de sucesso
+            self.app.show_toast_notification(f"Host '{name}' adicionado com sucesso.")
+            
+        else:
+            logging.warning(f"Falha ao adicionar host '{name}' ({ip}): {message}")
+            self.app.show_error(self.app.translate("error_host_exists"))
     
     def _check_and_update_host_status(self, host):
         """Verifica o status de um host e atualiza o indicador."""

@@ -17,7 +17,7 @@ class RemoteShellController(BaseToolController):
             "launch_shell",
             self._launch_shell_worker,
             needs_auth=True,
-            loading_text=self.app.translate("interactive_shell_loading")
+            loading_text=""
         )
 
     def _launch_shell_worker(self, username, password):
