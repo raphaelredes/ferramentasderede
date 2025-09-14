@@ -44,14 +44,13 @@ class RemoveHostDialog(BaseDialog):
             self.checkboxes.append((checkbox, host))
 
         button_frame = customtkinter.CTkFrame(main_frame, fg_color="transparent")
-        button_frame.grid(row=2, column=0, sticky="ew", pady=(10, 0))
-        button_frame.grid_columnconfigure((0, 1), weight=1)
+        button_frame.grid(row=2, column=0, pady=(10, 0))
 
         self.confirm_button = customtkinter.CTkButton(button_frame, text=self.app.translate("label_confirm"), command=self.confirm)
-        self.confirm_button.grid(row=0, column=0, padx=5, sticky="ew")
+        self.confirm_button.pack(side="left", padx=5)
 
         self.cancel_button = customtkinter.CTkButton(button_frame, text=self.app.translate("label_cancel"), command=self.destroy, fg_color="gray50")
-        self.cancel_button.grid(row=0, column=1, padx=5, sticky="ew")
+        self.cancel_button.pack(side="left", padx=5)
 
     def confirm(self):
         for checkbox, host in self.checkboxes:

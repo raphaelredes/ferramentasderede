@@ -75,14 +75,13 @@ class DiscoverDialog(BaseDialog):
         self._create_results_area()
 
         button_frame = customtkinter.CTkFrame(main_frame, fg_color="transparent")
-        button_frame.grid(row=4, column=0, sticky="ew", pady=(15, 0))
-        button_frame.grid_columnconfigure((0, 1), weight=1)
+        button_frame.grid(row=4, column=0, pady=(15, 0))
 
         self.add_button = customtkinter.CTkButton(button_frame, text=self.app.translate("scanner_add_selected"), command=self.confirm_selection, state="disabled")
-        self.add_button.grid(row=0, column=0, padx=(0, 5), sticky="ew")
+        self.add_button.pack(side="left", padx=5)
 
         self.close_button = customtkinter.CTkButton(button_frame, text=self.app.translate("label_close"), command=self.on_close, fg_color="gray50")
-        self.close_button.grid(row=0, column=1, padx=(5, 0), sticky="ew")
+        self.close_button.pack(side="left", padx=5)
         self.bind("<Escape>", lambda e: self.on_close())
 
     def _create_scan_tabs(self, parent):

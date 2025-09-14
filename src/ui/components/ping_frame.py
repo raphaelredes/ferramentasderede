@@ -190,9 +190,8 @@ class PingFrame(customtkinter.CTkFrame):
             # Botão Ping - mais específico na detecção
             if running_cmd == 'ping' or (running_cmd and 'ping_' in running_cmd):
                 self.ping_button.configure(
-                    text=self.app.translate("ping_scan_stop"), 
-                    state="normal",
-                    fg_color="#E74C3C"  # Cor vermelha para indicar "parar"
+                    text=self.app.translate("ping_scan_stop"),
+                    state="normal"
                 )
                 logging.debug("Botão ping configurado para PARAR")
             else:
@@ -200,46 +199,34 @@ class PingFrame(customtkinter.CTkFrame):
                     text=self.app.translate("ping_scan_start"), 
                     state="disabled" if is_running else "normal"
                 )
-                # Resetar cor padrão
-                try:
-                    self.ping_button.configure(fg_color=("gray75", "gray25"))
-                except:
-                    pass
+                # Cor padrão será aplicada automaticamente
                 logging.debug("Botão ping configurado para INICIAR")
 
             # Botão de Scan de Portas
             if running_cmd == 'scan' or (running_cmd and 'scan' in running_cmd):
                 self.scan_button.configure(
-                    text=self.app.translate("ping_scan_ports_stop"), 
-                    state="normal",
-                    fg_color="#E74C3C"
+                    text=self.app.translate("ping_scan_ports_stop"),
+                    state="normal"
                 )
             else:
                 self.scan_button.configure(
                     text=self.app.translate("ping_scan_ports_common"), 
                     state="disabled" if is_running else "normal"
                 )
-                try:
-                    self.scan_button.configure(fg_color=("gray75", "gray25"))
-                except:
-                    pass
+                # Cor padrão será aplicada automaticamente
 
             # Botão Testar Portas
             if running_cmd == 'test_ports':
                 self.port_test_button.configure(
-                    text=self.app.translate("label_cancel"), 
-                    state="normal",
-                    fg_color="#E74C3C"
+                    text=self.app.translate("label_cancel"),
+                    state="normal"
                 )
             else:
                 self.port_test_button.configure(
                     text=self.app.translate("ping_scan_test"), 
                     state="disabled" if is_running else "normal"
                 )
-                try:
-                    self.port_test_button.configure(fg_color=("gray75", "gray25"))
-                except:
-                    pass
+                # Cor padrão será aplicada automaticamente
                 
         except Exception as e:
             logging.error(f"Erro ao atualizar estado dos botões: {e}")

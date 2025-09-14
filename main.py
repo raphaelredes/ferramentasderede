@@ -7,7 +7,7 @@ Ponto de entrada principal da aplicação de gerenciamento de redes.
 Aplicação profissional para monitoramento, diagnóstico e gerenciamento de redes.
 
 Autor: Sistema de Ferramentas de Rede
-Versão: 2.0.0
+Versão: 1.1.0
 """
 
 import sys
@@ -41,7 +41,7 @@ def main():
     try:
         # Configurar logging
         setup_logging()
-        logging.info("Iniciando aplicação Ferramentas de Rede v2.0.0")
+        logging.info("Iniciando aplicação Ferramentas de Rede v1.1.0")
         
         # Importar a aplicação principal
         from src.core import NetworkToolsApp

@@ -172,5 +172,9 @@
     "event_log_col_source": "Fuente",
     "event_log_col_time": "Fecha y Hora",
     "event_log_filter_placeholder": "Filtrar por Fuente, ID o Mensaje...",
-    "event_log_loading": "Buscando {count} eventos de '{level}' del log '{log_name}'..."
+    "event_log_loading": "Buscando {count} eventos de '{level}' del log '{log_name}'...",
+    "pagination_first": "Primera",
+    "pagination_prev": "Anterior",
+    "pagination_next": "Siguiente",
+    "pagination_last": "Última"
 }

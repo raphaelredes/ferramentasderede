@@ -50,7 +50,10 @@ from src.utils.performance_monitor import PerformanceMonitor
 class App(customtkinter.CTk):
     def __init__(self, base_dir):
         super().__init__()
-        
+
+        # Ocultar janela até que seja centralizada
+        self.withdraw()
+
         self._is_closing = False
         self._callback_protection_active = False
         self.base_dir = base_dir
@@ -105,6 +108,12 @@ class App(customtkinter.CTk):
         self.ip_mismatches = {}
         self.stop_monitoring_event = threading.Event()
         self.status_update_interval = 60
+
+        # Sistema de otimização de redimensionamento
+        self._resize_timer = None
+        self._resize_in_progress = False
+        self._last_geometry = None
+        self._resize_debounce_ms = 50   # 50ms de debounce - mais responsivo
 
         self.settings_manager.load_ui_preferences()
         
@@ -275,8 +284,8 @@ class App(customtkinter.CTk):
             self._movement_detected = False
             self._movement_timer = None
             
-            # REMOVIDO: eventos Configure causam travamento
-            # self.bind('<Configure>', self._on_configure_static)
+            # Sistema otimizado de redimensionamento com debouncing
+            self.bind('<Configure>', self._on_configure_optimized)
             
             logging.debug(f"Sistema estático inicializado com {len(self._static_monitor_configs)} configurações")
             
@@ -465,7 +474,7 @@ class App(customtkinter.CTk):
             
             # Aplicar configurações usando wm_geometry (mais confiável)
             self.wm_geometry(f"{width}x{height}")
-            self.minsize(1200, 700)  # Tamanho mínimo atualizado
+            self.minsize(800, 600)  # Tamanho mínimo atualizado
             
             # Salvar dimensões para centralização
             self._window_width = width
@@ -477,71 +486,91 @@ class App(customtkinter.CTk):
             logging.error(f"Error setting responsive size: {e}")
             # Fallback para tamanho padrão (aproximadamente 80% de Full HD)
             self.wm_geometry("1536x864")  # 80% de 1920x1080
-            self.minsize(1200, 700)
+            self.minsize(800, 600)
             self._window_width = 1536
             self._window_height = 864
 
     def _center_and_show_main_window(self):
         """
-        Centraliza e mostra a janela principal usando EXATAMENTE a mesma lógica da BaseDialog.
+        VERSÃO ULTRA-VISÍVEL: Garante que a janela sempre apareça.
         """
         try:
-            # Atualizar para garantir que todas as dimensões estão corretas (janela ainda oculta)
-            self.update_idletasks()
-            
-            # Obter geometria da tela (IGUAL BaseDialog)
-            windows_info = self._get_windows_screen_info()
-            if windows_info:
-                screen_x, screen_y = 0, 0
-                screen_width, screen_height = windows_info[2], windows_info[3]
-                logging.debug(f"Using Windows API screen info: {screen_width}x{screen_height}")
-            else:
-                screen_x, screen_y = 0, 0
-                screen_width = self.winfo_screenwidth()
-                screen_height = self.winfo_screenheight()
-                logging.debug(f"Using Tkinter screen info: {screen_width}x{screen_height}")
-            
-            # Usar 80% do tamanho do monitor atual
-            window_width = int(screen_width * 0.8)
-            window_height = int(screen_height * 0.8)
-            
-            # Garantir tamanho mínimo para usabilidade
-            window_width = max(window_width, 1200)
-            window_height = max(window_height, 700)
-            
-            # Garantir tamanho máximo para telas muito grandes
-            window_width = min(window_width, 2400)  # Máximo para telas muito grandes
-            window_height = min(window_height, 1400)
-            
-            # USAR A MESMA LÓGICA DA BaseDialog para centralização
-            # Calcular posição central
-            pos_x = screen_x + (screen_width - window_width) // 2
-            pos_y = screen_y + (screen_height - window_height) // 2
-            
-            # Garantir que a janela não saia da tela (margem de 50px)
-            margin = 50
-            pos_x = max(screen_x + margin, min(pos_x, screen_x + screen_width - window_width - margin))
-            pos_y = max(screen_y + margin, min(pos_y, screen_y + screen_height - window_height - margin))
-            
-            # Definir posição enquanto a janela ainda está oculta (IGUAL BaseDialog)
-            geometry_string = f"+{int(pos_x)}+{int(pos_y)}"
-            self.wm_geometry(geometry_string)
-            
-            # Agora mostrar a janela na posição correta (IGUAL BaseDialog)
-            self.deiconify()
-            
-            # Configurar foco (IGUAL BaseDialog)
-            self.lift()
-            self.focus_force()
-            
-            logging.debug(f"Main window positioned at ({pos_x}, {pos_y}) with size ({window_width}x{window_height}) on screen ({screen_width}x{screen_height})")
-            
+            # Obter dimensões da tela
+            screen_w = self.winfo_screenwidth()
+            screen_h = self.winfo_screenheight()
+
+            # Tamanho: 50% da tela
+            target_w = max(800, min(int(screen_w * 0.5), 1600))
+            target_h = max(600, min(int(screen_h * 0.5), 1200))
+
+            # Posição central
+            pos_x = (screen_w - target_w) // 2
+            pos_y = (screen_h - target_h) // 2
+
+            # SEQUÊNCIA ULTRA-VISÍVEL
+            self.withdraw()  # Ocultar primeiro
+
+            # Definir geometria
+            final_geometry = f"{target_w}x{target_h}+{pos_x}+{pos_y}"
+            self.geometry(final_geometry)
+
+            # FORÇAR VISIBILIDADE MÁXIMA
+            self.deiconify()  # Mostrar
+            self.lift()       # Para frente
+            self.attributes('-topmost', True)  # Por cima de tudo
+            self.focus_force()  # Foco
+            self.update()       # Atualizar
+
+            # Remover topmost após garantir visibilidade
+            self.after(100, lambda: self.attributes('-topmost', False))
+
+            logging.info(f"JANELA ULTRA-VISÍVEL: {final_geometry} em tela {screen_w}x{screen_h}")
+
+            # Log de verificação
+            self.after(200, self._log_final_position)
+
         except Exception as e:
-            logging.error(f"Error centering main window: {e}")
-            # Fallback simples
-            self.deiconify()
-            self.lift()
-            self.focus_force()
+            logging.error(f"Erro centralização: {e}")
+            # Fallback de emergência
+            try:
+                self.geometry("800x600+100+100")
+                self.deiconify()
+                self.lift()
+                self.attributes('-topmost', True)
+                self.after(100, lambda: self.attributes('-topmost', False))
+            except:
+                pass
+
+    def _log_final_position(self):
+        """Log da posição final para debug."""
+        try:
+            real_geo = self.geometry()
+            real_state = self.state()
+            real_x, real_y = self.winfo_x(), self.winfo_y()
+            real_w, real_h = self.winfo_width(), self.winfo_height()
+
+            logging.info(f"POSIÇÃO FINAL CONFIRMADA:")
+            logging.info(f"  Geometria: {real_geo}")
+            logging.info(f"  Estado: {real_state}")
+            logging.info(f"  Posição: ({real_x}, {real_y})")
+            logging.info(f"  Tamanho: {real_w}x{real_h}")
+
+        except Exception as e:
+            logging.error(f"Erro verificando posição final: {e}")
+
+    def _verify_position(self):
+        """Verifica a posição real da janela."""
+        try:
+            real_geometry = self.geometry()
+            real_x = self.winfo_x()
+            real_y = self.winfo_y()
+            real_w = self.winfo_width()
+            real_h = self.winfo_height()
+
+            logging.info(f"POSIÇÃO REAL: geometry='{real_geometry}', x={real_x}, y={real_y}, size={real_w}x{real_h}")
+
+        except Exception as e:
+            logging.error(f"Erro verificação posição: {e}")
 
     def show_main_window(self):
         """
@@ -882,10 +911,7 @@ class App(customtkinter.CTk):
         action_executed = False
         
         try:
-            if choice_key == "title_add_host":
-                self.controller.add_new_host()
-                action_executed = True
-            elif choice_key == "title_remove_hosts":
+            if choice_key == "title_remove_hosts":
                 self.controller.open_remove_host_dialog()
                 action_executed = True
             elif choice_key == "actions_import":
@@ -960,6 +986,70 @@ class App(customtkinter.CTk):
         
         self.cred_service.lock()
         self.show_toast_notification(self.translate("vault_locked_after_management"))
+
+    def _on_configure_optimized(self, event):
+        """Sistema otimizado de redimensionamento com debouncing."""
+        # Ignorar eventos que não são da janela principal
+        if event.widget != self:
+            return
+
+        try:
+            # Verificar se a geometria realmente mudou
+            current_geometry = f"{event.width}x{event.height}"
+            if current_geometry == self._last_geometry:
+                return
+
+            self._last_geometry = current_geometry
+
+            # Cancelar timer anterior se existir
+            if self._resize_timer:
+                self.after_cancel(self._resize_timer)
+
+            # Marcar que resize está em progresso
+            self._resize_in_progress = True
+
+            # Agendar processamento com debounce
+            self._resize_timer = self.after(self._resize_debounce_ms, self._process_resize)
+
+        except Exception as e:
+            logging.error(f"Erro no redimensionamento otimizado: {e}")
+
+    def _process_resize(self):
+        """Processa o redimensionamento após o debounce."""
+        try:
+            if not self._resize_in_progress:
+                return
+
+            # Operações mínimas durante resize
+            # Apenas salvar geometria se necessário
+            if hasattr(self, 'settings_manager') and self.settings_manager:
+                try:
+                    # Salvar geometria de forma assíncrona se método existir
+                    def save_geometry():
+                        try:
+                            if hasattr(self.settings_manager, 'save_window_geometry'):
+                                self.settings_manager.save_window_geometry()
+                            else:
+                                # Salvar configurações UI que podem incluir geometria
+                                self.settings_manager.save_ui_preferences()
+                        except Exception as e:
+                            logging.debug(f"Erro ao salvar geometria: {e}")
+
+                    # Executar salvamento em thread daemon para não bloquear UI
+                    save_thread = threading.Thread(target=save_geometry, daemon=True)
+                    save_thread.start()
+
+                except Exception as e:
+                    logging.debug(f"Erro no salvamento de geometria: {e}")
+
+            # Resetar flag
+            self._resize_in_progress = False
+            self._resize_timer = None
+
+        except Exception as e:
+            logging.error(f"Erro no processamento de resize: {e}")
+            self._resize_in_progress = False
+            self._resize_timer = None
 
     def on_closing(self):
         # Sempre perguntar confirmação, mesmo com comandos em andamento
@@ -1111,7 +1201,7 @@ class App(customtkinter.CTk):
             return
         if self.toast_label and self.toast_label.winfo_exists():
             self.toast_label.destroy()
-        self.toast_label = customtkinter.CTkLabel(self, text=message, fg_color=("gray80", "#333333"), text_color=("gray10", "white"), corner_radius=10, font=("Arial", 12))
+        self.toast_label = customtkinter.CTkLabel(self, text=message, fg_color=("gray80", "#333333"), text_color="white", corner_radius=10, font=("Arial", 12))
         self.toast_label.place(relx=0.5, rely=0.95, anchor="center")
         self.toast_label.after(3000, self.toast_label.destroy)
 
@@ -1161,7 +1251,10 @@ class App(customtkinter.CTk):
             # Iniciar o loop principal com proteção
             logging.info("Iniciando mainloop com proteção anti-travamento...")
             self.mainloop()
-                
+
+        except KeyboardInterrupt:
+            logging.info("Interrupção por teclado detectada")
+            self._emergency_shutdown()
         except Exception as e:
             logging.error(f"Erro no run(): {e}")
             import traceback

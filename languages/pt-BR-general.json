@@ -63,7 +63,7 @@
     "ui_tv_id": "TeamViewer ID:",
     "user_cancelled_operation": "Operação cancelada pelo usuário.",
     "welcome_message": "Nenhum host selecionado.\n\nSelecione um host na lista acima ou adicione um novo host para começar.",
-    "about_ai_assistance": "Desenvolvido com o auxílio de ferramentas do Google AI Studio.",
+    "about_ai_assistance": "Desenvolvido com o auxílio de ferramentas do Google AI Studio, Cursor e Claude Code.",
     "about_description": "Uma coleção de ferramentas para diagnóstico e gestão de redes, projetada para simplificar tarefas comuns de administradores de sistema.",
     "about_developed_by": "Desenvolvido por:",
     "about_features_list": "• Diagnóstico de Rede: Ping contínuo, Traceroute e escaneamento de portas.\n• Descoberta de Hosts: Varredura de rede local, remota e personalizada.\n• Ações Remotas Rápidas: RDP, MSRA e Wake-on-LAN (WOL).\n• Gestão Remota (WinRM): Informações do sistema, gerenciamento de serviços e logs de eventos, análise de atividade do usuário, desligamento e reinício e shell interativo.\n• Cofre de Credenciais: Gerenciador de senhas seguro e criptografado para a sessão.\n• Gestão de Hosts: Importação/exportação de listas (CSV), apelidos e reordenação.",
@@ -103,5 +103,6 @@
     "status_ready": "Pronto",
     "status_running_command": "Executando {command}...",
     "status_command_completed": "{command} concluído",
-    "status_command_failed": "{command} falhou"
+    "status_command_failed": "{command} falhou",
+    "tab_settings_button_tooltip": "Configurações das abas"
 }

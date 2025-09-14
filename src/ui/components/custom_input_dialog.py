@@ -29,18 +29,18 @@ class CustomInputDialog(BaseDialog):
         self.entry.focus()
         
         button_frame = customtkinter.CTkFrame(main_frame, fg_color="transparent")
-        button_frame.grid(row=2, column=0, sticky="e", padx=5)
+        button_frame.grid(row=2, column=0, padx=5)
 
         ok_button = customtkinter.CTkButton(
             button_frame, text=self.app.translate("label_confirm"), command=self._ok_event, height=32
         )
-        ok_button.pack(side="right", padx=(5, 0))
+        ok_button.pack(side="left", padx=5)
 
         cancel_button = customtkinter.CTkButton(
-            button_frame, text=self.app.translate("label_cancel"), command=self._cancel_event, 
+            button_frame, text=self.app.translate("label_cancel"), command=self._cancel_event,
             fg_color="gray50", height=32
         )
-        cancel_button.pack(side="right", padx=(0, 5))
+        cancel_button.pack(side="left", padx=5)
         
         self.bind("<Escape>", self._cancel_event)
 

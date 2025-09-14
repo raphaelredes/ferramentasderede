@@ -30,38 +30,16 @@ class HostTabView(customtkinter.CTkFrame):
         
         self.tool_factory = ToolFrameFactory(self.app)
         
-        self.tab_view_container = customtkinter.CTkFrame(self, fg_color="transparent")
-        self.tab_view_container.pack(fill="both", expand=True)
-        
-        self.tab_view = customtkinter.CTkTabview(self.tab_view_container, fg_color="transparent")
-        self.tab_view.pack(side="left", fill="both", expand=True)
+        # Layout simplificado: apenas o TabView
+        self.tab_view = customtkinter.CTkTabview(self, fg_color="transparent")
+        self.tab_view.pack(fill="both", expand=True)
 
         self.tab_manager = HostTabManager(self.tab_view, self.app, self.controller._on_tab_selected)
-        
+
         # Inicializar indicador de status
         self.status_indicator = TabStatusIndicator(self.tab_view)
-        
-        self.home_tab_manager = None
 
-        # Botão de configurações
-        self.settings_button = customtkinter.CTkButton(
-            self.tab_view_container, text="⚙️", width=30, height=30, 
-            font=customtkinter.CTkFont(size=20), fg_color="transparent",
-            hover=False, command=self.controller.open_tab_settings_dialog
-        )
-        self.settings_button.pack(side="right", anchor="ne", padx=5, pady=5)
-        
-        # Botão para adicionar novo host
-        self.add_host_button = customtkinter.CTkButton(
-            self.tab_view_container, text="+", width=30, height=30, 
-            font=customtkinter.CTkFont(size=20, weight="bold"), fg_color="transparent",
-            hover_color=("gray70", "gray30"), command=self.controller.add_new_host
-        )
-        self.add_host_button.pack(side="right", anchor="ne", padx=(0, 5), pady=5)
-        
-        # Adicionar tooltip melhorado ao botão
-        from .enhanced_tooltip import create_tooltip
-        self.add_host_tooltip = create_tooltip(self.add_host_button, self.app.translate("add_host_button_tooltip"))
+        self.home_tab_manager = None
         
     def start_command_status(self, tab_name, command_name):
         """Inicia o indicador de status para um comando."""
@@ -331,9 +309,11 @@ class HostTabView(customtkinter.CTkFrame):
         if self.home_tab_manager:
             self.home_tab_manager.update_language()
         
-        # Atualizar tooltip do botão de adicionar host
+        # Atualizar tooltips dos botões
         if hasattr(self, 'add_host_tooltip'):
             self.add_host_tooltip.update_text(self.app.translate("add_host_button_tooltip"))
+        if hasattr(self, 'settings_tooltip'):
+            self.settings_tooltip.update_text(self.app.translate("tab_settings_button_tooltip"))
         
         # Propaga a atualização de idioma para a fábrica de ferramentas
         self.tool_factory.update_language()
@@ -405,7 +385,7 @@ class HostTabView(customtkinter.CTkFrame):
                     loading_frame, 
                     text=f"Resolvendo informações para {display_name}...",
                     font=customtkinter.CTkFont(size=14),
-                    text_color="gray"
+                    text_color="white"
                 )
                 loading_label.pack(expand=True)
                 

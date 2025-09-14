@@ -34,7 +34,7 @@ class WelcomeDialog(BaseDialog):
             main_frame,
             text=self.app.translate("welcome_intro"),
             font=customtkinter.CTkFont(size=14),
-            text_color=("gray20", "gray80")
+            text_color="white"
         )
         intro_label.grid(row=2, column=0, pady=(0, 20))
 

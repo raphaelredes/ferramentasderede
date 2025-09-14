@@ -72,7 +72,7 @@ class HostManagerFrame(customtkinter.CTkFrame):
             # Nome e IP
             name_label = customtkinter.CTkLabel(host_frame, text=host['name'], anchor="w", font=customtkinter.CTkFont(weight="bold"))
             name_label.grid(row=0, column=1, sticky="w")
-            ip_label = customtkinter.CTkLabel(host_frame, text=host['ip'], anchor="w", font=customtkinter.CTkFont(size=11), text_color="gray")
+            ip_label = customtkinter.CTkLabel(host_frame, text=host['ip'], anchor="w", font=customtkinter.CTkFont(size=11), text_color="white")
             ip_label.grid(row=1, column=1, sticky="w")
             
             # Botões de Ação

@@ -33,8 +33,8 @@ class ThemeEnhancer:
         
         # Cores de texto melhoradas
         "text_primary": "#1F1F1F",       # Texto principal mais suave que preto
-        "text_secondary": "#605E5C",     # Texto secundário cinza elegante
-        "text_disabled": "#8A8886",      # Texto desabilitado mais legível
+        "text_secondary": "white",        # Texto secundário branco
+        "text_disabled": "white",         # Texto desabilitado branco
         
         # Cores de borda mais elegantes
         "border_light": "#E1DFDD",       # Bordas muito sutis
@@ -57,8 +57,8 @@ class ThemeEnhancer:
         "on_primary": "#FFFFFF",
         "surface": "#FAFAFA",
         "surface_alt": "#FFFFFF",
-        "text": "#1F1F1F",
-        "text_muted": "#605E5C",
+        "text": "white",
+        "text_muted": "white",
         "border": "#E1DFDD",
     }
 
@@ -68,8 +68,8 @@ class ThemeEnhancer:
         "on_primary": "#FFFFFF",
         "surface": "#262626",
         "surface_alt": "#1E1E1E",
-        "text": "#E5E5E5",
-        "text_muted": "#B3B3B3",
+        "text": "white",
+        "text_muted": "white",
         "border": "#3A3A3A",
     }
     
@@ -241,8 +241,9 @@ class ThemeEnhancer:
             except Exception:
                 pass
 
-            # Sincronizar estado
-            self.app.update_idletasks()
+            # Sincronizar estado (otimizado para evitar conflito com resize)
+            if not getattr(self.app, '_resize_in_progress', False):
+                self.app.update_idletasks()
             
         except Exception as e:
             logging.debug(f"Error hiding interface: {e}")
@@ -317,8 +318,9 @@ class ThemeEnhancer:
             # Aplicar tokens de tema em toda a árvore
             self.apply_tokens_to_app()
 
-            # Forçar atualização da interface
-            self.app.update_idletasks()
+            # Forçar atualização da interface (otimizado)
+            if not getattr(self.app, '_resize_in_progress', False):
+                self.app.update_idletasks()
             
             logging.debug("All components theme updated successfully")
             
@@ -401,8 +403,9 @@ class ThemeEnhancer:
         Revela a interface após a transição de tema.
         """
         try:
-            # Forçar atualização do tema aplicado antes de mostrar
-            self.app.update_idletasks()
+            # Forçar atualização do tema aplicado antes de mostrar (otimizado)
+            if not getattr(self.app, '_resize_in_progress', False):
+                self.app.update_idletasks()
 
             # Reexibir todas as janelas que foram ocultadas
             try:
@@ -410,15 +413,17 @@ class ThemeEnhancer:
                     try:
                         if hasattr(win, 'deiconify'):
                             win.deiconify()
-                            win.update_idletasks()
+                            if not getattr(self.app, '_resize_in_progress', False):
+                                win.update_idletasks()
                     except Exception:
                         pass
             finally:
                 self._hidden_windows = []
 
-            # Atualização final
+            # Atualização final (otimizado)
             try:
-                self.app.update()
+                if not getattr(self.app, '_resize_in_progress', False):
+                    self.app.update()
             except Exception:
                 pass
             

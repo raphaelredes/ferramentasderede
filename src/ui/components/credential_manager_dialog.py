@@ -167,17 +167,16 @@ class CredentialManagerDialog(BaseDialog):
             self.new_pass_entry.insert(0, password)
 
         button_frame = customtkinter.CTkFrame(self.right_frame, fg_color="transparent")
-        button_frame.grid(row=7, column=0, sticky="ew", padx=20, pady=10)
-        button_frame.grid_columnconfigure((0, 1), weight=1)
+        button_frame.grid(row=7, column=0, padx=20, pady=10)
 
         if is_new:
             save_button = customtkinter.CTkButton(button_frame, text=self.app.translate("label_save"), command=self.save_new_credential)
-            save_button.grid(row=0, column=0, columnspan=2, sticky="ew")
+            save_button.pack()
         else:
             save_edit_button = customtkinter.CTkButton(button_frame, text=self.app.translate("label_save"), command=self._confirm_edit_changes)
-            save_edit_button.grid(row=0, column=0, sticky="ew", padx=(0, 5))
+            save_edit_button.pack(side="left", padx=5)
             cancel_edit_button = customtkinter.CTkButton(button_frame, text=self.app.translate("label_cancel"), command=self.check_view_state, fg_color="gray50")
-            cancel_edit_button.grid(row=0, column=1, sticky="ew", padx=(5, 0))
+            cancel_edit_button.pack(side="left", padx=5)
 
         for entry in [self.new_user_entry, self.new_domain_entry, self.new_pass_entry]:
             entry.bind("<Return>", self.save_new_credential if is_new else self._confirm_edit_changes)
@@ -217,12 +216,11 @@ class CredentialManagerDialog(BaseDialog):
         self.confirm_pass_entry.grid(row=8, column=0, sticky="ew", pady=(5,15), padx=20)
         
         button_frame = customtkinter.CTkFrame(self.right_frame, fg_color="transparent")
-        button_frame.grid(row=9, column=0, sticky="ew", padx=20, pady=10)
-        button_frame.grid_columnconfigure((0,1), weight=1)
+        button_frame.grid(row=9, column=0, padx=20, pady=10)
         confirm_button = customtkinter.CTkButton(button_frame, text=self.app.translate("vault_confirm_change"), command=self._confirm_password_change)
-        confirm_button.grid(row=0, column=0, sticky="ew", padx=(0,5))
+        confirm_button.pack(side="left", padx=5)
         cancel_button = customtkinter.CTkButton(button_frame, text=self.app.translate("vault_cancel_change"), command=self.check_view_state, fg_color="gray50")
-        cancel_button.grid(row=0, column=1, sticky="ew", padx=(5,0))
+        cancel_button.pack(side="left", padx=5)
 
     def _confirm_password_change(self):
         current_pass, new_pass, confirm_pass = self.current_pass_entry.get(), self.new_pass_entry_change.get(), self.confirm_pass_entry.get()

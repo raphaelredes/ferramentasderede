@@ -88,13 +88,13 @@ class CredentialDialog(BaseDialog):
 
         # --- Botões de Ação ---
         button_frame = customtkinter.CTkFrame(self, fg_color="transparent")
-        button_frame.grid(row=1, column=0, sticky="e", padx=20, pady=(10, 20))
+        button_frame.grid(row=1, column=0, padx=20, pady=(10, 20))
 
         self.ok_button = customtkinter.CTkButton(button_frame, text=self.app.translate("label_confirm"), command=self._ok_event)
-        self.ok_button.pack(side="left", padx=(0, 5))
+        self.ok_button.pack(side="left", padx=5)
 
         self.cancel_button = customtkinter.CTkButton(button_frame, text=self.app.translate("label_cancel"), command=self._cancel_event, fg_color="gray50")
-        self.cancel_button.pack(side="left")
+        self.cancel_button.pack(side="left", padx=5)
         
         self.bind("<Escape>", self._cancel_event)
         self.after(100, lambda: self.user_entry.focus())

@@ -182,7 +182,7 @@ class AboutDialog(BaseDialog):
         email_label.pack(pady=(2, 20))
         email_label.bind("<Button-1>", copy_email_to_clipboard)
 
-        ai_assistance_label = customtkinter.CTkLabel(credits_frame, text=self.app.translate("about_ai_assistance"), font=customtkinter.CTkFont(size=12, slant="italic"), text_color="gray")
+        ai_assistance_label = customtkinter.CTkLabel(credits_frame, text=self.app.translate("about_ai_assistance"), font=customtkinter.CTkFont(size=12, slant="italic"), text_color="white")
         ai_assistance_label.pack(pady=(15, 10))
 
         close_button_bottom = customtkinter.CTkButton(main_frame, text=self.app.translate("label_close"), command=self.destroy)

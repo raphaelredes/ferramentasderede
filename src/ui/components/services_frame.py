@@ -47,7 +47,7 @@ class ServicesFrame(customtkinter.CTkFrame):
         self.refresh_button = customtkinter.CTkButton(controls_frame, text="", command=self.refresh_services_from_remote)
         self.refresh_button.grid(row=0, column=0, padx=5, pady=5)
         
-        self.last_updated_label = customtkinter.CTkLabel(controls_frame, text="", text_color="gray", font=customtkinter.CTkFont(size=11))
+        self.last_updated_label = customtkinter.CTkLabel(controls_frame, text="", text_color="white", font=customtkinter.CTkFont(size=11))
         self.last_updated_label.grid(row=0, column=1, padx=(5, 10), pady=5, sticky="w")
         
         self.filter_entry = customtkinter.CTkEntry(controls_frame, placeholder_text="")
@@ -62,11 +62,11 @@ class ServicesFrame(customtkinter.CTkFrame):
         pagination_frame.grid_columnconfigure(2, weight=1)
 
         # Botão primeira página
-        self.first_button = customtkinter.CTkButton(pagination_frame, text="", command=self.first_page, width=40)
+        self.first_button = customtkinter.CTkButton(pagination_frame, text="", command=self.first_page, width=80)
         self.first_button.grid(row=0, column=0, padx=5, pady=5)
         
         # Botão página anterior
-        self.prev_button = customtkinter.CTkButton(pagination_frame, text="", command=self.prev_page, width=40)
+        self.prev_button = customtkinter.CTkButton(pagination_frame, text="", command=self.prev_page, width=80)
         self.prev_button.grid(row=0, column=1, padx=5, pady=5)
         
         # Label da página atual
@@ -74,11 +74,11 @@ class ServicesFrame(customtkinter.CTkFrame):
         self.page_label.grid(row=0, column=2, padx=5, pady=5)
         
         # Botão próxima página
-        self.next_button = customtkinter.CTkButton(pagination_frame, text="", command=self.next_page, width=40)
+        self.next_button = customtkinter.CTkButton(pagination_frame, text="", command=self.next_page, width=80)
         self.next_button.grid(row=0, column=3, padx=5, pady=5)
         
         # Botão última página
-        self.last_button = customtkinter.CTkButton(pagination_frame, text="", command=self.last_page, width=40)
+        self.last_button = customtkinter.CTkButton(pagination_frame, text="", command=self.last_page, width=80)
         self.last_button.grid(row=0, column=4, padx=5, pady=5)
 
     def initial_load(self):
@@ -256,27 +256,31 @@ class ServicesFrame(customtkinter.CTkFrame):
         button_frame = customtkinter.CTkFrame(widget, fg_color="transparent")
         button_frame.grid(row=0, column=2, padx=10, pady=5)
             
-        start_btn = customtkinter.CTkButton(button_frame, text="▶", width=30, 
-                                          command=lambda: self.handle_service_action(name, "start"), 
-                                          fg_color=theme_colors["start_fg"], 
-                                          hover_color=theme_colors["start_hover"])
+        start_btn = customtkinter.CTkButton(button_frame, text="Iniciar", width=60,
+                                          command=lambda: self.handle_service_action(name, "start"),
+                                          fg_color=theme_colors["start_fg"],
+                                          hover_color=theme_colors["start_hover"],
+                                          text_color="white")
         start_btn.pack(side="left", padx=2)
         
-        stop_btn = customtkinter.CTkButton(button_frame, text="■", width=30, 
-                                         command=lambda: self.handle_service_action(name, "stop"), 
-                                         fg_color=theme_colors["stop_fg"], 
-                                         hover_color=theme_colors["stop_hover"])
+        stop_btn = customtkinter.CTkButton(button_frame, text="Parar", width=60,
+                                         command=lambda: self.handle_service_action(name, "stop"),
+                                         fg_color=theme_colors["stop_fg"],
+                                         hover_color=theme_colors["stop_hover"],
+                                         text_color="white")
         stop_btn.pack(side="left", padx=2)
         
-        restart_btn = customtkinter.CTkButton(button_frame, text="⟳", width=30, 
-                                            command=lambda: self.handle_service_action(name, "restart"))
+        restart_btn = customtkinter.CTkButton(button_frame, text="Reiniciar", width=70,
+                                            command=lambda: self.handle_service_action(name, "restart"),
+                                            text_color="white")
         restart_btn.pack(side="left", padx=2)
         
         # Estados dos botões
         if is_running:
-            start_btn.configure(state="disabled")
-        else: 
-            stop_btn.configure(state="disabled")
+            start_btn.configure(state="disabled", text_color="white")
+        else:
+            stop_btn.configure(state="disabled", text_color="white")
+            restart_btn.configure(state="disabled", text_color="white")
             restart_btn.configure(state="disabled")
         
         # Armazenar referências para atualização
@@ -357,11 +361,11 @@ class ServicesFrame(customtkinter.CTkFrame):
         self.refresh_button.configure(text=self.app.translate("service_refresh"))
         self.filter_entry.configure(placeholder_text=self.app.translate("service_filter_placeholder"))
         
-        # Botões de paginação com ícones intuitivos
-        self.first_button.configure(text="⏮")
-        self.prev_button.configure(text="◀")
-        self.next_button.configure(text="▶")
-        self.last_button.configure(text="⏭")
+        # Botões de paginação com texto
+        self.first_button.configure(text=self.app.translate("pagination_first") if hasattr(self.app, 'translate') and self.app.translate("pagination_first") != "pagination_first" else "Primeira")
+        self.prev_button.configure(text=self.app.translate("pagination_prev") if hasattr(self.app, 'translate') and self.app.translate("pagination_prev") != "pagination_prev" else "Anterior")
+        self.next_button.configure(text=self.app.translate("pagination_next") if hasattr(self.app, 'translate') and self.app.translate("pagination_next") != "pagination_next" else "Próxima")
+        self.last_button.configure(text=self.app.translate("pagination_last") if hasattr(self.app, 'translate') and self.app.translate("pagination_last") != "pagination_last" else "Última")
         
         self._update_last_updated_label(self.data_manager.get_last_update_time())
         # Invalidar cache de cores para re-render com idioma correto

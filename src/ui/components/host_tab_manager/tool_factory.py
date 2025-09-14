@@ -19,18 +19,20 @@ class ToolFrameFactory:
         self.tab_name_mappings = {} # Mapeia nomes originais para traduzidos
         
     def create_host_skeleton(self, parent_tab_frame):
-        parent_tab_frame.grid_rowconfigure(1, weight=1)
+        parent_tab_frame.grid_rowconfigure(0, weight=1)
         parent_tab_frame.grid_columnconfigure(0, weight=1)
-        
+
+        # Criar info_display oculto para compatibilidade (usado por outras funções)
         info_display = HostInfoDisplay(parent_tab_frame, self.app)
-        info_display.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 5))
+        info_display.grid_remove()  # Ocultar completamente
         info_display.update_info(ip="...", hostname=self.app.translate("loading_text"), subnet_mask="...")
-        
+
+        # Tools ocupam todo o espaço disponível
         tools_container = customtkinter.CTkFrame(parent_tab_frame, fg_color="transparent")
-        tools_container.grid(row=1, column=0, sticky="nsew", padx=10, pady=(5, 10))
+        tools_container.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
         tools_container.grid_rowconfigure(0, weight=1)
         tools_container.grid_columnconfigure(0, weight=1)
-        
+
         tool_tab_view = customtkinter.CTkTabview(tools_container)
         tool_tab_view.grid(row=0, column=0, sticky="nsew")
         

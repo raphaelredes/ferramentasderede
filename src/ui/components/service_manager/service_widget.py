@@ -52,13 +52,13 @@ class ServiceWidget(customtkinter.CTkFrame):
             stop_fg = "#E74C3C"
             stop_hover = "#C0392B"
             
-        start_btn = customtkinter.CTkButton(button_frame, text="▶", width=30, command=lambda: self.action_callback(name, "start"), fg_color=start_fg, hover_color=start_hover)
+        start_btn = customtkinter.CTkButton(button_frame, text="Iniciar", width=60, command=lambda: self.action_callback(name, "start"), fg_color=start_fg, hover_color=start_hover, text_color="white")
         start_btn.pack(side="left", padx=2)
-        
-        stop_btn = customtkinter.CTkButton(button_frame, text="■", width=30, command=lambda: self.action_callback(name, "stop"), fg_color=stop_fg, hover_color=stop_hover)
+
+        stop_btn = customtkinter.CTkButton(button_frame, text="Parar", width=60, command=lambda: self.action_callback(name, "stop"), fg_color=stop_fg, hover_color=stop_hover, text_color="white")
         stop_btn.pack(side="left", padx=2)
-        
-        restart_btn = customtkinter.CTkButton(button_frame, text="⟳", width=30, command=lambda: self.action_callback(name, "restart"))
+
+        restart_btn = customtkinter.CTkButton(button_frame, text="Reiniciar", width=70, command=lambda: self.action_callback(name, "restart"), text_color="white")
         restart_btn.pack(side="left", padx=2)
         
         # Armazenar referências para atualização de tema
@@ -92,12 +92,14 @@ class ServiceWidget(customtkinter.CTkFrame):
         if hasattr(self, 'status_label'):
             self.status_label.configure(text_color=status_color)
         if hasattr(self, 'start_btn'):
-            self.start_btn.configure(fg_color=start_fg, hover_color=start_hover)
+            self.start_btn.configure(fg_color=start_fg, hover_color=start_hover, text_color="white")
         if hasattr(self, 'stop_btn'):
-            self.stop_btn.configure(fg_color=stop_fg, hover_color=stop_hover)
+            self.stop_btn.configure(fg_color=stop_fg, hover_color=stop_hover, text_color="white")
+        if hasattr(self, 'restart_btn'):
+            self.restart_btn.configure(text_color="white")
 
         if is_running:
-            start_btn.configure(state="disabled")
-        else: 
-            stop_btn.configure(state="disabled")
-            restart_btn.configure(state="disabled")
+            start_btn.configure(state="disabled", text_color="white")
+        else:
+            stop_btn.configure(state="disabled", text_color="white")
+            restart_btn.configure(state="disabled", text_color="white")

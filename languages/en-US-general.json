@@ -61,7 +61,7 @@
     "ui_tv_id": "TeamViewer ID:",
     "user_cancelled_operation": "Operation canceled by user.",
     "welcome_message": "No host selected.\n\nPlease select a host from the tab above or add a new host to begin.",
-    "about_ai_assistance": "Developed with the assistance of Google AI Studio tools.",
+    "about_ai_assistance": "Developed with the assistance of Google AI Studio, Cursor, and Claude Code tools.",
     "about_description": "A collection of tools for network diagnosis and management, designed to simplify common tasks for system administrators.",
     "about_developed_by": "Developed by:",
     "about_features_list": "• Network Diagnostics: Continuous ping, Traceroute, and port scanning.\n• Host Discovery: Local, remote, and custom network scanning.\n• Quick Remote Actions: RDP, MSRA, and Wake-on-LAN (WOL).\n• Remote Management (WinRM): System info, service and event log management, user activity analysis, shutdown/restart, and interactive shell.\n• Credential Vault: Secure and encrypted session-based password manager.\n• Host Management: Import/export lists (CSV), nicknames, and reordering.",
@@ -92,5 +92,6 @@
     "status_ready": "Ready",
     "status_running_command": "Running {command}...",
     "status_command_completed": "{command} completed",
-    "status_command_failed": "{command} failed"
+    "status_command_failed": "{command} failed",
+    "tab_settings_button_tooltip": "Tab settings"
 }

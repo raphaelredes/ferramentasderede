@@ -183,5 +183,9 @@
     "service_click_refresh": "Clique em 'Atualizar Lista' para buscar os serviços deste host.",
     "service_loading_remote": "Buscando serviços remotos na rede...",
     "service_no_services_found": "Nenhum serviço encontrado com este filtro.",
-    "service_click_refresh_short": "Clique em 'Atualizar Lista' para buscar os serviços."
+    "service_click_refresh_short": "Clique em 'Atualizar Lista' para buscar os serviços.",
+    "pagination_first": "Primeira",
+    "pagination_prev": "Anterior",
+    "pagination_next": "Próxima",
+    "pagination_last": "Última"
 }

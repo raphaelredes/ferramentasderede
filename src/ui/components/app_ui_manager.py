@@ -73,26 +73,43 @@ class AppUIManager:
         """Cria os botões de ação principais."""
         # Container de botões sem bordas
         button_container = customtkinter.CTkFrame(
-            parent, 
+            parent,
             fg_color="transparent",
             corner_radius=0,
             border_width=0
         )
         button_container.grid(row=0, column=0, sticky="w", padx=(0, 20))
-        
+
+        # Botão para adicionar novo host
+        self.app.add_host_button = customtkinter.CTkButton(
+            button_container, text="+ Host", width=80, height=32,
+            font=customtkinter.CTkFont(size=12, weight="bold"),
+            text_color="white",
+            command=self.controller.add_new_host
+        )
+        self.app.add_host_button.pack(side="left", padx=(0, 10))
+
+        # Botão de configurações das abas
+        self.app.tab_settings_button = customtkinter.CTkButton(
+            button_container, text="⚙️", width=40, height=32,
+            font=customtkinter.CTkFont(size=14),
+            text_color="white",
+            command=self.controller.open_tab_settings_dialog
+        )
+        self.app.tab_settings_button.pack(side="left", padx=(0, 20))
+
         self.app.actions_menu_keys = [
-            "title_add_host", 
             "title_remove_hosts",
-            "actions_import", 
-            "actions_export", 
+            "actions_import",
+            "actions_export",
             "actions_manage_creds"
         ]
         # Inicializar com valores traduzidos imediatamente
         initial_values = [self.translator.translate(key) for key in self.app.actions_menu_keys]
         self.app.actions_menu = customtkinter.CTkOptionMenu(
-            button_container, 
+            button_container,
             values=initial_values,
-            width=200,  # Largura TOTALMENTE fixa
+            width=180,  # Largura ajustada
             height=32,  # Altura TOTALMENTE fixa
             font=customtkinter.CTkFont(size=12),  # Fonte fixa
             dropdown_font=customtkinter.CTkFont(size=11)  # Fonte dropdown fixa
@@ -143,7 +160,7 @@ class AppUIManager:
             settings_container, 
             text="", 
             anchor="w", 
-            text_color=("gray10", "gray90"),
+            text_color="white",
             width=80,  # Largura TOTALMENTE fixa
             height=32,  # Altura TOTALMENTE fixa
             font=customtkinter.CTkFont(size=12)  # Fonte fixa
@@ -189,7 +206,7 @@ class AppUIManager:
             width=80,  # Largura TOTALMENTE fixa
             height=28,  # Altura TOTALMENTE fixa
             fg_color="transparent", 
-            text_color=("gray10", "#DCE4EE"), 
+            text_color="white", 
             hover=False, 
             command=lambda: show_about_popup(self.app),
             corner_radius=6,
@@ -214,22 +231,26 @@ class AppUIManager:
         """Atualiza todos os textos da UI para o idioma atual."""
         translated_title = self.translator.translate("title_app")
         self.app.title(translated_title)
-        
+
         self.app.about_button.configure(text=self.translator.translate("title_about"))
-        
+
+        # Atualizar textos dos novos botões
+        if hasattr(self.app, 'add_host_button'):
+            self.app.add_host_button.configure(text="+ Host")
+
         self.app.language_menu.set(self.settings.get_language_display_name(self.app.current_language))
         self.app.appearance_mode_label.configure(text=self.translator.translate("ui_appearance"))
-        
+
         translated_appearance_modes = [
-            self.translator.translate("label_system"), 
-            self.translator.translate("label_light"), 
+            self.translator.translate("label_system"),
+            self.translator.translate("label_light"),
             self.translator.translate("label_dark")
         ]
         self.app.appearance_mode_menu.configure(values=translated_appearance_modes)
         self.app.appearance_mode_menu.set(self.settings.get_appearance_mode_display_name(self.app.current_appearance_mode))
-        
+
         self._update_actions_menu()
-        
+
         if hasattr(self.app, 'host_tab_view') and self.app.host_tab_view:
             self.app.host_tab_view.update_language()
 
@@ -247,11 +268,11 @@ class AppUIManager:
             # Verificar se é uma escolha válida
             if not translated_choice:
                 return
-                
+
             # Verificar se é o título do menu (evitar flicker)
             if translated_choice == self.translator.translate("actions_menu_title"):
                 return
-                
+
             key = self._action_text_to_key_map.get(translated_choice)
             if key:
                 self.app.handle_action_menu(key)

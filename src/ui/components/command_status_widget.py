@@ -30,7 +30,7 @@ class CommandStatusWidget(customtkinter.CTkFrame):
             text="●",
             font=customtkinter.CTkFont(size=16),
             width=20,
-            text_color="gray60"
+            text_color="white"
         )
         self.status_indicator.grid(row=0, column=0, padx=(0, 5), sticky="w")
         
@@ -49,50 +49,28 @@ class CommandStatusWidget(customtkinter.CTkFrame):
     def start_command(self, command_name):
         """Inicia indicação de comando em execução."""
         try:
-            logging.debug(f"COMMAND_STATUS: Iniciando para comando '{command_name}'")
+            logging.debug(f"COMMAND_STATUS: Status desabilitado para comando '{command_name}'")
             self.current_command = command_name
             self.status = "running"
-            
-            # Mostrar widget
-            self.grid()
-            
-            # Atualizar textos
-            status_text = self.app.translate("status_running_command", command=command_name)
-            self.status_label.configure(text=status_text)
-            
-            # Iniciar piscar laranja
-            self._start_blink("orange")
-            
+
+            # Widget permanece oculto - não mostra status
+            # self.grid()  # Comentado para desabilitar exibição
+
         except Exception as e:
             logging.error(f"COMMAND_STATUS: Erro ao iniciar comando '{command_name}': {e}")
     
     def finish_command(self, success=True, message=None):
         """Finaliza indicação de comando."""
         try:
-            logging.debug(f"COMMAND_STATUS: Finalizando comando '{self.current_command}' sucesso={success}")
-            
-            # Parar piscar
-            self._stop_blink()
-            
-            # Definir cor e mensagem baseado no resultado
-            if success:
-                self.status = "success"
-                color = "green"
-                if not message:
-                    message = self.app.translate("status_command_completed", command=self.current_command or "comando")
-            else:
-                self.status = "error"
-                color = "red"
-                if not message:
-                    message = self.app.translate("status_command_failed", command=self.current_command or "comando")
-            
-            # Atualizar visual
-            self.status_indicator.configure(text_color=color)
-            self.status_label.configure(text=message)
-            
-            # Auto-ocultar após 3 segundos
-            self.after(3000, self._auto_hide)
-            
+            logging.debug(f"COMMAND_STATUS: Status desabilitado - finalizando comando '{self.current_command}'")
+
+            # Resetar status sem mostrar nada
+            self.status = "idle"
+            self.current_command = None
+
+            # Garantir que widget permanece oculto
+            self.grid_remove()
+
         except Exception as e:
             logging.error(f"COMMAND_STATUS: Erro ao finalizar comando: {e}")
     

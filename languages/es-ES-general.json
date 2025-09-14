@@ -61,7 +61,7 @@
     "ui_tv_id": "ID de TeamViewer:",
     "user_cancelled_operation": "Operación cancelada por el usuario.",
     "welcome_message": "Ningún host seleccionado.\n\nSeleccione un host en la lista de arriba o añada un nuevo host para empezar.",
-    "about_ai_assistance": "Desarrollado con la ayuda de herramientas de Google AI Studio.",
+    "about_ai_assistance": "Desarrollado con la ayuda de herramientas de Google AI Studio, Cursor y Claude Code.",
     "about_description": "Una colección de herramientas para diagnóstico y gestión de redes, diseñada para simplificar tareas comunes de administradores de sistemas.",
     "about_features_list": "• Diagnóstico de Red: Ping continuo, Traceroute y escaneo de puertos.\n• Descubrimiento de Hosts: Escaneo de red local, remota y personalizada.\n• Acciones Remotas Rápidas: RDP, MSRA y Wake-on-LAN (WOL).\n• Gestión Remota (WinRM): Información del sistema, gestión de servicios y registros de eventos, análisis de actividad del usuario, apagado y reinicio y shell interactivo.\n• Bóveda de Credenciales: Gestor de contraseñas seguro y cifrado para la sesión.\n• Gestión de Hosts: Importación/exportación de listas (CSV), apodos y reordenación.",
     "about_features_title": "Funcionalidades Principales:",
@@ -87,5 +87,6 @@
     "home_traceroute_placeholder": "Ingrese una IP o un hostname para rastrear...",
     "context_menu_set_nickname": "Establecer Apodo...",
     "loading_hosts": "Cargando lista de hosts...",
-    "checking_host_status": "Verificando host ({current}/{total}): {hostname}"
+    "checking_host_status": "Verificando host ({current}/{total}): {hostname}",
+    "tab_settings_button_tooltip": "Configuración de pestañas"
 }

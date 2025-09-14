@@ -152,7 +152,7 @@ class EventLogFrame(customtkinter.CTkFrame):
             
             if current_mode == "light":
                 bg_color = "#F8F9FA"  # Fundo claro melhorado
-                text_color = "#2B2B2B"  # Texto escuro
+                text_color = "white"    # Texto branco
                 header_bg = "#E9ECEF"  # Cabeçalho claro
                 oddrow_color = "#FBFBFB"  # Linha alternada
                 evenrow_color = "#F8F9FA"  # Linha par

@@ -29,11 +29,11 @@ class AddHostDialog(BaseDialog):
         self.entry.bind("<Return>", self._ok_event)
         
         # Label de status para feedback
-        self.status_label = customtkinter.CTkLabel(main_frame, text="", text_color=("gray50", "gray70"))
+        self.status_label = customtkinter.CTkLabel(main_frame, text="", text_color="white")
         self.status_label.grid(row=2, column=0, pady=(0, 15), padx=10, sticky="ew")
         
         button_frame = customtkinter.CTkFrame(main_frame, fg_color="transparent")
-        button_frame.grid(row=3, column=0, sticky="e", padx=10, pady=(5, 0))
+        button_frame.grid(row=3, column=0, padx=10, pady=(5, 0))
 
         self.ok_button = customtkinter.CTkButton(
             button_frame,
@@ -41,7 +41,7 @@ class AddHostDialog(BaseDialog):
             command=self._ok_event,
             height=32
         )
-        self.ok_button.pack(side="right", padx=(5, 0))
+        self.ok_button.pack(side="left", padx=5)
 
         cancel_button = customtkinter.CTkButton(
             button_frame,
@@ -50,7 +50,7 @@ class AddHostDialog(BaseDialog):
             fg_color="gray50",
             height=32
         )
-        cancel_button.pack(side="right", padx=(0, 5))
+        cancel_button.pack(side="left", padx=5)
         
         self.bind("<Escape>", self._cancel_event)
         
@@ -92,7 +92,7 @@ class AddHostDialog(BaseDialog):
             elif success:
                 self.status_label.configure(text=message, text_color=("green", "#51cf66"))
             else:
-                self.status_label.configure(text=message, text_color=("gray50", "gray70"))
+                self.status_label.configure(text=message, text_color="white")
             
             self.status_label.update()
         except Exception as e:

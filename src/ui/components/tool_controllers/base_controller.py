@@ -61,10 +61,9 @@ class BaseToolController:
     def setup_command_status_widget(self, parent_frame):
         """Configura o widget de status de comando para uma sub-aba."""
         try:
-            if not self.command_status_widget:
-                self.command_status_widget = CommandStatusWidget(parent_frame, self.app)
-                logging.debug(f"CommandStatusWidget criado para {self.hostname}")
-            return self.command_status_widget
+            # Status de comando desabilitado - não cria widget
+            logging.debug(f"CommandStatusWidget desabilitado para {self.hostname}")
+            return None
         except Exception as e:
             logging.error(f"Erro ao configurar CommandStatusWidget: {e}")
             return None
@@ -72,18 +71,16 @@ class BaseToolController:
     def _start_command_status(self, command_name):
         """Inicia indicação de status do comando na sub-aba."""
         try:
-            if self.command_status_widget:
-                self.command_status_widget.start_command(command_name)
-                logging.debug(f"Status do comando '{command_name}' iniciado na sub-aba")
+            # Status de comando desabilitado
+            logging.debug(f"Status de comando desabilitado para '{command_name}'")
         except Exception as e:
             logging.error(f"Erro ao iniciar status do comando na sub-aba: {e}")
     
     def _finish_command_status(self, success=True, message=None):
         """Finaliza indicação de status do comando na sub-aba."""
         try:
-            if self.command_status_widget:
-                self.command_status_widget.finish_command(success, message)
-                logging.debug(f"Status do comando finalizado na sub-aba com sucesso={success}")
+            # Status de comando desabilitado
+            logging.debug(f"Status de comando desabilitado - finalização sucesso={success}")
         except Exception as e:
             logging.error(f"Erro ao finalizar status do comando na sub-aba: {e}")
 
@@ -661,10 +658,10 @@ class BaseToolController:
                     self.running_command = None
                     self.current_process = None
                     
-                    # Notificar UI diretamente
+                    # Notificar UI diretamente - manter nome do comando para callback
                     if self.on_state_change_callback:
                         try:
-                            self.app.after_idle(lambda: self.on_state_change_callback({'running': False, 'command': None}))
+                            self.app.after_idle(lambda cmd=command_name: self.on_state_change_callback({'running': False, 'command': cmd}))
                         except:
                             pass
                     

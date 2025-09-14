@@ -71,8 +71,9 @@ class AppSettingsManager:
                 # Salvar preferências
                 self.save_ui_preferences()
                 
-                # Forçar atualização da interface
-                self.app.update_idletasks()
+                # Forçar atualização da interface (otimizado)
+                if not getattr(self.app, '_resize_in_progress', False):
+                    self.app.update_idletasks()
                 
                 logging.debug(f"Language change completed: {lang_code}")
             else:

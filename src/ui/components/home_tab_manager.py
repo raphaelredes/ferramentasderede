@@ -296,7 +296,7 @@ class HomeTabManager:
         placeholder_text = self.app.translate("scan_placeholder_tab")
         if placeholder_text not in self.scanner_results_tabs._name_list:
             placeholder_tab = self.scanner_results_tabs.add(placeholder_text)
-            label = customtkinter.CTkLabel(placeholder_tab, text=text, text_color="gray50")
+            label = customtkinter.CTkLabel(placeholder_tab, text=text, text_color="white")
             label.pack(expand=True)
             self.scanner_results_tabs.set(placeholder_text)
 

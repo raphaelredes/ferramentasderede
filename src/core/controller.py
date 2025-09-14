@@ -479,7 +479,9 @@ class AppController:
         logging.info(f"Removendo {len(hosts_to_remove)} hosts: {[h.get('name') for h in hosts_to_remove]}")
         self.app.focus_force()
         self.app.host_tab_view.tab_view.set("Home")
-        self.app.update_idletasks()
+        # Otimização: evitar update durante resize
+        if not getattr(self.app, '_resize_in_progress', False):
+            self.app.update_idletasks()
 
         self.host_manager.remove_hosts(hosts_to_remove)
         self.app.favorites = self.host_manager.get_all_hosts()

@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git branch:*)",
+      "Bash(git push:*)",
+      "WebSearch",
+      "Bash(timeout:*)",
+      "Bash(python:*)",
+      "Bash(del test_debug.py test_user_listing.py)",
+      "Bash(powershell:*)",
+      "Bash(del:*)",
+      "Bash(git add:*)",
+      "Bash(git reset:*)",
+      "Bash(taskkill:*)",
+      "Bash(find:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

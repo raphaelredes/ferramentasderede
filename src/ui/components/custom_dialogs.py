@@ -36,7 +36,7 @@ class CustomMessageBox(BaseDialog):
 
         for i, button_text in enumerate(buttons):
             is_cancel = button_text.lower() in ["não", "cancelar", "no", "cancel"]
-            
+
             button = customtkinter.CTkButton(
                 button_frame,
                 text=button_text,
@@ -46,7 +46,7 @@ class CustomMessageBox(BaseDialog):
                 button.focus_set()
                 self.bind("<Return>", lambda e, b=button_text: self._on_button_press(b))
 
-            button.grid(row=0, column=i, padx=5)
+            button.pack(side="left", padx=5)
 
     def _on_button_press(self, button_text):
         self.result = button_text
@@ -93,8 +93,8 @@ class PasswordInputDialog(BaseDialog):
         self.entry.focus_set() # Define o foco diretamente
 
         button_frame = customtkinter.CTkFrame(main_frame, fg_color="transparent")
-        button_frame.grid(row=2, column=0, sticky="e")
-        
+        button_frame.grid(row=2, column=0)
+
         ok_button = customtkinter.CTkButton(
             button_frame,
             text=self.app.translate("label_ok"),

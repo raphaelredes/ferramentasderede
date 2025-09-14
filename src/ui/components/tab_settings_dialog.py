@@ -64,23 +64,30 @@ class TabSettingsDialog(BaseDialog):
         self.populate_host_list()
 
         bottom_buttons_frame = customtkinter.CTkFrame(self, fg_color="transparent")
-        bottom_buttons_frame.grid(row=1, column=0, sticky="ew", padx=20, pady=(10, 20))
-        bottom_buttons_frame.grid_columnconfigure((0, 1), weight=1)
+        bottom_buttons_frame.grid(row=1, column=0, padx=20, pady=(10, 20))
 
-        self.save_button = customtkinter.CTkButton(bottom_buttons_frame, text=self.app.translate("label_save"), command=self.confirm)
-        self.save_button.grid(row=0, column=0, padx=(0, 5), sticky="ew")
+        # Container para botões principais (Save e Cancel)
+        main_buttons_frame = customtkinter.CTkFrame(bottom_buttons_frame, fg_color="transparent")
+        main_buttons_frame.pack()
 
-        self.cancel_button = customtkinter.CTkButton(bottom_buttons_frame, text=self.app.translate("label_cancel"), command=self.on_close, fg_color="gray50")
-        self.cancel_button.grid(row=0, column=1, padx=(5, 0), sticky="ew")
+        self.save_button = customtkinter.CTkButton(main_buttons_frame, text=self.app.translate("label_save"), command=self.confirm)
+        self.save_button.pack(side="left", padx=5)
+
+        self.cancel_button = customtkinter.CTkButton(main_buttons_frame, text=self.app.translate("label_cancel"), command=self.on_close, fg_color="gray50")
+        self.cancel_button.pack(side="left", padx=5)
+
+        # Botão de reset separado, centralizado
+        reset_frame = customtkinter.CTkFrame(bottom_buttons_frame, fg_color="transparent")
+        reset_frame.pack(pady=(10, 0))
 
         self.reset_button = customtkinter.CTkButton(
-            bottom_buttons_frame, 
-            text=self.app.translate("factory_reset_button"), 
+            reset_frame,
+            text=self.app.translate("factory_reset_button"),
             command=self.app.controller.factory_reset,
-            fg_color="#E74C3C", 
+            fg_color="#E74C3C",
             hover_color="#C0392B"
         )
-        self.reset_button.grid(row=1, column=0, columnspan=2, pady=(10, 0), sticky="ew")
+        self.reset_button.pack()
 
     def populate_host_list(self):
         logging.debug("Populating host list for editing in TabSettingsDialog")

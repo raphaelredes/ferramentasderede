@@ -37,13 +37,13 @@ class BaseDialog(customtkinter.CTkToplevel):
         self._min_height = min_height
         self._max_width = max_width
         self._max_height = max_height
-        self._auto_resize = True
+        self._auto_resize = False
         
         self.title(title)
         self.transient(app)
         
-        # Permitir redimensionamento controlado para responsividade
-        self.resizable(True, True)
+        # Impedir redimensionamento por padrão para melhor UX
+        self.resizable(False, False)
         self.minsize(min_width, min_height)
         self.maxsize(max_width, max_height)
 

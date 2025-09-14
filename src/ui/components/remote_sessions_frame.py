@@ -226,7 +226,10 @@ class RemoteSessionsFrame(customtkinter.CTkFrame):
                 self.disconnect_user_button.configure(state="disabled")
                 self.users_combobox.configure(state="disabled")
             else:
+                # SEMPRE reabilitar o botão "Listar Usuários" após a finalização,
+                # independentemente do resultado, pois novos usuários podem se conectar
                 self.list_users_button.configure(state="normal")
+
                 # O estado do disconnect_user_button e users_combobox será
                 # atualizado pelo update_users_combobox com os dados reais.
                 # Por enquanto, apenas habilitamos a listagem de novo.

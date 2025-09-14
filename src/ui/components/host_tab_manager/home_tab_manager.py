@@ -152,9 +152,8 @@ class HomeTabManager:
         # Configurar botão ping
         if ping_running:
             self.home_ping_button.configure(
-                text=self.app.translate("ping_scan_stop"), 
-                state="normal",
-                fg_color="#E74C3C"  # Vermelho para indicar "parar"
+                text=self.app.translate("ping_scan_stop"),
+                state="normal"
             )
         else:
             # Resetar para cor padrão - usar método diferente
@@ -162,29 +161,20 @@ class HomeTabManager:
                 text=self.app.translate("ping_scan_start"), 
                 state="disabled" if traceroute_running else "normal"
             )
-            # Resetar cor padrão
-            try:
-                self.home_ping_button.configure(fg_color=("gray75", "gray25"))  # Cor padrão do CTkButton
-            except:
-                pass  # Se falhar, manter cor atual
+            # Cor padrão será aplicada automaticamente
             
         # Configurar botão traceroute
         if traceroute_running:
             self.home_traceroute_button.configure(
-                text=self.app.translate("ping_scan_stop"), 
-                state="normal",
-                fg_color="#E74C3C"  # Vermelho para indicar "parar"
+                text=self.app.translate("ping_scan_stop"),
+                state="normal"
             )
         else:
             self.home_traceroute_button.configure(
                 text=self.app.translate("traceroute_start"), 
                 state="disabled" if ping_running else "normal"
             )
-            # Resetar cor padrão
-            try:
-                self.home_traceroute_button.configure(fg_color=("gray75", "gray25"))  # Cor padrão do CTkButton
-            except:
-                pass  # Se falhar, manter cor atual
+            # Cor padrão será aplicada automaticamente
 
     def _create_home_scanner_tab(self, parent_tab):
         parent_tab.grid_columnconfigure(0, weight=1)
@@ -342,7 +332,7 @@ class HomeTabManager:
         placeholder_text = self.app.translate("scan_placeholder_tab")
         if placeholder_text not in self.scanner_results_tabs._name_list:
             placeholder_tab = self.scanner_results_tabs.add(placeholder_text)
-            label = customtkinter.CTkLabel(placeholder_tab, text=text, text_color="gray50"); label.pack(expand=True)
+            label = customtkinter.CTkLabel(placeholder_tab, text=text, text_color="white"); label.pack(expand=True)
             self.scanner_results_tabs.set(placeholder_text)
 
     def _confirm_scanner_selection(self):

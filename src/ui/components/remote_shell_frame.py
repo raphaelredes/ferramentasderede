@@ -36,7 +36,7 @@ class RemoteShellFrame(customtkinter.CTkFrame):
             text="", 
             wraplength=450,
             justify="center",
-            text_color=("gray10", "gray80")
+            text_color="white"
         )
         self.info_label.pack(fill="x", expand=True, padx=10, pady=(0, 10))
 
