@@ -12,7 +12,7 @@
     "activity_log_no_events": "No se encontraron eventos de actividad en el período seleccionado.",
     "activity_log_starting": "Iniciando análisis para el período: {period}...",
     "activity_period_label": "Período de Análisis:",
-    "activity_title": "Uso e Inactividad (Beta)",
+    "activity_title": "Uso e Inactividad",
     "confirm_action_on_host": "¿Está seguro de que desea ejecutar la acción '{action}' en el host {full_display_name}?",
     "confirm_disconnect_message": "¿Está seguro de que desea desconectar al usuario '{username}' (ID: {session_id}) de {target_ip}?",
     "confirm_disconnect_title": "Confirmar Desconexión",

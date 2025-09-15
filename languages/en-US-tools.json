@@ -12,7 +12,7 @@
     "activity_log_no_events": "No activity events found in the selected period.",
     "activity_log_starting": "Starting analysis for period: {period}...",
     "activity_period_label": "Analysis Period:",
-    "activity_title": "Usage & Idleness (Beta)",
+    "activity_title": "Usage & Idleness",
     "confirm_action_on_host": "Are you sure you want to execute action '{action}' on host {full_display_name}?",
     "confirm_disconnect_message": "Are you sure you want to disconnect user '{username}' (ID: {session_id}) from {target_ip}?",
     "confirm_disconnect_title": "Confirm Disconnection",
