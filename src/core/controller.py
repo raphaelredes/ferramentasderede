@@ -219,7 +219,7 @@ class AppController:
         dialog = AddHostDialog(self.app)
         self.app.center_popup_on_main_window(dialog, 500, 400)
         raw_input = dialog.get_input()
-        
+
         if raw_input:
             logging.debug(f"Dados brutos do novo host: {raw_input}")
             parts = [p.strip() for p in raw_input.split(',')]
@@ -234,70 +234,64 @@ class AppController:
             else:
                 self.app.show_error(self.app.translate("error_invalid_format_add"))
                 return
-            
-            # Variáveis para armazenar resultados da resolução
-            resolution_data = {
-                'resolved_ip': None,
-                'resolved_hostname': None,
-                'completed': False,
-                'cancelled': False
-            }
-            
-            # Criar janela de carregamento
-            loading_window = LoadingWindow(
-                self.app,
-                description=f"Resolvendo informações para {name}...",
-                on_cancel=lambda: self._cancel_resolution(resolution_data, loading_window)
-            )
-            self.app.center_popup_on_main_window(loading_window, 400, 150)
-            
-            def resolve_host_info():
-                """Função para resolver informações do host em thread separada"""
-                try:
-                    logging.info(f"Resolvendo informações para o host: {name}")
-                    
-                    # Verificar cancelamento antes de iniciar
-                    if resolution_data['cancelled']:
-                        return
-                    
-                    # Resolver IP e hostname automaticamente
-                    resolved_ip, resolved_hostname = self.network_tools.resolve_ip_and_hostname(ip)
-                    
-                    # Verificar cancelamento após resolução
-                    if resolution_data['cancelled']:
-                        return
-                    
-                    # Atualizar dados de resolução
-                    resolution_data['resolved_ip'] = resolved_ip
-                    resolution_data['resolved_hostname'] = resolved_hostname
-                    resolution_data['completed'] = True
-                    
-                    # Continuar processamento na thread principal
-                    self.app.after(0, lambda: self._complete_host_addition(
-                        parts, name, ip, mac, resolution_data, loading_window
-                    ))
-                    
-                except Exception as e:
-                    logging.error(f"Erro ao resolver informações do host: {e}")
-                    resolution_data['completed'] = True
-                    # Continuar mesmo com erro
-                    self.app.after(0, lambda: self._complete_host_addition(
-                        parts, name, ip, mac, resolution_data, loading_window
-                    ))
-            
-            # Executar resolução em thread separada (não bloqueia UI)
-            resolution_thread = threading.Thread(target=resolve_host_info, daemon=True)
-            resolution_thread.start()
-            
-            # A partir daqui, o processamento continua em _complete_host_addition
-            return
+
+            # Adicionar host diretamente sem resolução complexa (evita travamento)
+            try:
+                logging.info(f"Adicionando host diretamente: {name} -> {ip}")
+
+                # Criar novo host com dados básicos
+                new_host = {
+                    'name': name,
+                    'ip': ip,
+                    'mac': mac if mac else "",
+                    'current_ip': ip,  # Usar IP fornecido
+                    'resolved_hostname': name  # Usar nome fornecido
+                }
+
+                # Adicionar usando o HostManager (inclui validação e salvamento)
+                success, message = self.host_manager.add_host(new_host)
+                if not success:
+                    self.app.show_error(message)
+                    return
+
+                # Atualizar lista local da aplicação
+                self.app.favorites = self.host_manager.get_all_hosts()
+
+                # Definir status inicial como offline (será verificado depois)
+                self.app.host_statuses[ip] = 'offline'
+
+                # Recriar abas para incluir o novo host
+                self.app.host_tab_view.populate_initial_tabs(self.app.favorites)
+
+                logging.info(f"Host '{name}' adicionado com sucesso.")
+
+                # Verificar status do novo host em background (não bloqueia)
+                def check_new_host_status():
+                    try:
+                        status_is_online, current_ip = self.network_tools.resolve_and_check_status(name)
+                        if current_ip:
+                            new_host['current_ip'] = current_ip
+                        new_status = 'online' if status_is_online else 'offline'
+                        self.app.host_statuses[ip] = new_status
+                        logging.info(f"Status do novo host '{name}': {new_status}")
+                    except Exception as e:
+                        logging.warning(f"Erro ao verificar status do novo host '{name}': {e}")
+
+                # Executar verificação de status em thread separada (não bloqueia)
+                status_thread = threading.Thread(target=check_new_host_status, daemon=True)
+                status_thread.start()
+
+            except Exception as e:
+                logging.error(f"Erro ao adicionar host: {e}")
+                self.app.show_error(f"Erro ao adicionar host: {e}")
+                return
     
     def _cancel_resolution(self, resolution_data, loading_window):
         """Cancela a resolução de host em andamento"""
         resolution_data['cancelled'] = True
         logging.info("Resolução de host cancelada pelo usuário")
         try:
-            loading_window.destroy()
+            loading_window._force_destroy()
         except:
             pass
     
@@ -305,7 +299,7 @@ class AppController:
         """Completa a adição do host após a resolução (ou cancelamento)"""
         try:
             # Fechar janela de carregamento
-            loading_window.destroy()
+            loading_window._force_destroy()
         except:
             pass
         

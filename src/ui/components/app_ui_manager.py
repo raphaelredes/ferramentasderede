@@ -82,7 +82,7 @@ class AppUIManager:
 
         # Botão para adicionar novo host
         self.app.add_host_button = customtkinter.CTkButton(
-            button_container, text="+ Host", width=80, height=32,
+            button_container, text="Adicionar Host", width=120, height=32,
             font=customtkinter.CTkFont(size=12, weight="bold"),
             text_color="white",
             command=self.controller.add_new_host
@@ -91,8 +91,8 @@ class AppUIManager:
 
         # Botão de configurações das abas
         self.app.tab_settings_button = customtkinter.CTkButton(
-            button_container, text="⚙️", width=40, height=32,
-            font=customtkinter.CTkFont(size=14),
+            button_container, text="Configurações das Abas", width=160, height=32,
+            font=customtkinter.CTkFont(size=12, weight="bold"),
             text_color="white",
             command=self.controller.open_tab_settings_dialog
         )
@@ -236,7 +236,7 @@ class AppUIManager:
 
         # Atualizar textos dos novos botões
         if hasattr(self.app, 'add_host_button'):
-            self.app.add_host_button.configure(text="+ Host")
+            self.app.add_host_button.configure(text="Adicionar Host")
 
         self.app.language_menu.set(self.settings.get_language_display_name(self.app.current_language))
         self.app.appearance_mode_label.configure(text=self.translator.translate("ui_appearance"))

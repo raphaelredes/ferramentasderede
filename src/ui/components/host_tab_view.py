@@ -9,6 +9,7 @@ from .host_tab_manager.tab_manager import HostTabManager
 from .host_tab_manager.home_tab_manager import HomeTabManager
 from .host_tab_manager.tool_factory import ToolFrameFactory
 from .tab_status_indicator import TabStatusIndicator
+from .multi_row_tab_view import MultiRowTabView
 
 def is_valid_ip(address):
     """Verifica se uma string é um endereço IPv4 válido."""
@@ -30,8 +31,8 @@ class HostTabView(customtkinter.CTkFrame):
         
         self.tool_factory = ToolFrameFactory(self.app)
         
-        # Layout simplificado: apenas o TabView
-        self.tab_view = customtkinter.CTkTabview(self, fg_color="transparent")
+        # Layout com MultiRowTabView para suporte a múltiplas linhas
+        self.tab_view = MultiRowTabView(self, fg_color="transparent")
         self.tab_view.pack(fill="both", expand=True)
 
         self.tab_manager = HostTabManager(self.tab_view, self.app, self.controller._on_tab_selected)

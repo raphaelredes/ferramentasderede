@@ -28,20 +28,25 @@ class NetworkToolController(BaseToolController):
     def _standalone_ping_worker(self, target, packet_size):
         """Worker simplificado e robusto para ping standalone"""
         process = None
-        
+        collected_lines = []  # Coletar linhas para estatísticas
+
         logging.info(f"PING: Iniciando ping para {target}, packet_size: {packet_size}")
-        
+
         try:
             # Executar ping com verificação frequente de is_running
             for line, process in self.network_tools.continuous_ping(target, packet_size):
                 # Armazenar processo para poder cancelar
                 self.current_process = process
-                
+
                 # VERIFICAÇÃO CRÍTICA - sair imediatamente se cancelado
                 if not self.is_running:
                     logging.info(f"PING: Cancelado pelo usuário - target: {target}")
                     break
-                    
+
+                # Coletar linha para estatísticas
+                if line.strip():
+                    collected_lines.append(line.strip())
+
                 # Enviar output diretamente para o textbox
                 try:
                     if self.output_textbox and hasattr(self.output_textbox, 'winfo_exists') and self.output_textbox.winfo_exists():
@@ -51,10 +56,10 @@ class NetworkToolController(BaseToolController):
                         self.output_textbox.configure(state="disabled")
                 except:
                     pass  # Se não conseguir escrever, continuar ping
-                    
+
         except Exception as e:
             logging.error(f"PING: Erro para {target}: {e}")
-            
+
             # Mostrar erro diretamente
             try:
                 if self.output_textbox and hasattr(self.output_textbox, 'winfo_exists') and self.output_textbox.winfo_exists():
@@ -63,11 +68,11 @@ class NetworkToolController(BaseToolController):
                     self.output_textbox.configure(state="disabled")
             except:
                 pass
-                
+
         finally:
             # LIMPEZA SIMPLIFICADA
             logging.info(f"PING: Finalizando worker para {target}")
-            
+
             # Terminar processo se ainda estiver rodando
             if process:
                 try:
@@ -78,7 +83,19 @@ class NetworkToolController(BaseToolController):
                         process.kill()
                 except:
                     pass
-                    
+
+            # Gerar e exibir estatísticas do ping
+            if collected_lines and self.is_running is False:  # Só mostrar se parou normalmente
+                try:
+                    stats = self.network_tools.generate_ping_statistics_from_output(collected_lines, target)
+                    if self.output_textbox and hasattr(self.output_textbox, 'winfo_exists') and self.output_textbox.winfo_exists():
+                        self.output_textbox.configure(state="normal")
+                        self.output_textbox.insert("end", f"\n{stats}")
+                        self.output_textbox.see("end")
+                        self.output_textbox.configure(state="disabled")
+                except Exception as e:
+                    logging.error(f"Erro ao gerar estatísticas: {e}")
+
             logging.info(f"PING: Worker finalizado para {target}")
 
     def start_standalone_traceroute(self, target, output_widget):
@@ -131,20 +148,25 @@ class NetworkToolController(BaseToolController):
     def _ping_worker(self, packet_size):
         """Worker simplificado e robusto para ping normal (abas de hosts)"""
         process = None
-        
+        collected_lines = []  # Coletar linhas para estatísticas
+
         logging.info(f"PING: Iniciando ping para {self.host['ip']}, packet_size: {packet_size}")
-        
+
         try:
             # Executar ping com verificação frequente de is_running
             for line, process in self.network_tools.continuous_ping(self.host['ip'], packet_size):
                 # Armazenar processo para poder cancelar
                 self.current_process = process
-                
+
                 # VERIFICAÇÃO CRÍTICA - sair imediatamente se cancelado
                 if not self.is_running:
                     logging.info(f"PING: Cancelado pelo usuário - IP: {self.host['ip']}")
                     break
-                    
+
+                # Coletar linha para estatísticas
+                if line.strip():
+                    collected_lines.append(line.strip())
+
                 # Enviar output diretamente para o textbox
                 try:
                     if self.output_textbox and hasattr(self.output_textbox, 'winfo_exists') and self.output_textbox.winfo_exists():
@@ -154,10 +176,10 @@ class NetworkToolController(BaseToolController):
                         self.output_textbox.configure(state="disabled")
                 except:
                     pass  # Se não conseguir escrever, continuar ping
-                    
+
         except Exception as e:
             logging.error(f"PING: Erro para {self.host['ip']}: {e}")
-            
+
             # Mostrar erro diretamente
             try:
                 if self.output_textbox and hasattr(self.output_textbox, 'winfo_exists') and self.output_textbox.winfo_exists():
@@ -166,11 +188,11 @@ class NetworkToolController(BaseToolController):
                     self.output_textbox.configure(state="disabled")
             except:
                 pass
-                
+
         finally:
             # LIMPEZA SIMPLIFICADA
             logging.info(f"PING: Finalizando worker para {self.host['ip']}")
-            
+
             # Terminar processo se ainda estiver rodando
             if process:
                 try:
@@ -181,7 +203,19 @@ class NetworkToolController(BaseToolController):
                         process.kill()
                 except:
                     pass
-                    
+
+            # Gerar e exibir estatísticas do ping
+            if collected_lines and self.is_running is False:  # Só mostrar se parou normalmente
+                try:
+                    stats = self.network_tools.generate_ping_statistics_from_output(collected_lines, self.host['ip'])
+                    if self.output_textbox and hasattr(self.output_textbox, 'winfo_exists') and self.output_textbox.winfo_exists():
+                        self.output_textbox.configure(state="normal")
+                        self.output_textbox.insert("end", f"\n{stats}")
+                        self.output_textbox.see("end")
+                        self.output_textbox.configure(state="disabled")
+                except Exception as e:
+                    logging.error(f"Erro ao gerar estatísticas: {e}")
+
             logging.info(f"PING: Worker finalizado para {self.host['ip']}")
 
     def start_ping(self, packet_size_str, output_widget, entry_widget_to_focus=None):
