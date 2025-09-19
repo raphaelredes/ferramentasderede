@@ -33,6 +33,7 @@ class AppController:
         self.app = app
         self.network_tools = NetworkTools()
         self.host_manager = HostManager()
+        self.hosts_preloaded = False
 
     def load_and_prepare_all_hosts(self, update_status_callback):
         """Carrega hosts do arquivo e verifica o status de cada um de forma otimizada."""
@@ -100,7 +101,10 @@ class AppController:
                     logging.error(f"Erro ao verificar host {host['name']}: {e}")
 
         logging.debug("'load_and_prepare_all_hosts' otimizado concluído.")
-        
+
+        # Marcar como carregado para evitar recarregamento duplo
+        self.hosts_preloaded = True
+
         # A resolução de hostname será feita sob demanda quando uma aba for selecionada
         
     def resolve_hostname_on_demand(self, host):
@@ -161,6 +165,10 @@ class AppController:
         logging.debug("Populando abas com dados pré-carregados.")
         self.app.host_tab_view.populate_initial_tabs(self.app.favorites)
         self.app.is_fully_loaded = True
+
+        # Iniciar monitoramento de status após população das abas
+        self.start_status_monitoring()
+
         logging.debug("Abas populadas e app marcado como totalmente carregado.")
 
     def reload_all_hosts_and_tabs(self, select_tab_named: str = None):
@@ -218,7 +226,7 @@ class AppController:
         logging.info("Tentativa de adicionar novo host.")
         dialog = AddHostDialog(self.app)
         self.app.center_popup_on_main_window(dialog, 500, 400)
-        raw_input = dialog.get_input()
+        raw_input, nickname_input = dialog.get_input()
 
         if raw_input:
             logging.debug(f"Dados brutos do novo host: {raw_input}")
@@ -245,7 +253,8 @@ class AppController:
                     'ip': ip,
                     'mac': mac if mac else "",
                     'current_ip': ip,  # Usar IP fornecido
-                    'resolved_hostname': name  # Usar nome fornecido
+                    'resolved_hostname': name,  # Usar nome fornecido
+                    'nickname': nickname_input if nickname_input else ""
                 }
 
                 # Adicionar usando o HostManager (inclui validação e salvamento)
@@ -558,7 +567,72 @@ class AppController:
             except OSError as e: print(f"Erro ao apagar o diretório de cache de serviços: {e}")
         
         self.app.show_info(self.app.translate("factory_reset_done_message"))
-        self.app.destroy()
+
+        # Usar o método adequado para finalização completa
+        self._force_complete_shutdown()
+
+    def _force_complete_shutdown(self):
+        """Força finalização completa da aplicação similar ao Ctrl+C."""
+        import threading
+        import time
+        import signal
+        import os
+
+        def shutdown_thread():
+            try:
+                logging.info("Iniciando processo de finalização forçada...")
+
+                # Parar todas as threads de monitoramento PRIMEIRO
+                if hasattr(self.app, 'stop_monitoring_event'):
+                    self.app.stop_monitoring_event.set()
+                    logging.debug("Evento de parada de monitoramento ativado")
+
+                # Parar outros sistemas ativos
+                self.app._loop_active = False
+                self.app._watchdog_active = False
+                self.app._is_closing = True
+
+                # Aguardar brevemente para threads pararem
+                time.sleep(0.2)
+
+                # Forçar cleanup completo
+                try:
+                    self.app._cancel_all_pending_callbacks()
+                    self.app._cleanup_callbacks()
+                except Exception as e:
+                    logging.debug(f"Erro durante cleanup forçado: {e}")
+
+                # Aguardar um pouco mais
+                time.sleep(0.1)
+
+                # Destruir a aplicação
+                try:
+                    self.app.destroy()
+                except Exception as e:
+                    logging.debug(f"Erro ao destruir aplicação: {e}")
+
+                # Simulação de Ctrl+C - enviar SIGINT para o processo
+                logging.info("Simulando Ctrl+C para finalização completa...")
+                try:
+                    os.kill(os.getpid(), signal.SIGINT)
+                except Exception as e:
+                    logging.debug(f"Erro ao enviar SIGINT: {e}")
+                    # Fallback: saída forçada
+                    import sys
+                    sys.exit(0)
+
+            except Exception as e:
+                logging.error(f"Erro durante shutdown forçado: {e}")
+                # Último recurso: saída imediata
+                import sys
+                sys.exit(1)
+
+        # Executar o shutdown em thread separada para não bloquear
+        shutdown_t = threading.Thread(target=shutdown_thread, daemon=True)
+        shutdown_t.start()
+
+        # Aguardar um momento para a thread iniciar
+        time.sleep(0.05)
 
     def change_host_ip_manual(self, host, new_ip):
         """Atualiza o IP do host manualmente e retorna para a aba Home."""
@@ -709,7 +783,10 @@ class AppController:
 
     def _status_monitoring_worker(self):
         logging.debug("Worker de monitoramento de status iniciado.")
-        time.sleep(self.app.status_update_interval)
+        # Usar wait interruptível no delay inicial
+        if self.app.stop_monitoring_event.wait(timeout=self.app.status_update_interval):
+            logging.debug("Worker de monitoramento interrompido durante delay inicial.")
+            return
         while not self.app.stop_monitoring_event.is_set():
             logging.debug("Iniciando novo ciclo de verificação de status.")
             hosts_to_check = self.host_manager.get_all_hosts()
@@ -737,7 +814,9 @@ class AppController:
                     self.app.after(0, self.app.host_tab_view.update_host_status_indicator, host['name'])
             
             logging.debug(f"Ciclo de verificação de status concluído. Aguardando {self.app.status_update_interval} segundos.")
-            time.sleep(self.app.status_update_interval)
+            # Usar wait interruptível ao invés de sleep para parar imediatamente quando necessário
+            if self.app.stop_monitoring_event.wait(timeout=self.app.status_update_interval):
+                break  # Evento foi ativado, sair do loop
         logging.debug("Worker de monitoramento de status finalizado.")
 
     def is_any_tool_running(self):

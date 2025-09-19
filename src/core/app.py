@@ -48,7 +48,7 @@ from src.ui.components.vault_prompt_dialog import VaultPromptDialog
 from src.utils.performance_monitor import PerformanceMonitor
 
 class App(customtkinter.CTk):
-    def __init__(self, base_dir):
+    def __init__(self, base_dir, loading_window=None):
         super().__init__()
 
         # Ocultar janela até que seja centralizada
@@ -57,6 +57,8 @@ class App(customtkinter.CTk):
         self._is_closing = False
         self._callback_protection_active = False
         self.base_dir = base_dir
+        self.loading_window = loading_window
+        self._initialization_complete = False
 
         try:
             salt_path = os.path.join(self.base_dir, SALT_FILE)
@@ -141,7 +143,12 @@ class App(customtkinter.CTk):
         self._setup_fluid_ui_system()
         self._fix_window_borders()
         
-        # Não esconder a janela - ela deve ser visível desde o início
+        # Marcar inicialização como completa
+        self._initialization_complete = True
+
+        # Se há uma janela de carregamento, notificar que a inicialização terminou
+        if self.loading_window:
+            self.after(100, lambda: self.loading_window.update_step("Interface criada", "Carregando dados em segundo plano..."))
 
     def _get_windows_screen_info(self):
         """Obtém informações básicas da tela."""
@@ -382,8 +389,7 @@ class App(customtkinter.CTk):
             # Tentar configurar cores adicionais do Tkinter
             try:
                 self.configure(bg=bg_color)
-                self.tk.call('wm', 'attributes', self._w, '-alpha', 0.99)  # Pequena transparência para forçar composição
-                self.tk.call('wm', 'attributes', self._w, '-alpha', 1.0)   # Voltar à opacidade total
+                self.tk.call('wm', 'attributes', self._w, '-alpha', 1.0)  # 100% opaco por padrão
             except:
                 pass
             
@@ -437,7 +443,11 @@ class App(customtkinter.CTk):
                 icon_set = True
             
             if not icon_set and self.app_photo_icon:
-                self.iconphoto(True, self.app_photo_icon)
+                try:
+                    self.iconphoto(True, self.app_photo_icon)
+                except Exception as e:
+                    logging.debug(f"Erro ao definir iconphoto: {e}")
+                    self.app_photo_icon = None
 
             if not self.app_ctk_icon and not icon_set:
                  logging.debug("Ícones não encontrados na pasta 'assets/'")
@@ -1055,40 +1065,144 @@ class App(customtkinter.CTk):
         # Sempre perguntar confirmação, mesmo com comandos em andamento
         if self.ask_yes_no(self.translate("confirm_exit_title"), self.translate("confirm_exit_message")):
             self._is_closing = True
-            
-            # Limpar otimizadores de performance
-            if hasattr(self, 'performance_optimizer'):
-                self.performance_optimizer.cleanup()
-            
-            if hasattr(self, 'advanced_optimizer'):
-                self.advanced_optimizer.cleanup()
-                
-            # Parar monitor de performance
-            if hasattr(self, 'performance_monitor'):
-                self.performance_monitor.stop_monitoring()
-            
-            self.cred_service.lock()
+
+            # Iniciar processo de finalização robusta incluindo simulação de Ctrl+C
+            self._execute_complete_shutdown()
+
+    def _execute_complete_shutdown(self):
+        """Executa finalização completa com simulação de Ctrl+C."""
+        import threading
+        import time
+        import signal
+
+        def shutdown_thread():
             try:
-                if os.path.exists(os.path.join(self.base_dir, CRED_FILE)): os.remove(os.path.join(self.base_dir, CRED_FILE))
-                if os.path.exists(os.path.join(self.base_dir, SALT_FILE)): os.remove(os.path.join(self.base_dir, SALT_FILE))
-            except OSError as e:
-                logging.error(f"Erro ao apagar arquivos do cofre: {e}")
-            
-            self.settings_manager.save_ui_preferences()
-            self.stop_monitoring_event.set()
-            
-            # Fechar quaisquer diálogos abertos antes de destruir a aplicação
-            try:
-                for child in self.winfo_children():
-                    if hasattr(child, 'destroy'):
-                        try:
-                            child.destroy()
-                        except:
-                            pass
-            except:
-                pass
-            
-            self.destroy()
+                logging.info("Iniciando finalização completa da aplicação...")
+
+                # Parar sistemas de monitoramento primeiro
+                self._loop_active = False
+                self._watchdog_active = False
+
+                # Parar threads de monitoramento
+                try:
+                    self.stop_monitoring_event.set()
+                except Exception as e:
+                    logging.debug(f"Erro ao parar threads: {e}")
+
+                # Aguardar threads pararem
+                time.sleep(0.2)
+
+                # Limpar callbacks pendentes ANTES de outras operações
+                self._cancel_all_pending_callbacks()
+
+                # Limpar otimizadores de performance
+                if hasattr(self, 'performance_optimizer'):
+                    try:
+                        self.performance_optimizer.cleanup()
+                    except Exception as e:
+                        logging.debug(f"Erro ao limpar performance_optimizer: {e}")
+
+                if hasattr(self, 'advanced_optimizer'):
+                    try:
+                        self.advanced_optimizer.cleanup()
+                    except Exception as e:
+                        logging.debug(f"Erro ao limpar advanced_optimizer: {e}")
+
+                # Parar monitor de performance
+                if hasattr(self, 'performance_monitor'):
+                    try:
+                        self.performance_monitor.stop_monitoring()
+                    except Exception as e:
+                        logging.debug(f"Erro ao parar performance_monitor: {e}")
+
+                # Operações de limpeza
+                try:
+                    self.cred_service.lock()
+                except Exception as e:
+                    logging.debug(f"Erro ao bloquear credenciais: {e}")
+
+                # Remover arquivos temporários
+                try:
+                    if os.path.exists(os.path.join(self.base_dir, CRED_FILE)):
+                        os.remove(os.path.join(self.base_dir, CRED_FILE))
+                    if os.path.exists(os.path.join(self.base_dir, SALT_FILE)):
+                        os.remove(os.path.join(self.base_dir, SALT_FILE))
+                except OSError as e:
+                    logging.debug(f"Erro ao apagar arquivos do cofre: {e}")
+
+                # Salvar configurações
+                try:
+                    self.settings_manager.save_ui_preferences()
+                except Exception as e:
+                    logging.debug(f"Erro ao salvar configurações: {e}")
+
+                # Fechar diálogos filhos
+                self._close_child_windows()
+
+                # Chamar limpeza de callbacks final
+                self._cleanup_callbacks()
+
+                # Aguardar para garantir que threads parem completamente
+                time.sleep(0.3)
+
+                # Força parada de todos os handlers de eventos
+                try:
+                    self.quit()
+                except Exception as e:
+                    logging.debug(f"Erro no quit: {e}")
+
+                # Aguardar callbacks finalizarem
+                time.sleep(0.1)
+
+                # Destruir janela
+                try:
+                    self.destroy()
+                except Exception as e:
+                    logging.debug(f"Erro no destroy: {e}")
+
+                # Aguardar destruição completar
+                time.sleep(0.1)
+
+                # Força saída do mainloop do tkinter
+                try:
+                    import tkinter
+                    if hasattr(tkinter, '_default_root') and tkinter._default_root:
+                        tkinter._default_root.quit()
+                        tkinter._default_root.destroy()
+                except Exception as e:
+                    logging.debug(f"Erro ao limpar tkinter root: {e}")
+
+                # Verificar threads ativas e forçar finalização
+                active_threads = [t for t in threading.enumerate() if t != threading.current_thread() and not t.daemon]
+                if active_threads:
+                    logging.debug(f"Threads ainda ativas: {[t.name for t in active_threads]}")
+
+                # SEMPRE simular Ctrl+C para garantir finalização completa
+                logging.info("Simulando Ctrl+C para finalização completa...")
+                time.sleep(0.1)
+                os.kill(os.getpid(), signal.SIGINT)
+
+            except Exception as e:
+                logging.error(f"Erro durante shutdown completo: {e}")
+                # Força saída mesmo se houver erro
+                import sys
+                sys.exit(0)
+
+        # Executar shutdown em thread separada para não bloquear
+        shutdown_t = threading.Thread(target=shutdown_thread, daemon=True)
+        shutdown_t.start()
+
+    def _close_child_windows(self):
+        """Fecha todas as janelas filhas de forma segura."""
+        try:
+            for child in list(self.winfo_children()):
+                if hasattr(child, 'destroy'):
+                    try:
+                        child.destroy()
+                    except Exception as e:
+                        logging.debug(f"Erro ao fechar janela filha: {e}")
+        except Exception as e:
+            logging.debug(f"Erro ao enumerar janelas filhas: {e}")
     
     def show_security_info_dialog(self):
         dialog = SecurityInfoDialog(self)
@@ -1232,22 +1346,38 @@ class App(customtkinter.CTk):
     def run(self):
         """Inicia a aplicação com carregamento otimizado e proteção contra loops."""
         try:
+            logging.info("=== INICIANDO RUN() DA APLICAÇÃO PRINCIPAL ===")
+
             # Sistema de proteção contra loops
             self._setup_loop_protection()
-            
+
             # Iniciar monitoramento de performance
             self.performance_monitor.start_monitoring()
             logging.info("Monitor de performance iniciado")
-            
-            # Mostrar a janela principal primeiro (inicialização rápida)
+
+            # Verificar se widgets foram criados
+            if not hasattr(self, 'ui_manager') or not self.ui_manager:
+                logging.error("ERRO CRÍTICO: ui_manager não foi criado!")
+                return
+
+            logging.info("Widgets verificados - OK")
+
+            # Mostrar a janela principal PRIMEIRO
+            logging.info("Mostrando janela principal...")
             self.show_main_window()
-            
-            # Carregar dados em background após mostrar a janela
-            self.after(100, self._load_data_in_background)
-            
-            # Iniciar watchdog para monitorar o mainloop
-            self._start_mainloop_watchdog()
-            
+
+            # Garantir que a janela está visível antes de popular abas
+            self.update_idletasks()
+
+            logging.info("Janela principal mostrada")
+
+            # Forçar atualização da janela para garantir renderização
+            self.update()
+            self.focus_force()
+
+            # Continuar inicialização
+            self._continue_initialization()
+
             # Iniciar o loop principal com proteção
             logging.info("Iniciando mainloop com proteção anti-travamento...")
             self.mainloop()
@@ -1263,7 +1393,230 @@ class App(customtkinter.CTk):
             raise
         finally:
             # Garantir limpeza mesmo em caso de erro
+            logging.debug("Finalizando método run()")
             self._cleanup_on_exit()
+
+    def _on_data_loaded(self):
+        """Callback chamado quando dados são carregados durante inicialização."""
+        logging.info("Dados carregados - marcando para populacao posterior")
+        # Apenas marcar que dados estão prontos
+        self.controller.hosts_preloaded = True
+
+    def _continue_initialization(self):
+        """Continua a inicialização com population direta das abas."""
+
+        # Aguardar até que TODAS as funcionalidades estejam 100% carregadas
+        if hasattr(self.controller, 'hosts_preloaded') and self.controller.hosts_preloaded:
+            logging.info("Dados pré-carregados detectados - aguardando carregamento 100% completo...")
+            # Iniciar verificação completa das funcionalidades
+            self.after(100, self._check_complete_readiness)
+        else:
+            # Carregar dados em background se não foram pré-carregados
+            self._load_data_in_background()
+
+        # Iniciar watchdog para monitorar o mainloop
+        self._start_mainloop_watchdog()
+
+    def _check_complete_readiness(self, attempt=0):
+        """Verifica se TODAS as funcionalidades da aplicação estão 100% prontas."""
+        max_attempts = 50  # Máximo 10 segundos (50 * 200ms)
+
+        # Lista de verificações que devem estar TODAS prontas
+        readiness_checks = {
+            "window_visible": self._is_window_fully_visible(),
+            "ui_manager_ready": self._is_ui_manager_ready(),
+            "host_tab_view_ready": self._is_host_tab_view_ready(),
+            "fonts_available": self._are_fonts_available(),
+            "main_components_ready": self._are_main_components_ready(),
+            "tkinter_root_ready": self._ensure_hidden_tkinter_root(),
+            "performance_monitor_ready": self._is_performance_monitor_ready()
+        }
+
+        # Verificar se TODOS os componentes estão prontos
+        all_ready = all(readiness_checks.values())
+        not_ready = [name for name, ready in readiness_checks.items() if not ready]
+
+        if all_ready:
+            logging.info("100% CONFIRMADO: Todas as funcionalidades estão prontas!")
+            logging.info("Executando população das abas...")
+            self._safe_populate_tabs()
+        else:
+            if attempt < max_attempts:
+                logging.debug(f"Aguardando componentes: {', '.join(not_ready)} (tentativa {attempt+1}/{max_attempts})")
+                self.after(200, lambda: self._check_complete_readiness(attempt + 1))
+            else:
+                logging.warning(f"Timeout aguardando componentes: {', '.join(not_ready)}")
+                logging.warning("Executando população mesmo sem todos os componentes prontos...")
+                self._safe_populate_tabs()
+
+    def _is_window_fully_visible(self):
+        """Verifica se a janela está completamente visível."""
+        try:
+            return (self.winfo_viewable() and
+                   self.winfo_width() > 100 and
+                   self.winfo_height() > 100 and
+                   self.state() == 'normal')
+        except:
+            return False
+
+    def _is_ui_manager_ready(self):
+        """Verifica se o ui_manager está pronto."""
+        try:
+            return (hasattr(self, 'ui_manager') and
+                   self.ui_manager is not None and
+                   hasattr(self.ui_manager, 'create_widgets'))
+        except:
+            return False
+
+    def _is_host_tab_view_ready(self):
+        """Verifica se o host_tab_view está pronto."""
+        try:
+            return (hasattr(self, 'host_tab_view') and
+                   self.host_tab_view is not None and
+                   hasattr(self.host_tab_view, 'tab_view') and
+                   self.host_tab_view.tab_view is not None)
+        except:
+            return False
+
+    def _are_fonts_available(self):
+        """Verifica se as fontes CustomTkinter estão disponíveis."""
+        try:
+            import customtkinter
+            import tkinter
+
+            # Verificar se existe uma janela root para suporte de fontes
+            root = tkinter._get_default_root()
+            if root is None:
+                return False
+
+            # Tentar criar uma fonte de teste
+            test_font = customtkinter.CTkFont(size=11)
+            return True
+        except Exception as e:
+            logging.debug(f"Fontes não disponíveis: {e}")
+            return False
+
+    def _are_main_components_ready(self):
+        """Verifica se os componentes principais estão prontos."""
+        try:
+            return (hasattr(self, 'controller') and
+                   self.controller is not None and
+                   hasattr(self, 'translator') and
+                   self.translator is not None)
+        except:
+            return False
+
+    def _ensure_hidden_tkinter_root(self):
+        """Garante que existe uma janela Tk root mas mantém ela completamente oculta."""
+        try:
+            import tkinter
+
+            # Verificar se já existe uma janela root
+            root = tkinter._get_default_root()
+
+            if root is None:
+                # Criar janela root oculta
+                root = tkinter.Tk()
+                root.withdraw()  # Ocultar imediatamente
+                root.attributes('-alpha', 0.0)  # Tornar completamente transparente
+                root.geometry('1x1+9999+9999')  # Tamanho mínimo e posição fora da tela
+                root.overrideredirect(True)  # Remover barra de título
+
+                logging.debug("Janela Tk root oculta criada para suporte a fontes")
+            else:
+                # Se já existe, garantir que está oculta
+                try:
+                    root.withdraw()
+                    root.attributes('-alpha', 0.0)
+                    root.geometry('1x1+9999+9999')
+                    root.overrideredirect(True)
+                except:
+                    pass  # Ignorar erros se a janela já estiver configurada
+
+            return True
+
+        except Exception as e:
+            logging.debug(f"Erro ao configurar janela root oculta: {e}")
+            return False
+
+    def _is_performance_monitor_ready(self):
+        """Verifica se o monitor de performance está pronto."""
+        try:
+            return (hasattr(self, 'performance_monitor') and
+                   self.performance_monitor is not None and
+                   hasattr(self.performance_monitor, 'start_monitoring'))
+        except:
+            return False
+
+    def _safe_populate_tabs(self, attempt=0):
+        """População segura das abas com tratamento de erros e retry."""
+        max_attempts = 5
+
+        # Verificar se fonts estão disponíveis
+        try:
+            import customtkinter
+            # Tentar criar uma fonte de teste
+            test_font = customtkinter.CTkFont(size=11)
+            # Se chegou aqui, fonts estão disponíveis
+            try:
+                self._populate_tabs_directly()
+                logging.info("Abas populadas com sucesso!")
+                return
+            except Exception as e:
+                logging.error(f"Erro ao popular abas: {e}")
+                # Se falhar, tentar com abordagem simples
+                self._populate_tabs_simple()
+                return
+        except Exception as e:
+            # Fonts ainda não estão disponíveis
+            if attempt < max_attempts:
+                logging.debug(f"Fonts não disponíveis na tentativa {attempt+1}, tentando novamente em 200ms...")
+                self.after(200, lambda: self._safe_populate_tabs(attempt + 1))
+            else:
+                logging.warning("Fonts não disponíveis após várias tentativas, usando abordagem simples")
+                self._populate_tabs_simple()
+
+    def _populate_tabs_directly(self):
+        """Popula abas diretamente sem verificações complexas."""
+        # Verificar se componentes básicos existem
+        if not hasattr(self, 'host_tab_view') or not self.host_tab_view:
+            raise Exception("host_tab_view não disponível")
+
+        if not hasattr(self.host_tab_view, 'tab_view') or not self.host_tab_view.tab_view:
+            raise Exception("tab_view não disponível")
+
+        # Population direta
+        self.controller.populate_tabs_with_preloaded_data()
+
+    def _populate_tabs_simple(self):
+        """Population simplificada como fallback."""
+        logging.info("Executando population simplificada...")
+        try:
+            # Criar apenas aba de placeholder sem fontes customizadas
+            if hasattr(self, 'host_tab_view') and self.host_tab_view:
+                placeholder_name = "Selecionar Host"
+                try:
+                    # Tentar adicionar placeholder de forma simples
+                    placeholder_tab = self.host_tab_view.tab_view.add(placeholder_name)
+                    # Configurar placeholder básico sem fonts customizadas
+                    import customtkinter
+                    label = customtkinter.CTkLabel(placeholder_tab, text="Selecione um host para começar")
+                    label.pack(expand=True)
+                    logging.info("Placeholder criado com sucesso")
+                except Exception as e:
+                    logging.error(f"Erro ao criar placeholder: {e}")
+                    # Fallback final: usar Tkinter básico
+                    try:
+                        import tkinter
+                        placeholder_tab = self.host_tab_view.tab_view.add(placeholder_name)
+                        label = tkinter.Label(placeholder_tab, text="Selecione um host para começar", bg="gray90")
+                        label.pack(expand=True)
+                        logging.info("Placeholder Tkinter criado com sucesso")
+                    except Exception as e2:
+                        logging.error(f"Erro no fallback Tkinter: {e2}")
+        except Exception as e:
+            logging.error(f"Erro na population simplificada: {e}")
+
     
     def _setup_loop_protection(self):
         """Configura sistema de proteção contra loops infinitos."""
@@ -1285,211 +1638,340 @@ class App(customtkinter.CTk):
         logging.info("Sistema de proteção contra loops configurado")
     
     def _start_mainloop_watchdog(self):
-        """Inicia o watchdog que monitora o mainloop."""
+        """Inicia o sistema de monitoramento simplificado do mainloop."""
         import threading
-        
-        def watchdog_worker():
+
+        def simple_watchdog():
             import time
             self._watchdog_active = True
-            logging.info("Watchdog do mainloop iniciado")
-            
+            logging.debug("Sistema de monitoramento simplificado iniciado")
+
             while self._loop_active and self._watchdog_active:
                 try:
                     current_time = time.time()
-                    
-                    # Verificar se o mainloop está respondendo
-                    if current_time - self._last_heartbeat > self._max_inactive_time:
-                        logging.error("DETECTADO: Mainloop travado há mais de 10 segundos!")
-                        logging.error("Iniciando encerramento de emergência...")
-                        self._emergency_shutdown()
-                        break
-                    
-                    # Verificar se há muitos callbacks (possível loop)
-                    if current_time - self._callback_reset_time >= 1.0:
-                        if self._callback_count > self._callback_threshold:
-                            logging.error(f"DETECTADO: Loop de callbacks! {self._callback_count} callbacks em 1 segundo")
-                            logging.error("Iniciando encerramento de emergência...")
-                            self._emergency_shutdown()
-                            break
-                        
-                        # Reset contador
-                        self._callback_count = 0
-                        self._callback_reset_time = current_time
-                    
-                    # Aguardar antes da próxima verificação
-                    time.sleep(2.0)
-                    
+
+                    # Verificação básica - apenas detectar travamentos graves
+                    if current_time - self._last_heartbeat > 30.0:  # 30 segundos (mais permissivo)
+                        logging.warning("Mainloop não responde há 30 segundos")
+                        # Não força encerramento - apenas avisa
+
+                    # Aguardar mais tempo entre verificações
+                    time.sleep(5.0)
+
                 except Exception as e:
-                    logging.error(f"Erro no watchdog: {e}")
+                    logging.debug(f"Erro no watchdog: {e}")
                     break
-            
-            logging.info("Watchdog do mainloop finalizado")
-        
-        # Iniciar watchdog em thread separada
-        watchdog_thread = threading.Thread(target=watchdog_worker, daemon=True, name="MainloopWatchdog")
+
+            logging.debug("Sistema de monitoramento finalizado")
+
+        # Iniciar watchdog simplificado
+        watchdog_thread = threading.Thread(target=simple_watchdog, daemon=True, name="SimpleWatchdog")
         watchdog_thread.start()
-        
-        # Iniciar heartbeat do mainloop
+
+        # Iniciar heartbeat simplificado
         self._schedule_heartbeat()
     
     def _schedule_heartbeat(self):
-        """Agenda o próximo heartbeat do mainloop."""
-        if self._loop_active and self._watchdog_active:
+        """Agenda o próximo heartbeat otimizado do mainloop."""
+        if self._loop_active and self._watchdog_active and not self._is_closing:
             try:
                 import time
                 self._last_heartbeat = time.time()
-                self._callback_count += 1
-                
-                # Agendar próximo heartbeat
-                self.after(int(self._heartbeat_interval * 1000), self._schedule_heartbeat)
-                
+
+                # Verificar se ainda estamos ativos antes de agendar
+                if not self._is_closing:
+                    # Usar uma função nomeada para evitar problemas com lambdas
+                    heartbeat_id = self.after(15000, self._safe_heartbeat_callback)  # 15 segundos
+                    # Armazenar ID para cancelamento posterior se necessário
+                    if not hasattr(self, '_heartbeat_ids'):
+                        self._heartbeat_ids = []
+                    self._heartbeat_ids.append(heartbeat_id)
+
             except Exception as e:
-                logging.error(f"Erro no heartbeat: {e}")
-                self._emergency_shutdown()
+                logging.debug(f"Erro no heartbeat: {e}")
+
+    def _safe_heartbeat_callback(self):
+        """Callback seguro para heartbeat que verifica estado antes de executar."""
+        try:
+            if not self._is_closing and self._loop_active and self._watchdog_active:
+                self._schedule_heartbeat()
+        except Exception as e:
+            logging.debug(f"Erro no callback de heartbeat: {e}")
     
     def _emergency_shutdown(self):
-        """Encerramento de emergência da aplicação."""
-        logging.critical("=== ENCERRAMENTO DE EMERGÊNCIA ATIVADO ===")
-        
+        """Encerramento simplificado da aplicação."""
+        logging.warning("=== ENCERRAMENTO SOLICITADO ===")
+
         try:
-            # Parar watchdog
+            # Parar sistemas de monitoramento
             self._loop_active = False
             self._watchdog_active = False
-            
-            # Tentar encerramento gracioso primeiro
+
+            # Encerramento gracioso
             if hasattr(self, 'quit'):
-                logging.info("Tentando encerramento gracioso...")
+                logging.info("Executando encerramento gracioso...")
                 self.quit()
-            
-            # Force timeout para encerramento
-            import threading
-            def force_exit():
-                import time
-                import os
-                time.sleep(3)  # Aguardar 3 segundos para encerramento gracioso
-                logging.critical("Forçando encerramento do processo...")
-                os._exit(1)
-            
-            force_thread = threading.Thread(target=force_exit, daemon=True)
-            force_thread.start()
-            
+
         except Exception as e:
-            logging.critical(f"Erro no encerramento de emergência: {e}")
-            import os
-            os._exit(1)
+            logging.error(f"Erro no encerramento: {e}")
+            try:
+                self.destroy()
+            except:
+                pass
     
     def _cleanup_on_exit(self):
-        """Limpeza de recursos ao sair."""
+        """Limpeza completa de recursos ao sair."""
         try:
             logging.info("Executando limpeza de recursos...")
-            
+
             # Parar sistema de proteção
             self._loop_active = False
             self._watchdog_active = False
-            
+            self._is_closing = True
+
+            # Cancelar todos os callbacks pendentes primeiro
+            self._cancel_all_pending_callbacks()
+
             # Limpeza de threads e recursos
             if hasattr(self, 'stop_monitoring_event'):
-                self.stop_monitoring_event.set()
-            
+                try:
+                    self.stop_monitoring_event.set()
+                except Exception as e:
+                    logging.debug(f"Erro ao parar threads: {e}")
+
+            # Limpeza de monitores
+            if hasattr(self, 'performance_monitor'):
+                try:
+                    self.performance_monitor.stop_monitoring()
+                except Exception as e:
+                    logging.debug(f"Erro ao parar performance monitor: {e}")
+
             # Limpeza de credenciais
             if hasattr(self, 'cred_service'):
-                self.cred_service.lock()
-            
+                try:
+                    self.cred_service.lock()
+                except Exception as e:
+                    logging.debug(f"Erro ao bloquear credenciais: {e}")
+
             # Salvar configurações
             if hasattr(self, 'settings_manager'):
-                self.settings_manager.save_ui_preferences()
-            
+                try:
+                    self.settings_manager.save_ui_preferences()
+                except Exception as e:
+                    logging.debug(f"Erro ao salvar configurações: {e}")
+
+            # Limpar cache de imagens para evitar referências órfãs
+            self._cleanup_image_cache()
+
             logging.info("Limpeza de recursos concluída")
-            
+
         except Exception as e:
             logging.error(f"Erro na limpeza: {e}")
-    
-    def _add_emergency_close_button(self):
-        """Adiciona um botão de fechamento de emergência."""
+
+    def _cleanup_image_cache(self):
+        """Limpa cache de imagens para evitar referências órfãs."""
         try:
-            import customtkinter
-            
-            # Criar botão de emergência no canto superior direito
-            self.emergency_button = customtkinter.CTkButton(
-                self,
-                text="✕",
-                width=30,
-                height=30,
-                font=customtkinter.CTkFont(size=16, weight="bold"),
-                fg_color="red",
-                hover_color="darkred",
-                command=self._emergency_close
-            )
-            self.emergency_button.place(relx=0.98, rely=0.02, anchor="ne")
-            
+            # Limpar cache de ícones da aplicação
+            if hasattr(self, '_icon_cache'):
+                self._icon_cache.clear()
+
+            # Limpar cache de imagens dos tabs se existir
+            if hasattr(self, 'host_tab_view') and hasattr(self.host_tab_view, 'tab_manager'):
+                if hasattr(self.host_tab_view.tab_manager, 'status_images'):
+                    self.host_tab_view.tab_manager.status_images.clear()
+
+            logging.debug("Cache de imagens limpo")
+
         except Exception as e:
-            logging.error(f"Erro ao criar botão de emergência: {e}")
+            logging.debug(f"Erro ao limpar cache de imagens: {e}")
     
-    def _emergency_close(self):
-        """Fechamento de emergência da aplicação."""
-        logging.info("Fechamento de emergência ativado")
-        try:
-            self.quit()
-            self.destroy()
-        except:
-            import os
-            os._exit(0)
         
     def _cleanup_callbacks(self):
-        """Limpa recursos e callbacks."""
+        """Limpa recursos e callbacks de forma segura."""
         try:
             self._callback_protection_active = False
+            self._is_closing = True
+
+            # Cancelar todos os callbacks agendados com after()
+            self._cancel_all_pending_callbacks()
+
+            # Limpar qualquer comando lambda pendente nos widgets
+            self._clear_widget_commands()
+
             # Tentar limpar callbacks pendentes
             if hasattr(self, 'tk') and self.tk:
                 self.tk.quit()
-        except:
-            pass
-    
-    def _load_data_in_background(self):
-        """Carrega dados em background após a interface estar visível."""
+        except Exception as e:
+            logging.debug(f"Erro na limpeza de callbacks: {e}")
+
+    def _clear_widget_commands(self):
+        """Remove comandos de todos os widgets para evitar callbacks pendentes."""
         try:
-            # Mostrar indicador de carregamento (se disponível)
+            # Lista de widgets que podem ter comandos
+            widgets_to_clear = []
+
+            # Adicionar botões principais se existirem
+            if hasattr(self, 'add_host_button') and self.add_host_button:
+                widgets_to_clear.append(self.add_host_button)
+
+            if hasattr(self, 'tab_settings_button') and self.tab_settings_button:
+                widgets_to_clear.append(self.tab_settings_button)
+
+            if hasattr(self, 'actions_menu') and self.actions_menu:
+                widgets_to_clear.append(self.actions_menu)
+
+            if hasattr(self, 'appearance_mode_menu') and self.appearance_mode_menu:
+                widgets_to_clear.append(self.appearance_mode_menu)
+
+            if hasattr(self, 'language_menu') and self.language_menu:
+                widgets_to_clear.append(self.language_menu)
+
+            if hasattr(self, 'about_button') and self.about_button:
+                widgets_to_clear.append(self.about_button)
+
+            # Limpar comandos de todos os widgets
+            for widget in widgets_to_clear:
+                try:
+                    if hasattr(widget, 'configure'):
+                        widget.configure(command=None)
+                        logging.debug(f"Comando removido de {widget.__class__.__name__}")
+                except Exception as e:
+                    logging.debug(f"Erro ao limpar comando de widget: {e}")
+
+        except Exception as e:
+            logging.debug(f"Erro ao limpar comandos de widgets: {e}")
+
+    def _cancel_all_pending_callbacks(self):
+        """Cancela todos os callbacks pendentes para evitar erros após fechamento."""
+        try:
+            # Lista de callbacks conhecidos para cancelar
+            callback_attrs = [
+                '_resize_timer',
+                '_menu_action_timer',
+                '_movement_timer'
+            ]
+
+            for attr in callback_attrs:
+                if hasattr(self, attr) and getattr(self, attr):
+                    try:
+                        self.after_cancel(getattr(self, attr))
+                        setattr(self, attr, None)
+                    except Exception as e:
+                        logging.debug(f"Erro ao cancelar {attr}: {e}")
+
+            # Cancelar heartbeats pendentes
+            if hasattr(self, '_heartbeat_ids'):
+                for heartbeat_id in self._heartbeat_ids:
+                    try:
+                        self.after_cancel(heartbeat_id)
+                    except Exception as e:
+                        logging.debug(f"Erro ao cancelar heartbeat {heartbeat_id}: {e}")
+                self._heartbeat_ids.clear()
+
+            # Cancelar callbacks de componentes filhos
+            self._cancel_child_callbacks()
+
+            # Processar callbacks pendentes de forma segura
+            try:
+                # Processar apenas alguns callbacks pendentes para evitar loops
+                for i in range(5):  # Máximo 5 iterações
+                    if self._is_closing:
+                        break
+                    self.update_idletasks()
+            except Exception as e:
+                logging.debug(f"Erro ao processar callbacks pendentes: {e}")
+
+        except Exception as e:
+            logging.debug(f"Erro geral ao cancelar callbacks: {e}")
+
+    def _cancel_child_callbacks(self):
+        """Cancela callbacks de componentes filhos."""
+        try:
+            # Cancelar callbacks do MultiRowTabView
+            if hasattr(self, 'host_tab_view') and self.host_tab_view:
+                child_callback_attrs = ['_resize_after_id']
+                for attr in child_callback_attrs:
+                    if hasattr(self.host_tab_view, attr) and getattr(self.host_tab_view, attr):
+                        try:
+                            self.host_tab_view.after_cancel(getattr(self.host_tab_view, attr))
+                            setattr(self.host_tab_view, attr, None)
+                            logging.debug(f"Cancelado callback filho: {attr}")
+                        except Exception as e:
+                            logging.debug(f"Erro ao cancelar callback filho {attr}: {e}")
+
+            # Cancelar callbacks de qualquer componente que tenha métodos cleanup
+            components_with_cleanup = []
+
+            # Verificar host_tab_view e seus subcomponentes
+            if hasattr(self, 'host_tab_view') and self.host_tab_view:
+                components_with_cleanup.append(self.host_tab_view)
+
+                # Verificar tab_manager
+                if hasattr(self.host_tab_view, 'tab_manager') and self.host_tab_view.tab_manager:
+                    components_with_cleanup.append(self.host_tab_view.tab_manager)
+
+            # Chamar cleanup em todos os componentes
+            for component in components_with_cleanup:
+                if hasattr(component, 'cleanup_callbacks'):
+                    try:
+                        component.cleanup_callbacks()
+                        logging.debug(f"Cleanup realizado em: {component.__class__.__name__}")
+                    except Exception as e:
+                        logging.debug(f"Erro no cleanup de {component.__class__.__name__}: {e}")
+
+        except Exception as e:
+            logging.debug(f"Erro ao cancelar callbacks filhos: {e}")
+
+    def _load_data_in_background(self):
+        """Carrega dados apenas se não foram carregados durante inicialização."""
+        try:
+            # Se chegou aqui, dados não foram carregados - carregar agora
+            logging.info("Dados não carregados durante inicialização - carregando agora...")
+
+            # Mostrar indicador de carregamento na interface principal
             if hasattr(self, 'ui_manager') and hasattr(self.ui_manager, 'host_tab_view'):
                 self.show_loading_indicator("Carregando dados...")
-            else:
-                logging.debug("UI ainda não está pronta para indicador de carregamento")
-            
-            # Carregar dados em thread separada para não bloquear a UI
-            import threading
-            loading_thread = threading.Thread(
-                target=self._background_data_loading,
-                daemon=True
-            )
-            loading_thread.start()
-            
+
+            # Usar after() para não bloquear UI
+            self.after(100, self._start_data_loading_sequence)
+
         except Exception as e:
             logging.error(f"Erro no carregamento em background: {e}")
             self.hide_loading_indicator()
-    
-    def _background_data_loading(self):
-        """Executa o carregamento de dados em thread separada."""
+
+    def _start_data_loading_sequence(self):
+        """Inicia a sequência de carregamento de dados usando after()."""
         try:
-            # Carregar dados iniciais
-            self.controller.load_and_prepare_all_hosts(lambda msg: None)
-            
-            # Atualizar UI na thread principal
-            self.after(0, self._finalize_data_loading)
-            
+            logging.info("Iniciando carregamento de dados...")
+
+            # Callback para atualizar status (não há janela de loading aqui)
+            def update_status(msg):
+                logging.debug(f"Carregamento: {msg}")
+                if hasattr(self, 'loading_label') and self.loading_label:
+                    self.update_loading_indicator(msg)
+
+            # Carregar dados de forma síncrona (já que estamos na thread principal)
+            self.controller.load_and_prepare_all_hosts(update_status)
+
+            # Finalizar carregamento
+            self.after(100, self._finalize_data_loading)
+
         except Exception as e:
             logging.error(f"Erro no carregamento de dados: {e}")
-            self.after(0, self.hide_loading_indicator)
-    
+            self.hide_loading_indicator()
+
+
     def _finalize_data_loading(self):
         """Finaliza o carregamento de dados na thread principal."""
         try:
             # Popular abas com dados carregados
             self.controller.populate_tabs_with_preloaded_data()
-            
+
             # Esconder indicador de carregamento
             self.hide_loading_indicator()
-            
+
             logging.info("Carregamento de dados concluído")
-            
+
         except Exception as e:
             logging.error(f"Erro ao finalizar carregamento: {e}")
             self.hide_loading_indicator()

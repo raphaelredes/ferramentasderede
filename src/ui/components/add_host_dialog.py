@@ -7,33 +7,47 @@ from .base_dialog import BaseDialog
 class AddHostDialog(BaseDialog):
     def __init__(self, app):
         self.app = app
-        super().__init__(app, title=self.app.translate("title_add_host"), 
-                        min_width=400, min_height=250, max_width=600, max_height=400)
+        super().__init__(app, title=self.app.translate("title_add_host"),
+                        min_width=400, min_height=320, max_width=600, max_height=500)
         self._input_value = None
+        self._nickname_value = None
 
         main_frame = customtkinter.CTkFrame(self, fg_color="transparent")
         main_frame.grid(row=0, column=0, sticky="nsew", padx=20, pady=20)
         main_frame.grid_columnconfigure(0, weight=1)
         main_frame.grid_rowconfigure(1, weight=0)  # Entry não cresce
-        main_frame.grid_rowconfigure(2, weight=0)  # Status não cresce
+        main_frame.grid_rowconfigure(2, weight=0)  # Nickname entry não cresce
+        main_frame.grid_rowconfigure(3, weight=0)  # Status não cresce
 
         # Mensagem melhorada explicando a funcionalidade
         message_text = self.app.translate("dialog_add_host_text_mac")
-        message_text += "\n\n💡 Dica: Apenas o nome/IP é suficiente. O sistema resolverá automaticamente o hostname e IP."
-        
+        message_text += "\n\n💡 Dica: Apenas o nome/IP é obrigatório. O apelido é opcional para facilitar identificação."
+
         message_label = customtkinter.CTkLabel(main_frame, text=message_text, wraplength=450, justify="left")
         message_label.grid(row=0, column=0, pady=(0, 15), padx=10, sticky="ew")
 
+        # Campo para nome/IP do host
+        host_label = customtkinter.CTkLabel(main_frame, text="Nome do Host ou IP:", anchor="w")
+        host_label.grid(row=1, column=0, pady=(0, 5), padx=10, sticky="ew")
+
         self.entry = customtkinter.CTkEntry(main_frame, height=35, placeholder_text="Ex: google.com ou 8.8.8.8")
-        self.entry.grid(row=1, column=0, pady=(0, 10), padx=10, sticky="ew")
+        self.entry.grid(row=2, column=0, pady=(0, 15), padx=10, sticky="ew")
         self.entry.bind("<Return>", self._ok_event)
-        
+
+        # Campo para apelido (opcional)
+        nickname_label = customtkinter.CTkLabel(main_frame, text="Apelido (opcional):", anchor="w")
+        nickname_label.grid(row=3, column=0, pady=(0, 5), padx=10, sticky="ew")
+
+        self.nickname_entry = customtkinter.CTkEntry(main_frame, height=35, placeholder_text="Ex: Servidor Principal")
+        self.nickname_entry.grid(row=4, column=0, pady=(0, 15), padx=10, sticky="ew")
+        self.nickname_entry.bind("<Return>", self._ok_event)
+
         # Label de status para feedback
         self.status_label = customtkinter.CTkLabel(main_frame, text="", text_color="white")
-        self.status_label.grid(row=2, column=0, pady=(0, 15), padx=10, sticky="ew")
-        
+        self.status_label.grid(row=5, column=0, pady=(0, 15), padx=10, sticky="ew")
+
         button_frame = customtkinter.CTkFrame(main_frame, fg_color="transparent")
-        button_frame.grid(row=3, column=0, padx=10, pady=(5, 0))
+        button_frame.grid(row=6, column=0, padx=10, pady=(5, 0))
 
         self.ok_button = customtkinter.CTkButton(
             button_frame,
@@ -59,14 +73,16 @@ class AddHostDialog(BaseDialog):
 
     def _ok_event(self, event=None):
         input_value = self.entry.get().strip()
-        
+        nickname_value = self.nickname_entry.get().strip()
+
         if not input_value:
             self.update_status("❌ Por favor, insira um nome ou IP válido.", error=True)
             return
-        
+
         # Validar formato básico
         if self._validate_input(input_value):
             self._input_value = input_value
+            self._nickname_value = nickname_value if nickname_value else None
             self.update_status("✅ Entrada válida. Processando...", success=True)
             self._safe_destroy()
         else:
@@ -74,6 +90,7 @@ class AddHostDialog(BaseDialog):
     
     def _cancel_event(self, event=None):
         self._input_value = None
+        self._nickname_value = None
         self._safe_destroy()
     
     def _validate_input(self, input_value):
@@ -104,7 +121,8 @@ class AddHostDialog(BaseDialog):
             # Remover bindings para evitar callbacks após destruição
             self.unbind("<Escape>")
             self.entry.unbind("<Return>")
-            
+            self.nickname_entry.unbind("<Return>")
+
             # Destruir a janela
             self.destroy()
         except Exception as e:
@@ -113,7 +131,7 @@ class AddHostDialog(BaseDialog):
     def get_input(self):
         try:
             self.wait()
-            return self._input_value
+            return self._input_value, self._nickname_value
         except Exception as e:
             logging.error(f"Error in get_input: {e}")
-            return None
+            return None, None
