@@ -1,0 +1,20 @@
+fastapi==0.117.1
+uvicorn[standard]==0.37.0
+pydantic==2.11.9
+cryptography==45.0.5
+pywinrm==0.5.0
+pypsrp[credssp,kerberos]==0.8.1
+requests==2.32.4
+psutil==7.0.0
+wakeonlan==3.1.0
+mac-vendor-lookup==0.1.15
+icmplib==3.0.4
+# Test dependencies
+pytest
+pytest-asyncio==0.23.5
+httpx
+# Legacy/Optional
+customtkinter==5.2.2
+Pillow==11.3.0
+pyperclip==1.9.0
+pywin32==311; platform_system == "Windows"

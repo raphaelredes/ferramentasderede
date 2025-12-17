@@ -1,0 +1,20 @@
+appId: com.ferramentasderede.app
+productName: Ferramentas de Rede
+directories:
+  output: dist_installer
+asar: false
+files:
+  - dist-electron/**/*
+  - dist/**/*
+# extraResources:
+#   - from: ../python/dist/server/
+#     to: server
+#     filter:
+#       - "**/*"
+win:
+  target: dir
+  icon: public/electron-vite.svg
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
