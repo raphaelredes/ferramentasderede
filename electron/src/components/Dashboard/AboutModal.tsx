@@ -30,7 +30,7 @@ export function AboutModal({ isOpen, onClose }: AboutModalProps) {
                     </div>
 
                     <h2 className="text-2xl font-bold text-white mb-2">Ferramentas de Rede</h2>
-                    <p className="text-zinc-400 mb-8">Versão 1.2.0</p>
+                    <p className="text-zinc-400 mb-8">Versão 1.2.1</p>
 
                     <div className="space-y-4 mb-8">
                         <div className="p-4 bg-zinc-950/50 rounded-xl border border-zinc-800/50">

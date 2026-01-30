@@ -127,6 +127,10 @@ export const LoadingScreen: React.FC<LoadingScreenProps> = ({ onComplete }) => {
                 {/* Footer Status */}
                 <div className="flex justify-between items-center text-[10px] text-zinc-600 uppercase tracking-widest border-t border-zinc-800/30 pt-4">
                     <span>Conexão Segura</span>
+
+                    {/* Version Display (Centered) */}
+                    <span className="opacity-50">v1.2.1</span>
+
                     <span className="flex items-center gap-2">
                         <span className={`w-1.5 h-1.5 rounded-full shadow-[0_0_5px_currentColor] ${progress === 100 ? 'bg-emerald-500 text-emerald-500' : 'bg-amber-500 text-amber-500 animate-pulse'}`} />
                         {progress === 100 ? 'Sistema Pronto' : 'Inicializando...'}
