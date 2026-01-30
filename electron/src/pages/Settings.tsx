@@ -1,18 +1,18 @@
 import { useState, useEffect, useRef } from 'react';
-import { Settings as SettingsIcon, Save, RotateCcw, Shield, Network, LayoutDashboard, Database, Trash2, Key, Download, Upload } from 'lucide-react';
+import { Settings as SettingsIcon, Save, RotateCcw, Shield, Network, Database, Trash2, Download, Upload } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useToast } from '../contexts/ToastContext';
 import { HelpButton } from '../components/HelpButton';
 import { ConfirmationModal } from '../components/ConfirmationModal';
+import { RemoteSettings } from '../components/Settings/RemoteSettings';
 
 interface ScannerSettings {
     default_cidr: string;
     ping_timeout: number;
     concurrency: number;
-    online_vendor_lookup: boolean;
 }
 
-interface RemoteSettings {
+interface RemoteSettingsData {
     auto_add_trusted_hosts: boolean;
     default_credential_id?: string;
     auto_login: boolean;
@@ -33,15 +33,8 @@ interface GeneralSettings {
 interface SettingsData {
     general: GeneralSettings;
     scanner: ScannerSettings;
-    remote: RemoteSettings;
+    remote: RemoteSettingsData;
     dashboard: DashboardSettings;
-}
-
-interface Credential {
-    id: string;
-    name: string;
-    username: string;
-    description?: string;
 }
 
 interface Backup {
@@ -53,7 +46,7 @@ interface Backup {
 
 const DEFAULT_SETTINGS: SettingsData = {
     general: { appearance_mode: 'System', ask_initial_info: true },
-    scanner: { default_cidr: '', ping_timeout: 200, concurrency: 50, online_vendor_lookup: false },
+    scanner: { default_cidr: '', ping_timeout: 200, concurrency: 50 },
     remote: { auto_add_trusted_hosts: false, default_credential_id: undefined, auto_login: false },
     dashboard: { status_update_interval: 60, ping_monitor_interval: 5, notify_offline: false, notify_online: false }
 };
@@ -63,18 +56,6 @@ export function Settings() {
     const [initialSettings, setInitialSettings] = useState<SettingsData | null>(null);
     const [status, setStatus] = useState('');
     const [activeTab, setActiveTab] = useState<'scanner' | 'remote' | 'dashboard' | 'data'>('scanner');
-
-    // Trusted Hosts State
-    const [trustedHosts, setTrustedHosts] = useState<string[]>([]);
-    const [newTrustedHost, setNewTrustedHost] = useState('');
-    const [trustedHostStatus, setTrustedHostStatus] = useState('');
-
-    // Vault & Credentials State
-    const [vaultStatus, setVaultStatus] = useState({ is_unlocked: false, has_vault: false });
-    const [vaultPassword, setVaultPassword] = useState('');
-    const [credentials, setCredentials] = useState<Credential[]>([]);
-    const [newCred, setNewCred] = useState({ name: '', username: '', password: '', description: '' });
-    const [isAddingCred, setIsAddingCred] = useState(false);
 
     // Backups State
     const [backups, setBackups] = useState<Backup[]>([]);
@@ -91,26 +72,58 @@ export function Settings() {
         cancelText?: string;
     }>({ isOpen: false, title: '', message: '', onConfirm: () => { } });
 
-    const closeConfirmation = () => setConfirmationModal(prev => ({ ...prev, isOpen: false }));
+    // Create Vault Modal State (Shared/Parent managed)
+    const [createVaultModal, setCreateVaultModal] = useState({
+        isOpen: false,
+        password: '',
+        confirmPassword: '',
+        hint: ''
+    });
+
+    const { showToast } = useToast();
+
+    const handleCreateVault = async () => {
+        if (createVaultModal.password !== createVaultModal.confirmPassword) {
+            showToast('As senhas não coincidem.', 'error');
+            return;
+        }
+        if (!createVaultModal.password) {
+            showToast('A senha não pode ser vazia.', 'error');
+            return;
+        }
+
+        try {
+            const res = await fetch('http://127.0.0.1:8000/security/unlock', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    password: createVaultModal.password,
+                    hint: createVaultModal.hint
+                })
+            });
+
+            if (res.ok) {
+                showToast('Cofre criado com sucesso!', 'success');
+                setCreateVaultModal({ isOpen: false, password: '', confirmPassword: '', hint: '' });
+                // Refresh logic if needed
+                window.location.reload();
+            } else {
+                showToast('Erro ao criar cofre.', 'error');
+            }
+        } catch (e) {
+            console.error(e);
+            showToast('Erro de conexão.', 'error');
+        }
+    };
 
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     useEffect(() => {
         fetchSettings();
-        if (activeTab === 'remote') {
-            fetchTrustedHosts();
-            fetchVaultStatus();
-        }
         if (activeTab === 'data') {
             fetchBackups();
         }
     }, [activeTab]);
-
-    useEffect(() => {
-        if (vaultStatus.is_unlocked) {
-            fetchCredentials();
-        }
-    }, [vaultStatus.is_unlocked]);
 
     const fetchSettings = () => {
         fetch('http://127.0.0.1:8000/settings')
@@ -126,89 +139,6 @@ export function Settings() {
                 setInitialSettings(merged);
             })
             .catch(() => setStatus('Erro ao carregar configurações.'));
-    };
-
-    const fetchTrustedHosts = () => {
-        fetch('http://127.0.0.1:8000/settings/trusted-hosts')
-            .then(res => res.json())
-            .then(data => setTrustedHosts(data))
-            .catch(err => console.error("Failed to fetch trusted hosts", err));
-    };
-
-    const fetchVaultStatus = () => {
-        fetch('http://127.0.0.1:8000/security/status')
-            .then(res => res.json())
-            .then(data => setVaultStatus(data))
-            .catch(err => console.error("Failed to fetch vault status", err));
-    };
-
-    const fetchCredentials = () => {
-        fetch('http://127.0.0.1:8000/security/credentials')
-            .then(res => res.json())
-            .then(data => setCredentials(data))
-            .catch(err => console.error("Failed to fetch credentials", err));
-    };
-
-    const handleUnlockVault = async () => {
-        try {
-            const res = await fetch('http://127.0.0.1:8000/security/unlock', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ password: vaultPassword })
-            });
-            if (res.ok) {
-                setVaultStatus({ ...vaultStatus, is_unlocked: true });
-                setVaultPassword('');
-                showToast('Cofre desbloqueado!', 'success');
-            } else {
-                showToast('Senha incorreta.', 'error');
-            }
-        } catch (e) {
-            console.error(e);
-        }
-    };
-
-    const handleAddCredential = async () => {
-        try {
-            const res = await fetch('http://127.0.0.1:8000/security/credentials', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(newCred)
-            });
-            if (res.ok) {
-                fetchCredentials();
-                setIsAddingCred(false);
-                setNewCred({ name: '', username: '', password: '', description: '' });
-            }
-        } catch (e) {
-            console.error(e);
-        }
-    };
-
-    const handleDeleteCredential = (id: string) => {
-        setConfirmationModal({
-            isOpen: true,
-            title: 'Remover Credencial',
-            message: 'Tem certeza que deseja remover esta credencial?',
-            confirmText: 'Remover',
-            type: 'danger',
-            onConfirm: async () => {
-                try {
-                    const res = await fetch(`http://127.0.0.1:8000/security/credentials/${id}`, { method: 'DELETE' });
-                    if (res.ok) {
-                        fetchCredentials();
-                        if (settings.remote.default_credential_id === id) {
-                            setSettings({ ...settings, remote: { ...settings.remote, default_credential_id: undefined } });
-                        }
-                        showToast('Credencial removida com sucesso!', 'success');
-                    }
-                } catch (e) {
-                    console.error(e);
-                    showToast('Erro ao remover credencial.', 'error');
-                }
-                setConfirmationModal(prev => ({ ...prev, isOpen: false }));
-            }
-        });
     };
 
     // --- Backup Functions ---
@@ -334,51 +264,6 @@ export function Settings() {
         }
     };
 
-    const handleAddTrustedHost = async () => {
-        if (!newTrustedHost) return;
-        setTrustedHostStatus('Adicionando...');
-        try {
-            const res = await fetch(`http://127.0.0.1:8000/settings/trusted-hosts?host=${encodeURIComponent(newTrustedHost)}`, {
-                method: 'POST'
-            });
-            if (res.ok) {
-                setNewTrustedHost('');
-                fetchTrustedHosts();
-                setTrustedHostStatus('Host adicionado.');
-                setTimeout(() => setTrustedHostStatus(''), 2000);
-            } else {
-                setTrustedHostStatus('Erro ao adicionar.');
-            }
-        } catch (e) {
-            setTrustedHostStatus('Erro de conexão.');
-        }
-    };
-
-    const handleClearTrustedHosts = () => {
-        setConfirmationModal({
-            isOpen: true,
-            title: 'Limpar Hosts Confiáveis',
-            message: 'Tem certeza que deseja limpar todos os Hosts Confiáveis? Isso pode afetar o acesso remoto.',
-            confirmText: 'Limpar',
-            type: 'warning',
-            onConfirm: async () => {
-                try {
-                    const res = await fetch('http://127.0.0.1:8000/settings/trusted-hosts', { method: 'DELETE' });
-                    if (res.ok) {
-                        fetchTrustedHosts();
-                        showToast('Hosts confiáveis limpos.', 'success');
-                    }
-                } catch (e) {
-                    console.error(e);
-                    showToast('Erro ao limpar hosts.', 'error');
-                }
-                setConfirmationModal(prev => ({ ...prev, isOpen: false }));
-            }
-        });
-    };
-
-    const { showToast } = useToast();
-
     const handleExport = async () => {
         try {
             const response = await fetch('http://127.0.0.1:8000/settings/export');
@@ -389,7 +274,6 @@ export function Settings() {
             const a = document.createElement('a');
             a.href = url;
 
-            // Tentar obter nome do arquivo do header ou usar padrão
             const contentDisposition = response.headers.get('Content-Disposition');
             let filename = `hosts_backup_${new Date().toISOString().slice(0, 10)}.json`;
             if (contentDisposition) {
@@ -428,21 +312,18 @@ export function Settings() {
             });
             if (res.ok) {
                 showToast('Importação concluída com sucesso!', 'success');
-                // Opcional: recarregar hosts se necessário, mas eles estão no backend
             } else {
                 showToast('Erro na importação.', 'error');
             }
         } catch (err) {
             showToast('Erro ao enviar arquivo.', 'error');
         }
-        // Reset input
         if (fileInputRef.current) fileInputRef.current.value = '';
     };
 
     const [showResetModal, setShowResetModal] = useState(false);
 
     const handleFactoryReset = async () => {
-        // Trigger modal instead of confirm
         setShowResetModal(true);
     };
 
@@ -465,7 +346,6 @@ export function Settings() {
         }
     };
 
-    // Helper to check if a value changed
     const isChanged = (section: keyof SettingsData, key: string, val: any) => {
         if (!initialSettings) return false;
         // @ts-ignore
@@ -532,9 +412,6 @@ export function Settings() {
                 <button onClick={() => setActiveTab('remote')} className={clsx("pb-2 px-2 text-sm font-medium transition-colors flex items-center gap-2", activeTab === 'remote' ? "text-blue-400 border-b-2 border-blue-400" : "text-zinc-400 hover:text-zinc-200")}>
                     <Shield size={16} /> Acesso Remoto
                 </button>
-                <button onClick={() => setActiveTab('dashboard')} className={clsx("pb-2 px-2 text-sm font-medium transition-colors flex items-center gap-2", activeTab === 'dashboard' ? "text-blue-400 border-b-2 border-blue-400" : "text-zinc-400 hover:text-zinc-200")}>
-                    <LayoutDashboard size={16} /> Dashboard
-                </button>
                 <button onClick={() => setActiveTab('data')} className={clsx("pb-2 px-2 text-sm font-medium transition-colors flex items-center gap-2", activeTab === 'data' ? "text-blue-400 border-b-2 border-blue-400" : "text-zinc-400 hover:text-zinc-200")}>
                     <Database size={16} /> Dados
                 </button>
@@ -545,7 +422,10 @@ export function Settings() {
                 {activeTab === 'scanner' && (
                     <div className="space-y-6 animate-fadeIn">
                         <div className="space-y-2">
-                            <label className="text-sm font-medium text-zinc-300">CIDR Padrão</label>
+                            <label className="text-sm font-medium text-zinc-300 flex items-center gap-2">
+                                CIDR Padrão
+                                <HelpButton title="CIDR Padrão" description="Define a rede padrão que será preenchida automaticamente ao abrir o scanner (ex: 192.168.1.0/24)." />
+                            </label>
                             <input
                                 type="text"
                                 value={settings.scanner.default_cidr}
@@ -577,195 +457,17 @@ export function Settings() {
                             </div>
                         </div>
 
-                        <div className="flex items-center justify-between pt-4 border-t border-zinc-800">
-                            <div>
-                                <h3 className="text-white font-medium flex items-center gap-2">
-                                    Consulta de Fabricante Online
-                                    <HelpButton title="Consulta de Fabricante" description="Utiliza uma API externa para identificar o fabricante do dispositivo pelo MAC Address. Requer conexão com a internet." />
-                                </h3>
-                                <p className="text-xs text-zinc-500">Consultar API online para identificar fabricantes (mais preciso, mas requer internet).</p>
-                            </div>
-                            <button
-                                onClick={() => setSettings({ ...settings, scanner: { ...settings.scanner, online_vendor_lookup: !settings.scanner.online_vendor_lookup } })}
-                                className={clsx("w-12 h-6 rounded-full transition-colors relative", settings.scanner.online_vendor_lookup ? "bg-blue-600" : "bg-zinc-700")}
-                            >
-                                <div className={clsx("absolute top-1 w-4 h-4 rounded-full bg-white transition-all", settings.scanner.online_vendor_lookup ? "left-7" : "left-1")} />
-                            </button>
-                        </div>
                     </div>
                 )}
 
                 {activeTab === 'remote' && (
-                    <div className="space-y-6 animate-fadeIn">
-                        <div className="space-y-4">
-                            <h3 className="text-white font-medium">Configurações Gerais</h3>
-                            <div className="flex items-center justify-between">
-                                <span className="text-zinc-400 text-sm">Adicionar hosts automaticamente aos confiáveis</span>
-                                <button
-                                    onClick={() => setSettings({ ...settings, remote: { ...settings.remote, auto_add_trusted_hosts: !settings.remote.auto_add_trusted_hosts } })}
-                                    className={clsx("w-10 h-5 rounded-full transition-colors relative", settings.remote.auto_add_trusted_hosts ? "bg-blue-600" : "bg-zinc-700")}
-                                >
-                                    <div className={clsx("absolute top-1 w-3 h-3 rounded-full bg-white transition-all", settings.remote.auto_add_trusted_hosts ? "left-6" : "left-1")} />
-                                </button>
-                            </div>
-                            <div className="flex items-center justify-between">
-                                <span className="text-zinc-400 text-sm">Login automático se credencial corresponder</span>
-                                <button
-                                    onClick={() => setSettings({ ...settings, remote: { ...settings.remote, auto_login: !settings.remote.auto_login } })}
-                                    className={clsx("w-10 h-5 rounded-full transition-colors relative", settings.remote.auto_login ? "bg-blue-600" : "bg-zinc-700")}
-                                >
-                                    <div className={clsx("absolute top-1 w-3 h-3 rounded-full bg-white transition-all", settings.remote.auto_login ? "left-6" : "left-1")} />
-                                </button>
-                            </div>
-                            <div className="space-y-2">
-                                <label className="text-sm font-medium text-zinc-300">Credencial Padrão para Acesso Remoto</label>
-                                <select
-                                    value={settings.remote.default_credential_id || ''}
-                                    onChange={(e) => setSettings({ ...settings, remote: { ...settings.remote, default_credential_id: e.target.value || undefined } })}
-                                    className={clsx("w-full bg-zinc-950 border rounded-lg px-4 py-2 focus:outline-none focus:border-blue-500 transition-colors", isChanged('remote', 'default_credential_id', settings.remote.default_credential_id) ? "border-blue-500/50 text-white" : "border-zinc-700 text-zinc-500")}
-                                >
-                                    <option value="">Nenhuma</option>
-                                    {credentials.map(cred => (
-                                        <option key={cred.id} value={cred.id}>{cred.name}</option>
-                                    ))}
-                                </select>
-                                <p className="text-xs text-zinc-500">Credencial usada por padrão ao tentar acesso remoto.</p>
-                            </div>
-                        </div>
-
-                        <div className="space-y-4 pt-4 border-t border-zinc-800">
-                            <h3 className="text-white font-medium flex items-center gap-2">
-                                Cofre de Credenciais
-                                <HelpButton title="Cofre de Credenciais" description="Armazena suas credenciais de forma segura e criptografada. Permite login automático em hosts e serviços." />
-                            </h3>
-                            {!vaultStatus.has_vault && (
-                                <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-4 space-y-2">
-                                    <p className="text-zinc-400 text-sm">Crie um cofre para armazenar suas credenciais de forma segura.</p>
-                                    <button onClick={() => alert('Implementar criação de cofre')} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors">
-                                        Criar Cofre
-                                    </button>
-                                </div>
-                            )}
-                            {vaultStatus.has_vault && !vaultStatus.is_unlocked && (
-                                <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-4 space-y-2">
-                                    <p className="text-zinc-400 text-sm">O cofre está bloqueado. Insira a senha para desbloquear.</p>
-                                    <input
-                                        type="password"
-                                        value={vaultPassword}
-                                        onChange={(e) => setVaultPassword(e.target.value)}
-                                        placeholder="Senha do Cofre"
-                                        className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"
-                                    />
-                                    <button onClick={handleUnlockVault} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors">
-                                        Desbloquear
-                                    </button>
-                                </div>
-                            )}
-                            {vaultStatus.is_unlocked && (
-                                <div className="space-y-4">
-                                    <div className="flex justify-between items-center">
-                                        <h4 className="text-zinc-300 font-medium">Credenciais Salvas</h4>
-                                        <button onClick={() => setIsAddingCred(true)} className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium transition-colors">
-                                            Adicionar Nova
-                                        </button>
-                                    </div>
-                                    {isAddingCred && (
-                                        <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-4 space-y-2">
-                                            <input
-                                                type="text"
-                                                value={newCred.name}
-                                                onChange={(e) => setNewCred({ ...newCred, name: e.target.value })}
-                                                placeholder="Nome (ex: Admin SSH)"
-                                                className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"
-                                            />
-                                            <input
-                                                type="text"
-                                                value={newCred.username}
-                                                onChange={(e) => setNewCred({ ...newCred, username: e.target.value })}
-                                                placeholder="Usuário"
-                                                className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"
-                                            />
-                                            <input
-                                                type="password"
-                                                value={newCred.password}
-                                                onChange={(e) => setNewCred({ ...newCred, password: e.target.value })}
-                                                placeholder="Senha"
-                                                className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"
-                                            />
-                                            <textarea
-                                                value={newCred.description}
-                                                onChange={(e) => setNewCred({ ...newCred, description: e.target.value })}
-                                                placeholder="Descrição (opcional)"
-                                                className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"
-                                            />
-                                            <div className="flex justify-end gap-2">
-                                                <button onClick={() => setIsAddingCred(false)} className="px-3 py-1 bg-zinc-700 hover:bg-zinc-600 text-white rounded-lg text-xs font-medium transition-colors">
-                                                    Cancelar
-                                                </button>
-                                                <button onClick={handleAddCredential} className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium transition-colors">
-                                                    Salvar Credencial
-                                                </button>
-                                            </div>
-                                        </div>
-                                    )}
-                                    {credentials.length === 0 ? (
-                                        <p className="text-zinc-500 text-sm">Nenhuma credencial salva.</p>
-                                    ) : (
-                                        <div className="space-y-2">
-                                            {credentials.map(cred => (
-                                                <div key={cred.id} className="flex items-center justify-between bg-zinc-950 border border-zinc-800 rounded-lg p-3">
-                                                    <div>
-                                                        <p className="text-white font-medium">{cred.name}</p>
-                                                        <p className="text-zinc-400 text-xs">{cred.username} {cred.description && `(${cred.description})`}</p>
-                                                    </div>
-                                                    <button onClick={() => handleDeleteCredential(cred.id)} className="text-red-400 hover:text-red-300 text-xs">
-                                                        Remover
-                                                    </button>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    )}
-                                </div>
-                            )}
-                        </div>
-
-                        <div className="space-y-4 pt-4 border-t border-zinc-800">
-                            <h3 className="text-white font-medium flex items-center gap-2">
-                                Hosts Confiáveis
-                                <HelpButton title="Hosts Confiáveis" description="Lista de IPs ou nomes de máquinas que o Windows permite gerenciar remotamente via WinRM. Necessário para comandos remotos." />
-                            </h3>
-                            <div className="flex gap-2">
-                                <input
-                                    type="text"
-                                    value={newTrustedHost}
-                                    onChange={(e) => setNewTrustedHost(e.target.value)}
-                                    placeholder="Adicionar IP ou Hostname"
-                                    className="flex-1 bg-zinc-950 border border-zinc-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"
-                                />
-                                <button onClick={handleAddTrustedHost} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors">
-                                    Adicionar
-                                </button>
-                            </div>
-                            <div className="space-y-2 max-h-40 overflow-y-auto custom-scrollbar pr-2">
-                                {trustedHosts.length === 0 ? (
-                                    <p className="text-zinc-500 text-sm">Nenhum host confiável adicionado.</p>
-                                ) : (
-                                    trustedHosts.map((host, index) => (
-                                        <div key={index} className="flex items-center justify-between bg-zinc-950 border border-zinc-800 rounded-lg p-3">
-                                            <span className="text-zinc-300 text-sm font-mono">{host}</span>
-                                        </div >
-                                    ))
-                                )}
-                            </div >
-
-                            <div className="flex justify-between items-center pt-2 border-t border-zinc-800">
-                                <span className="text-xs text-zinc-500">{trustedHostStatus}</span>
-                                <button onClick={handleClearTrustedHosts} className="text-red-400 hover:text-red-300 text-xs flex items-center gap-1">
-                                    <Trash2 size={12} /> Limpar Tudo
-                                </button>
-                            </div>
-                        </div >
-                    </div>
+                    <RemoteSettings
+                        settings={settings.remote}
+                        onUpdateSettings={(newRemote) => setSettings({ ...settings, remote: newRemote })}
+                        isChanged={(key, val) => isChanged('remote', key, val)}
+                        setConfirmationModal={setConfirmationModal}
+                        setCreateVaultModal={setCreateVaultModal}
+                    />
                 )}
 
                 {activeTab === 'data' && (
@@ -828,7 +530,13 @@ export function Settings() {
                                         <tbody className="divide-y divide-zinc-800">
                                             {backups.map((backup) => (
                                                 <tr key={backup.filename} className="hover:bg-zinc-900/30 transition-colors">
-                                                    <td className="px-4 py-3 text-zinc-300 font-mono text-xs">{backup.filename}</td>
+                                                    <td
+                                                        className="px-4 py-3 text-zinc-300 font-mono text-xs cursor-pointer hover:text-blue-400 hover:underline transition-colors"
+                                                        onClick={() => window.electron.showItemInFolder(backup.path)}
+                                                        title="Abrir local do arquivo"
+                                                    >
+                                                        {backup.filename}
+                                                    </td>
                                                     <td className="px-4 py-3 text-zinc-400">{formatDate(backup.created)}</td>
                                                     <td className="px-4 py-3 text-zinc-500">{formatBytes(backup.size)}</td>
                                                     <td className="px-4 py-3 text-right flex items-center justify-end gap-2">
@@ -889,6 +597,74 @@ export function Settings() {
                     </button>
                 </div>
             </div>
+            {createVaultModal.isOpen && (
+                <div className="absolute inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 rounded-xl">
+                    <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 max-w-md w-full shadow-2xl space-y-6 animate-fadeIn">
+                        <div className="flex items-center gap-3 text-blue-400">
+                            <div className="p-3 bg-blue-500/10 rounded-full">
+                                <Shield size={24} />
+                            </div>
+                            <h3 className="text-xl font-bold">Criar Cofre Seguro</h3>
+                        </div>
+
+                        <div className="space-y-4">
+                            <p className="text-zinc-400 text-sm">
+                                Defina uma senha mestra forte para proteger suas credenciais.
+                                <br />
+                                <span className="text-red-400">Atenção: Se você perder esta senha, não será possível recuperar seus dados.</span>
+                            </p>
+
+                            <div className="space-y-2">
+                                <label className="text-sm font-medium text-zinc-300">Senha Mestra</label>
+                                <input
+                                    type="password"
+                                    value={createVaultModal.password}
+                                    onChange={(e) => setCreateVaultModal({ ...createVaultModal, password: e.target.value })}
+                                    className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-4 py-2 text-white placeholder:text-zinc-500 focus:outline-none focus:border-blue-500"
+                                    placeholder="********"
+                                />
+                            </div>
+
+                            <div className="space-y-2">
+                                <label className="text-sm font-medium text-zinc-300">Confirmar Senha</label>
+                                <input
+                                    type="password"
+                                    value={createVaultModal.confirmPassword}
+                                    onChange={(e) => setCreateVaultModal({ ...createVaultModal, confirmPassword: e.target.value })}
+                                    className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-4 py-2 text-white placeholder:text-zinc-500 focus:outline-none focus:border-blue-500"
+                                    placeholder="********"
+                                />
+                            </div>
+
+                            <div className="space-y-2">
+                                <label className="text-sm font-medium text-zinc-300">Dica de Senha (Opcional)</label>
+                                <input
+                                    type="text"
+                                    value={createVaultModal.hint}
+                                    onChange={(e) => setCreateVaultModal({ ...createVaultModal, hint: e.target.value })}
+                                    className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-4 py-2 text-white placeholder:text-zinc-500 focus:outline-none focus:border-blue-500"
+                                    placeholder="Ex: Nome do meu primeiro cachorro"
+                                />
+                            </div>
+                        </div>
+
+                        <div className="flex gap-3 pt-2">
+                            <button
+                                onClick={() => setCreateVaultModal({ ...createVaultModal, isOpen: false })}
+                                className="flex-1 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg font-medium transition-colors"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                onClick={handleCreateVault}
+                                className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors shadow-lg shadow-blue-900/20"
+                            >
+                                Criar Cofre
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
             <ConfirmationModal
                 isOpen={confirmationModal.isOpen}
                 onClose={() => setConfirmationModal(prev => ({ ...prev, isOpen: false }))}

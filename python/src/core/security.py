@@ -79,3 +79,28 @@ class SecurityManager:
         if "password" in c:
             del c["password"]
         return c
+
+    def encrypt_data(self, data: bytes) -> bytes:
+        """Encrypts bytes using the Fernet key."""
+        return self.cipher_suite.encrypt(data)
+
+    def decrypt_data(self, data: bytes) -> bytes:
+        """Decrypts bytes using the Fernet key."""
+        return self.cipher_suite.decrypt(data)
+
+    def save_encrypted_file(self, path: str, data: str):
+        """Saves string data to an encrypted file."""
+        encrypted_data = self.encrypt_data(data.encode('utf-8'))
+        with open(path, "wb") as f:
+            f.write(encrypted_data)
+
+    def load_encrypted_file(self, path: str) -> str:
+        """Loads string data from an encrypted file."""
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"File not found: {path}")
+        
+        with open(path, "rb") as f:
+            encrypted_data = f.read()
+        
+        decrypted_data = self.decrypt_data(encrypted_data)
+        return decrypted_data.decode('utf-8')

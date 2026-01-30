@@ -14,10 +14,10 @@ from wakeonlan import send_magic_packet
 from src.config.settings import STATUS_PING_TIMEOUT
 
 # Importar novos módulos refatorados
-from src.network import scanner
-from src.network import ping
-from src.network import traceroute as traceroute_module
-from src.network import mac_utils
+import src.network.scanner as scanner
+import src.network.ping as ping
+import src.network.traceroute as traceroute_module
+import src.network.mac_utils as mac_utils
 from src.network.vendor_utils import VendorUtils
 
 class NetworkTools:
@@ -291,7 +291,7 @@ class NetworkTools:
         except Exception as e:
             return False, f"Erro ao enviar WOL: {e}"
 
-    def _resolve_via_ping_a(self, ip_address):
+    def resolve_via_ping_a(self, ip_address):
         """
         Tenta resolver o hostname usando 'ping -a'.
         Retorna o hostname se encontrado, ou None.
@@ -336,7 +336,7 @@ class NetworkTools:
             return None
             
         except Exception as e:
-            logging.error(f"Erro em _resolve_via_ping_a para {ip_address}: {e}")
+            logging.error(f"Erro em resolve_via_ping_a para {ip_address}: {e}")
             return None
 
     def resolve_ip_and_hostname(self, ip_address):
@@ -351,7 +351,7 @@ class NetworkTools:
         
         # Estratégia 1: ping -a (Prioritária conforme solicitação)
         if os.name == 'nt':
-            hostname = self._resolve_via_ping_a(ip_address)
+            hostname = self.resolve_via_ping_a(ip_address)
             if hostname:
                 # Se retornou um nome curto (sem pontos), tentar resolver o FQDN recursivamente
                 if '.' not in hostname:
@@ -455,10 +455,6 @@ class NetworkTools:
             # Verificar Hostname (Reverse DNS)
             hostname = host_info.get("hostname", "").lower().split('.')[0]
             
-            # Verificar NetBIOS (se disponível)
-            # O discover_hosts atual não pega NetBIOS name, apenas MAC via NetBIOS.
-            # Podemos tentar resolver NetBIOS name aqui se o hostname falhar
-            
             if hostname == target_hostname_clean:
                 found_host = host_info
                 logging.info(f"Host encontrado via DNS Reverso: {host_info}")
@@ -475,17 +471,28 @@ class NetworkTools:
                          found_host["hostname"] = target_hostname # Usar o nome buscado
                          logging.info(f"Host encontrado via NetBIOS: {host_info}")
                          break
-                except: pass
-
+                except Exception as e:
+                    logging.debug(f"Erro ao tentar nbtstat para {host_info['ip']}: {e}")
+        
         return found_host
 
-    def discover_hosts(self, network, task_id, timeout=200, max_workers=50, online_vendor_lookup=False):
+    def discover_hosts(self, network, task_id, timeout=200, max_workers=50):
         """
         Realiza a descoberta de hosts na rede especificada.
         Yields status updates and found hosts.
         """
         import ipaddress
-        
+        import concurrent.futures
+        import time
+        from wakeonlan import send_magic_packet
+        import logging
+        import os
+        import re
+        import socket
+        import subprocess
+        from . import mac_utils
+        from src.network.vendor_utils import VendorUtils
+
         # Notificar início
         yield {"status": "progress", "message": f"Iniciando varredura em {network}...", "progress": 0}
         
@@ -501,66 +508,119 @@ class NetworkTools:
         scanned_count = 0
         found_count = 0
         
-        # Função auxiliar para verificar um único IP
-        def check_ip(ip):
+        # Worker function that runs in parallel
+        def scan_host(ip):
             ip_str = str(ip)
             # Usar o timeout configurado (convertendo ms para s)
             timeout_sec = timeout / 1000.0
+            
+            # 1. Check Status (Ping)
             is_online = self.check_host_status(ip_str, timeout=timeout_sec)
-            return ip_str, is_online
+            
+            if not is_online:
+                return None # Skip offline hosts to save processing
+            
+            # 2. Prepare Result
+            host_data = {
+                "ip": ip_str,
+                "status": "online",
+                "type": "generic"
+            }
+            
+            # 3. Resolve Hostname (DNS/NetBIOS)
+            # Always resolve hostname now
+            hostname = self.resolve_ip_and_hostname(ip_str)
+            host_data["hostname"] = hostname
+            
+            # Extract domain from hostname if available
+            host_data["domain"] = None
+            if hostname and '.' in hostname:
+                parts = hostname.split('.')
+                if len(parts) > 1:
+                    if not re.match(r"^\d+\.\d+\.\d+\.\d+$", hostname):
+                        host_data["domain"] = '.'.join(parts[1:])
+            
+            # 4. No MAC/Vendor resolution as requested
+            host_data["mac"] = None
+            host_data["vendor"] = None
+                
+            return host_data
 
         # Usar ThreadPoolExecutor
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Submeter tarefas
-            future_to_ip = {executor.submit(check_ip, ip): ip for ip in hosts_to_scan}
+            future_to_ip = {executor.submit(scan_host, ip): ip for ip in hosts_to_scan}
             
             last_progress_update = 0
+            found_ips_set = set()
             
             for future in concurrent.futures.as_completed(future_to_ip):
-                ip_str, is_online = future.result()
-                scanned_count += 1
-                
-                # Calcular progresso
-                progress = 5 + int((scanned_count / total_hosts) * 90)
-                
-                # Atualizar a cada 2 hosts ou se o progresso mudou significativamente
-                if scanned_count % 2 == 0 or progress > last_progress_update:
-                    yield {"status": "progress", "message": f"Varrendo... ({scanned_count}/{total_hosts})", "progress": progress}
-                    last_progress_update = progress
-                
-                if is_online:
-                    found_count += 1
+                try:
+                    result = future.result()
+                    scanned_count += 1
                     
-                    # Resolver Hostname
-                    hostname = self.resolve_ip_and_hostname(ip_str)
+                    # Calcular progresso
+                    progress = 5 + int((scanned_count / total_hosts) * 90)
                     
-                    # Resolver MAC
-                    # Nota: Para redes remotas (roteadas), ARP não funciona. Tenta NetBIOS.
-                    mac = mac_utils.resolve_mac_address(ip_str)
+                    # Atualizar a cada 5 hosts ou se o progresso mudou significativamente
+                    if scanned_count % 5 == 0 or progress > last_progress_update:
+                        yield {"status": "progress", "message": f"Varrendo... ({scanned_count}/{total_hosts})", "progress": progress}
+                        last_progress_update = progress
                     
-                    # Resolver Vendor
-                    vendor = "Desconhecido"
-                    if mac:
-                        try:
-                            if online_vendor_lookup:
-                                vendor = VendorUtils.get_vendor_online(mac) or VendorUtils.get_vendor(mac)
-                            else:
-                                vendor = VendorUtils.get_vendor(mac)
-                        except:
-                            vendor = "Erro ao consultar"
-                    else:
-                        # Se não achou MAC, verificar se é a própria máquina ou gateway (opcional)
-                        pass
-                    
-                    host_data = {
-                        "ip": ip_str,
-                        "hostname": hostname,
-                        "mac": mac,
-                        "vendor": vendor,
-                        "status": "online",
-                        "type": "generic" # Pode ser melhorado
-                    }
-                    
-                    yield host_data
+                    if result:
+                        found_count += 1
+                        found_ips_set.add(result['ip'])
+                        yield result
+                        
+                except Exception as e:
+                    logging.error(f"Error scanning host: {e}")
+                    scanned_count += 1
 
-        yield {"status": "completed", "message": f"Varredura concluída. {found_count} hosts encontrados.", "progress": 100}
+        # Calculate Available IPs
+        all_ips_str = [str(ip) for ip in hosts_to_scan]
+        available_ips = [ip for ip in all_ips_str if ip not in found_ips_set]
+        
+        # Group into ranges
+        def group_ips_to_ranges(ip_list):
+            if not ip_list: return []
+            
+            # Sort IPs
+            sorted_ips = sorted(ip_list, key=lambda ip: int(ipaddress.IPv4Address(ip)))
+            
+            ranges = []
+            if not sorted_ips: return ranges
+            
+            start_ip = sorted_ips[0]
+            prev_ip = sorted_ips[0]
+            
+            for i in range(1, len(sorted_ips)):
+                curr_ip = sorted_ips[i]
+                # Check if consecutive
+                if int(ipaddress.IPv4Address(curr_ip)) == int(ipaddress.IPv4Address(prev_ip)) + 1:
+                    prev_ip = curr_ip
+                else:
+                    # End of range
+                    if start_ip == prev_ip:
+                        ranges.append(start_ip)
+                    else:
+                        ranges.append(f"{start_ip} - {prev_ip}")
+                    start_ip = curr_ip
+                    prev_ip = curr_ip
+            
+            # Add last range
+            if start_ip == prev_ip:
+                ranges.append(start_ip)
+            else:
+                ranges.append(f"{start_ip} - {prev_ip}")
+                
+            return ranges
+
+        available_ranges = group_ips_to_ranges(available_ips)
+
+        yield {
+            "status": "completed", 
+            "message": f"Varredura concluída. {found_count} hosts encontrados.", 
+            "progress": 100,
+            "available_count": len(available_ips),
+            "available_ranges": available_ranges
+        }

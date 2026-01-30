@@ -53,7 +53,20 @@ export const HostDetails: React.FC = () => {
     const [localDomain, setLocalDomain] = useState('');
 
     useEffect(() => {
-        window.electron.getLocalDomain().then(setLocalDomain).catch(console.error);
+        const fetchDomain = async () => {
+            try {
+                if (window.electron) {
+                    const domain = await window.electron.getLocalDomain();
+                    setLocalDomain(domain);
+                } else if (window.pywebview?.api) {
+                    const domain = await window.pywebview.api.get_local_domain();
+                    setLocalDomain(domain);
+                }
+            } catch (error) {
+                console.error("Failed to get local domain:", error);
+            }
+        };
+        fetchDomain();
     }, []);
 
     const {
@@ -67,8 +80,7 @@ export const HostDetails: React.FC = () => {
         error,
         fetchData,
         loadFromCache,
-        setServices,
-        setSessions
+
     } = useHostData(ip);
 
     useEffect(() => {
@@ -149,7 +161,7 @@ export const HostDetails: React.FC = () => {
         if (!dateStr || dateStr === 'N/A') return 'N/A';
         try {
             const d = new Date(dateStr);
-            return isNaN(d.getTime()) ? 'Data inválida' : d.toLocaleString();
+            return isNaN(d.getTime()) ? 'Data inválida' : d.toLocaleString('pt-BR');
         } catch {
             return 'Erro na data';
         }
@@ -508,6 +520,7 @@ export const HostDetails: React.FC = () => {
                             <SessionsTab
                                 sessions={sessions}
                                 handleDisconnect={handleDisconnectClick}
+                                formatDate={formatDate}
                             />
                         )}
                     </>
@@ -531,7 +544,7 @@ export const HostDetails: React.FC = () => {
                     } else {
                         setCredentials({ username, password });
                         setIsAuthModalOpen(false);
-                        handleFetchData(username, password);
+                        handleFetchData(username, password, false, ['info', 'services', 'logs', 'sessions']);
                     }
                 }}
             />
@@ -557,6 +570,6 @@ export const HostDetails: React.FC = () => {
                 ip={ip || ''}
                 credentials={testCredentials}
             />
-        </div>
+        </div >
     );
 };

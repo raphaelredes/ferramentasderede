@@ -14,6 +14,16 @@ declare global {
             launchTeamViewer(id?: string): Promise<void>;
             openExternal(url: string): Promise<void>;
             getLocalDomain(): Promise<string>;
+            showItemInFolder(path: string): Promise<void>;
+            saveFileAs(filename: string, content: string): Promise<string | null>;
+        };
+        pywebview?: {
+            api: {
+                open_url: (url: string) => void;
+                get_local_domain: () => Promise<string>;
+                showItemInFolder: (path: string) => Promise<boolean>;
+                saveFileAs: (filename: string, content: string) => Promise<string | null>;
+            };
         };
     }
 }
@@ -31,6 +41,12 @@ export interface HostStatistics {
     ports_status?: Record<number, boolean>;
     hostname?: string;
     domain?: string;
+    vendor?: string;
+    ports?: number[];
+    stats?: HostStatistics;
+    current_user?: string;
+    is_smart_offline?: boolean;
+    has_ever_been_online?: boolean;
 }
 
 export interface Host {
@@ -96,6 +112,7 @@ export interface Service {
     Name: string;
     DisplayName: string;
     Status: string;
+    StartType: string;
     StartType: string;
 }
 

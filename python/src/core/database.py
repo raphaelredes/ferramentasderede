@@ -19,6 +19,9 @@ class DatabaseManager:
         """Inicializa o banco de dados e cria as tabelas se não existirem."""
         try:
             with self._get_connection() as conn:
+                # Enable WAL mode for better concurrency
+                conn.execute("PRAGMA journal_mode=WAL;")
+                
                 cursor = conn.cursor()
                 
                 # Tabela de Hosts
@@ -27,6 +30,7 @@ class DatabaseManager:
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         address TEXT NOT NULL UNIQUE,
                         hostname TEXT,
+                        domain TEXT,
                         mac TEXT,
                         description TEXT,
                         group_name TEXT,
@@ -71,7 +75,8 @@ class DatabaseManager:
                 'type': 'TEXT',
                 'teamviewer_id': 'TEXT',
                 'last_checked': 'TEXT',
-                'last_status': 'BOOLEAN'
+                'last_status': 'BOOLEAN',
+                'domain': 'TEXT'
             }
             
             for col, dtype in new_columns.items():
@@ -84,29 +89,42 @@ class DatabaseManager:
             logging.error(f"Erro na migração de schema: {e}")
 
     def get_all_hosts(self) -> List[Dict[str, Any]]:
-        """Retorna todos os hosts."""
-        try:
-            with self._get_connection() as conn:
-                conn.row_factory = sqlite3.Row
-                cursor = conn.cursor()
-                cursor.execute("SELECT * FROM hosts")
-                rows = cursor.fetchall()
-                
-                hosts = []
-                for row in rows:
-                    host = dict(row)
-                    # Parse JSON fields
-                    try:
-                        host['tags'] = json.loads(host['tags']) if host['tags'] else []
-                        host['ports'] = json.loads(host['ports']) if host['ports'] else []
-                    except:
-                        host['tags'] = []
-                        host['ports'] = []
-                    hosts.append(host)
-                return hosts
-        except Exception as e:
-            logging.error(f"Erro ao buscar hosts: {e}")
-            return []
+        """Retorna todos os hosts (com retry para evitar travamento)."""
+        import time
+        max_retries = 5
+        
+        for attempt in range(max_retries):
+            try:
+                with self._get_connection() as conn:
+                    conn.row_factory = sqlite3.Row
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT * FROM hosts")
+                    rows = cursor.fetchall()
+                    
+                    hosts = []
+                    for row in rows:
+                        host = dict(row)
+                        # Parse JSON fields
+                        try:
+                            host['tags'] = json.loads(host['tags']) if host['tags'] else []
+                            host['ports'] = json.loads(host['ports']) if host['ports'] else []
+                        except:
+                            host['tags'] = []
+                            host['ports'] = []
+                        hosts.append(host)
+                    return hosts
+            except sqlite3.OperationalError as e:
+                # If database is locked, wait and retry
+                if "locked" in str(e) and attempt < max_retries - 1:
+                    logging.warning(f"Database locked, retrying get_all_hosts (attempt {attempt+1}/{max_retries})...")
+                    time.sleep(0.1)
+                else:
+                    logging.error(f"Erro operacional ao buscar hosts: {e}")
+                    return []
+            except Exception as e:
+                logging.error(f"Erro ao buscar hosts: {e}")
+                return []
+        return []
 
     def save_host(self, host: Dict[str, Any]) -> bool:
         """Salva ou atualiza um host."""
@@ -118,10 +136,11 @@ class DatabaseManager:
                 ports_json = json.dumps(host.get('ports', []))
                 
                 cursor.execute("""
-                    INSERT INTO hosts (address, hostname, mac, description, group_name, tags, ports, monitoring, vendor, type, teamviewer_id, last_checked, last_status)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO hosts (address, hostname, domain, mac, description, group_name, tags, ports, monitoring, vendor, type, teamviewer_id, last_checked, last_status)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(address) DO UPDATE SET
                         hostname=excluded.hostname,
+                        domain=excluded.domain,
                         mac=excluded.mac,
                         description=excluded.description,
                         group_name=excluded.group_name,
@@ -137,6 +156,7 @@ class DatabaseManager:
                 """, (
                     host.get('address'),
                     host.get('hostname'),
+                    host.get('domain'),
                     host.get('mac'),
                     host.get('description'),
                     host.get('group_name'),
@@ -178,10 +198,11 @@ class DatabaseManager:
                     ports_json = json.dumps(host.get('ports', []))
                     
                     cursor.execute("""
-                        INSERT INTO hosts (address, hostname, mac, description, group_name, tags, ports, monitoring, vendor, type, teamviewer_id, last_checked, last_status)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        INSERT INTO hosts (address, hostname, domain, mac, description, group_name, tags, ports, monitoring, vendor, type, teamviewer_id, last_checked, last_status)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ON CONFLICT(address) DO UPDATE SET
                             hostname=excluded.hostname,
+                            domain=excluded.domain,
                             mac=excluded.mac,
                             description=excluded.description,
                             group_name=excluded.group_name,
@@ -197,6 +218,7 @@ class DatabaseManager:
                     """, (
                         host.get('address'),
                         host.get('hostname'),
+                        host.get('domain'),
                         host.get('mac'),
                         host.get('description'),
                         host.get('group_name'),
@@ -213,6 +235,46 @@ class DatabaseManager:
                 return True
         except Exception as e:
             logging.error(f"Erro ao salvar múltiplos hosts: {e}")
+            return False
+
+    def replace_all_hosts(self, hosts: List[Dict[str, Any]]) -> bool:
+        """Substitui todos os hosts atomicamente (Delete All + Insert All numa única transação)."""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # 1. Limpar tabela dentro da transação
+                cursor.execute("DELETE FROM hosts")
+                
+                # 2. Inserir novos hosts
+                for host in hosts:
+                    tags_json = json.dumps(host.get('tags', []))
+                    ports_json = json.dumps(host.get('ports', []))
+                    
+                    cursor.execute("""
+                        INSERT INTO hosts (address, hostname, domain, mac, description, group_name, tags, ports, monitoring, vendor, type, teamviewer_id, last_checked, last_status)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        host.get('address'),
+                        host.get('hostname'),
+                        host.get('domain'),
+                        host.get('mac'),
+                        host.get('description'),
+                        host.get('group_name'),
+                        tags_json,
+                        ports_json,
+                        host.get('monitoring', True),
+                        host.get('vendor'),
+                        host.get('type'),
+                        str(host.get('teamviewer_id')) if host.get('teamviewer_id') is not None else None,
+                        host.get('last_checked'),
+                        host.get('last_status')
+                    ))
+                
+                conn.commit()
+                return True
+        except Exception as e:
+            logging.error(f"Erro ao substituir todos os hosts: {e}")
             return False
 
     def reset_database(self):

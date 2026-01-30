@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 import platform
 
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.1"
 
 # --- Diretórios e Arquivos ---
 # Definir diretório de dados do usuário (AppData/Roaming para persistência correta)

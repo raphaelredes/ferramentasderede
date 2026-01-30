@@ -23,5 +23,7 @@ electron.contextBridge.exposeInMainWorld("electron", {
   launchMsra: (ip, askCredentials) => electron.ipcRenderer.invoke("launch-msra", ip, askCredentials),
   launchTeamViewer: (id) => electron.ipcRenderer.invoke("launch-teamviewer", id),
   openExternal: (url) => electron.ipcRenderer.invoke("open-external", url),
-  getLocalDomain: () => electron.ipcRenderer.invoke("get-local-domain")
+  getLocalDomain: () => electron.ipcRenderer.invoke("get-local-domain"),
+  showItemInFolder: (path) => electron.ipcRenderer.invoke("show-item-in-folder", path),
+  saveFileAs: (filename, content) => electron.ipcRenderer.invoke("save-file-as", filename, content)
 });

@@ -1,4 +1,3 @@
-import React from 'react';
 import { Monitor, Cpu, HardDrive, Network } from 'lucide-react';
 
 interface HostInfoTabProps {
@@ -7,7 +6,7 @@ interface HostInfoTabProps {
     formatDate: (date: string) => string;
 }
 
-export const HostInfoTab: React.FC<HostInfoTabProps> = ({ systemInfo, teamViewerId, formatDate }) => {
+export const HostInfoTab: React.FC<HostInfoTabProps> = ({ systemInfo, teamViewerId: _teamViewerId, formatDate }) => {
     if (!systemInfo) return <div className="text-zinc-400">Carregando informações...</div>;
     if (systemInfo.error) return <div className="text-red-400">Erro: {systemInfo.error}</div>;
 

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Lock, Unlock, Eye, EyeOff, Trash2, Plus, Copy, Check, Shield, Key, Settings, Clock } from 'lucide-react';
+import { Lock, Unlock, Eye, EyeOff, Trash2, Plus, Copy, Check, Shield, Key, Settings, Clock, Pencil } from 'lucide-react';
 import { useVault } from '../contexts/VaultContext';
 import { useToast } from '../contexts/ToastContext';
 import { ConfirmationModal } from '../components/ConfirmationModal';
@@ -24,6 +24,7 @@ export function Security() {
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
     const [isResetModalOpen, setIsResetModalOpen] = useState(false);
     const [credentialToDelete, setCredentialToDelete] = useState<string | null>(null);
+    const [editingCredential, setEditingCredential] = useState<string | null>(null);
 
     // Form State
     const [masterPassword, setMasterPassword] = useState('');
@@ -92,15 +93,21 @@ export function Security() {
     const handleAddCredential = async (e: React.FormEvent) => {
         e.preventDefault();
         try {
+            const payload: any = {
+                name: newName,
+                username: newUsername,
+                password: newPassword,
+                description: newDescription
+            };
+
+            if (editingCredential) {
+                payload.id = editingCredential;
+            }
+
             const res = await fetch('http://127.0.0.1:8000/security/credentials', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    name: newName,
-                    username: newUsername,
-                    password: newPassword,
-                    description: newDescription
-                })
+                body: JSON.stringify(payload)
             });
 
             if (res.ok) {
@@ -109,11 +116,48 @@ export function Security() {
                 setNewUsername('');
                 setNewPassword('');
                 setNewDescription('');
+                setEditingCredential(null);
                 refreshCredentials();
+                showToast(editingCredential ? 'Credencial atualizada!' : 'Credencial adicionada!', 'success');
             }
         } catch (error) {
-            console.error("Erro ao adicionar credencial:", error);
+            console.error("Erro ao adicionar/editar credencial:", error);
+            showToast('Erro ao salvar credencial.', 'error');
         }
+    };
+
+    const handleEditClick = async (cred: any) => {
+        setEditingCredential(cred.id);
+        setNewName(cred.name);
+        setNewUsername(cred.username);
+        setNewDescription(cred.description || '');
+
+        // Fetch password
+        try {
+            const res = await fetch('http://127.0.0.1:8000/security/credentials/decrypt', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: cred.id })
+            });
+
+            if (res.ok) {
+                const data = await res.json();
+                setNewPassword(data.password);
+                setIsAddModalOpen(true);
+            }
+        } catch (error) {
+            console.error("Erro ao buscar senha para edição:", error);
+            showToast('Erro ao carregar dados da credencial.', 'error');
+        }
+    };
+
+    const openAddModal = () => {
+        setEditingCredential(null);
+        setNewName('');
+        setNewUsername('');
+        setNewPassword('');
+        setNewDescription('');
+        setIsAddModalOpen(true);
     };
 
     const handleDeleteClick = (id: string) => {
@@ -259,7 +303,7 @@ export function Security() {
                     title="Resetar Cofre de Senhas"
                     message="ATENÇÃO: Esta ação apagará PERMANENTEMENTE todas as credenciais salvas no cofre. Você perderá o acesso a elas para sempre. Deseja realmente continuar?"
                     confirmText="Sim, Resetar Tudo"
-                    variant="danger"
+                    type="danger"
                     isLoading={isResetting}
                 />
             </div>
@@ -292,7 +336,7 @@ export function Security() {
                         Bloquear
                     </button>
                     <button
-                        onClick={() => setIsAddModalOpen(true)}
+                        onClick={openAddModal}
                         className="bg-zinc-800 hover:bg-zinc-700 text-blue-400 border border-blue-900/30 hover:border-blue-500/50 px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
                     >
                         <Plus size={18} />
@@ -352,13 +396,22 @@ export function Security() {
                                     <div className="p-2 bg-zinc-800 rounded-lg">
                                         <Lock className="text-zinc-400" size={20} />
                                     </div>
-                                    <button
-                                        onClick={() => handleDeleteClick(cred.id)}
-                                        className="text-zinc-600 hover:text-red-500 transition-colors p-1"
-                                        title="Remover"
-                                    >
-                                        <Trash2 size={16} />
-                                    </button>
+                                    <div className="flex gap-1">
+                                        <button
+                                            onClick={() => handleEditClick(cred)}
+                                            className="text-zinc-600 hover:text-blue-400 transition-colors p-1"
+                                            title="Editar"
+                                        >
+                                            <Pencil size={16} />
+                                        </button>
+                                        <button
+                                            onClick={() => handleDeleteClick(cred.id)}
+                                            className="text-zinc-600 hover:text-red-500 transition-colors p-1"
+                                            title="Remover"
+                                        >
+                                            <Trash2 size={16} />
+                                        </button>
+                                    </div>
                                 </div>
 
                                 <h3 className="font-semibold text-white mb-1">{cred.name}</h3>
@@ -401,7 +454,7 @@ export function Security() {
             {isAddModalOpen && (
                 <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
                     <div className="bg-zinc-900 border border-zinc-800 rounded-xl w-full max-w-md p-6 shadow-2xl">
-                        <h3 className="text-xl font-bold text-white mb-4">Adicionar Credencial</h3>
+                        <h3 className="text-xl font-bold text-white mb-4">{editingCredential ? 'Editar Credencial' : 'Adicionar Credencial'}</h3>
                         <form onSubmit={handleAddCredential} className="space-y-4">
                             <div>
                                 <label className="block text-sm font-medium text-zinc-400 mb-1">Nome (Identificador)</label>
@@ -471,7 +524,7 @@ export function Security() {
                 title="Remover Credencial"
                 message="Tem certeza que deseja remover esta credencial? Esta ação não pode ser desfeita."
                 confirmText="Remover"
-                variant="danger"
+                type="danger"
             />
         </div>
     );

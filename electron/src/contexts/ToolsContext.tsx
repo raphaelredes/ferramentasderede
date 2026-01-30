@@ -23,6 +23,9 @@ interface ScanSession {
     status: string;
     progress: number;
     isRunning: boolean;
+    availableRanges?: string[];
+    availableCount?: number;
+    mode?: 'quick' | 'full';
 }
 
 interface ToolsContextType {
@@ -31,12 +34,16 @@ interface ToolsContextType {
     traceState: ToolState;
     scanSessions: ScanSession[];
     activeSessionId: string | null;
+    pendingAction: { type: 'ping' | 'traceroute'; target: string; id: string } | null;
+    processedActionIds: Set<string>;
+    markActionAsProcessed: (id: string) => void;
 
     // Actions
     setPingTarget: (target: string) => void;
     setTraceTarget: (target: string) => void;
+    setPendingAction: (action: { type: 'ping' | 'traceroute'; target: string; id: string } | null) => void;
 
-    createScanSession: (cidr: string) => string;
+    createScanSession: (cidr: string, mode?: 'quick' | 'full') => string;
     closeScanSession: (id: string) => void;
     updateScanSession: (id: string, updates: Partial<ScanSession>) => void;
     setActiveSessionId: (id: string | null) => void;
@@ -48,6 +55,11 @@ interface ToolsContextType {
     stopTool: (tool: 'ping' | 'traceroute' | 'scanner', sessionId?: string) => void;
     clearToolOutput: (tool: 'ping' | 'traceroute') => void;
     isRunning: boolean;
+
+    // Completion State
+    completedTools: Set<string>;
+    markToolAsCompleted: (tool: string) => void;
+    clearCompletedTool: (tool: string) => void;
 }
 
 const ToolsContext = createContext<ToolsContextType | undefined>(undefined);
@@ -61,6 +73,37 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const [scanSessions, setScanSessions] = useState<ScanSession[]>([]);
     const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
 
+    // Pending Action State (for auto-run from Dashboard)
+    const [pendingAction, setPendingAction] = useState<{ type: 'ping' | 'traceroute'; target: string; id: string } | null>(null);
+    const [processedActionIds, setProcessedActionIds] = useState<Set<string>>(new Set());
+
+    const markActionAsProcessed = useCallback((id: string) => {
+        setProcessedActionIds(prev => {
+            const newSet = new Set(prev);
+            newSet.add(id);
+            return newSet;
+        });
+    }, []);
+
+    // Completion State
+    const [completedTools, setCompletedTools] = useState<Set<string>>(new Set());
+
+    const markToolAsCompleted = useCallback((tool: string) => {
+        setCompletedTools(prev => {
+            const newSet = new Set(prev);
+            newSet.add(tool);
+            return newSet;
+        });
+    }, []);
+
+    const clearCompletedTool = useCallback((tool: string) => {
+        setCompletedTools(prev => {
+            const newSet = new Set(prev);
+            newSet.delete(tool);
+            return newSet;
+        });
+    }, []);
+
     const isRunning = pingState.isRunning || traceState.isRunning || scanSessions.some(s => s.isRunning);
 
     // Abort Controllers (mapped by tool name or session ID)
@@ -71,14 +114,15 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const setTraceTarget = (target: string) => setTraceState(prev => ({ ...prev, target }));
 
     // Session Actions
-    const createScanSession = useCallback((cidr: string) => {
+    const createScanSession = useCallback((cidr: string, mode: 'quick' | 'full' = 'quick') => {
         const newSession: ScanSession = {
             id: crypto.randomUUID(),
             cidr: cidr,
             results: [],
             status: 'Pronto',
             progress: 0,
-            isRunning: false
+            isRunning: false,
+            mode: mode
         };
         setScanSessions(prev => [...prev, newSession]);
         setActiveSessionId(newSession.id);
@@ -251,6 +295,7 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                             // Clear output and reset offline state
                             setPingState(prev => ({
                                 ...prev,
+                                ...prev,
                                 isOffline: false,
                                 output: [`[SISTEMA] Conexão reestabelecida. Reiniciando estatísticas...\n${line}`]
                             }));
@@ -284,6 +329,7 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                     return { ...prev, output: [...prev.output, text] };
                 });
             }
+            markToolAsCompleted('ping');
         } catch (error: any) {
             if (error.name !== 'AbortError') {
                 console.error('Ping error:', error);
@@ -320,11 +366,13 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 const text = decoder.decode(value);
                 setTraceState(prev => ({ ...prev, output: [...prev.output, text] }));
             }
+            markToolAsCompleted('traceroute');
         } catch (error: any) {
             if (error.name !== 'AbortError') {
                 console.error('Traceroute error:', error);
                 setTraceState(prev => ({ ...prev, output: [...prev.output, `\nErro: ${error.message}`] }));
             }
+        } finally {
             setTraceState(prev => ({ ...prev, isRunning: false }));
             abortControllers.current['traceroute'] = null;
         }
@@ -354,20 +402,20 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             results: [],
             progress: 0,
             status: 'Iniciando...',
+            availableRanges: [],
+            availableCount: 0
         });
 
         try {
             // Fetch settings
             let timeout = 200;
             let concurrency = 50;
-            let online_vendor_lookup = false;
             try {
                 const settingsRes = await fetch('http://localhost:8000/settings');
                 const settingsData = await settingsRes.json();
                 if (settingsData.scanner) {
                     timeout = settingsData.scanner.ping_timeout || 200;
                     concurrency = settingsData.scanner.concurrency || 50;
-                    online_vendor_lookup = settingsData.scanner.online_vendor_lookup || false;
                 }
             } catch (e) { console.warn("Settings fetch failed", e); }
 
@@ -378,8 +426,7 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                     cidr: session.cidr,
                     task_id: `scanner_${sessionId}`,
                     timeout,
-                    max_workers: concurrency,
-                    online_vendor_lookup
+                    max_workers: concurrency
                 }),
                 signal: abortController.signal
             });
@@ -406,7 +453,13 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                         if (data.status === 'progress') {
                             updateScanSession(sessionId, { status: data.message, progress: data.progress });
                         } else if (data.status === 'completed') {
-                            updateScanSession(sessionId, { status: data.message, progress: 100, isRunning: false });
+                            updateScanSession(sessionId, {
+                                status: data.message,
+                                progress: 100,
+                                isRunning: false,
+                                availableRanges: data.available_ranges,
+                                availableCount: data.available_count
+                            });
                         } else if (data.error) {
                             updateScanSession(sessionId, { status: `Erro: ${data.error}`, isRunning: false });
                         } else if (data.ip) {
@@ -422,6 +475,7 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                     }
                 }
             }
+            markToolAsCompleted('scanner');
         } catch (err: any) {
             if (err.name !== 'AbortError') {
                 updateScanSession(sessionId, { status: `Falha: ${err.message}`, isRunning: false });
@@ -450,7 +504,14 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             runScanSession,
             stopTool,
             clearToolOutput,
-            isRunning
+            isRunning,
+            pendingAction,
+            setPendingAction,
+            processedActionIds,
+            markActionAsProcessed,
+            completedTools,
+            markToolAsCompleted,
+            clearCompletedTool
         }}>
             {children}
         </ToolsContext.Provider>

@@ -37,18 +37,10 @@ def traceroute(target_ip, current_process_holder=None):
         
         yield f"Rastreando rota para {target_ip}...\n\n"
         
-        # Ler output linha por linha com timeout por linha
+        # Ler output linha por linha
         line_count = 0
-        max_lines = 50  # Limite para evitar travamentos
-        start_time = time.time()
-        max_duration = 60  # Timeout total de 60 segundos
         
         while True:
-            # Verificar timeout total
-            if time.time() - start_time > max_duration:
-                yield f"\nTimeout: Traceroute interrompido após {max_duration} segundos.\n"
-                break
-            
             # Verificar se processo ainda está rodando
             if process.poll() is not None:
                 # Processo terminou, ler linhas restantes
@@ -73,11 +65,6 @@ def traceroute(target_ip, current_process_holder=None):
                 if line:
                     yield line
                     line_count += 1
-                    
-                    # Limite de linhas para evitar spam infinito
-                    if line_count > max_lines:
-                        yield f"\nLimite de linhas atingido ({max_lines}). Finalizando traceroute.\n"
-                        break
                 else:
                     # Aguardar um pouco antes de tentar novamente
                     time.sleep(0.1)

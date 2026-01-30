@@ -5,9 +5,10 @@ import { Session } from '../../types';
 interface SessionsTabProps {
     sessions: Session[];
     handleDisconnect: (sessionId: string) => void;
+    formatDate: (dateStr: string) => string;
 }
 
-export const SessionsTab: React.FC<SessionsTabProps> = ({ sessions, handleDisconnect }) => {
+export const SessionsTab: React.FC<SessionsTabProps> = ({ sessions, handleDisconnect, formatDate }) => {
     return (
         <div className="bg-zinc-800/50 rounded-xl border border-zinc-700/50 overflow-hidden flex flex-col h-full">
             <div className="overflow-auto flex-1 custom-scrollbar">
@@ -50,7 +51,7 @@ export const SessionsTab: React.FC<SessionsTabProps> = ({ sessions, handleDiscon
                                         {session.SessionName === 'Console' ? 'Console (Usuário no local)' : session.SessionName}
                                     </td>
                                     <td className="p-4 text-zinc-400 text-sm truncate" title={session.LogonTime}>
-                                        {session.LogonTime || '-'}
+                                        {formatDate(session.LogonTime || '')}
                                     </td>
                                     <td className="p-4 text-zinc-400 text-sm truncate" title={session.Duration}>
                                         {session.Duration || '-'}

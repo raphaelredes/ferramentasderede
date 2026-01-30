@@ -6,6 +6,7 @@ import re
 import time
 import logging
 import os
+import sys
 from pathlib import Path
 from .winrm_handler import WinRMHandler, WinRMError, ConnectionError, ConnectTimeout
 
@@ -15,7 +16,13 @@ class RemoteCommands:
         self.username = username
         self.password = password
         self.handler = None
-        self.scripts_dir = Path(__file__).parent.parent / "scripts"
+        if getattr(sys, 'frozen', False):
+            # Running as compiled executable
+            base_path = Path(sys._MEIPASS)
+            self.scripts_dir = base_path / "src" / "system" / "scripts"
+        else:
+            # Running from source
+            self.scripts_dir = Path(__file__).parent.parent / "scripts"
 
     def _load_script(self, script_name, replacements=None):
         """Carrega um script PowerShell do arquivo e aplica substituições."""
@@ -68,152 +75,7 @@ class RemoteCommands:
             logging.error(f"Erro no check_winrm_status: {e}")
             return False
 
-    def list_connected_users_winrm(self):
-        """
-        Lista usuários conectados usando agregação de query user, quser e WMI.
-        """
-        script = self._load_script("list_connected_users")
-        try:
-            result = self.handler.execute_script(script)
-            output_lines = result.get("output", [])
-            
-            # DEBUG: Write raw output to file
-            try:
-                with open(r"C:\Users\raphael.rego\Desktop\ferramentasderede\debug_sessions.txt", "w", encoding="utf-8") as f:
-                    f.write("=== SCRIPT OUTPUT ===\n")
-                    for line in output_lines:
-                        f.write(line + "\n")
-                    f.write("=== END OUTPUT ===\n")
-            except Exception as e:
-                logging.error(f"Failed to write debug file: {e}")
-
-            parsed_users = []
-            json_start = False
-            json_lines = []
-
-            for line in output_lines:
-                if "=== RESULTADO_JSON_INICIO ===" in line:
-                    json_start = True
-                    json_lines = []
-                    continue
-                elif "=== RESULTADO_JSON_FIM ===" in line:
-                    json_start = False
-                    try:
-                        full_json = "".join(json_lines)
-                        users_data = json.loads(full_json)
-                        
-                        # Normalize to list if it's a single object (dict)
-                        if isinstance(users_data, dict):
-                            users_data = [users_data]
-                            
-                        if isinstance(users_data, list):
-                            for user in users_data:
-                                parsed_users.append({
-                                    'UserName': user.get('UserName', 'Unknown'),
-                                    'ID': user.get('SessionId', 'Unknown'),
-                                    'State': user.get('State', 'Unknown'),
-                                    'SessionName': user.get('SessionName', ''),
-                                    'LogonTime': user.get('LogonTime', 'N/A'),
-                                    'Duration': user.get('Duration', 'N/A'),
-                                    'IdleTime': user.get('IdleTime', 'N/A')
-                                })
-                    except json.JSONDecodeError as e:
-                        logging.error(f"JSON decode error in list_connected_users_winrm: {e}")
-                    continue
-                
-                if json_start:
-                    json_lines.append(line)
-
-            logging.info(f"DEBUG: Parsed users list: {parsed_users}")
-            yield f"✅ Encontrados {len(parsed_users)} usuários conectados.\n", parsed_users
-
-        except Exception as e:
-            logging.error(f"Erro no list_connected_users_winrm: {e}")
-            yield f"Erro ao listar usuários: {str(e)}\n", []
-
-    def disconnect_user_winrm(self, session_id):
-        logging.info(f"Executing 'disconnect_user_winrm' for session ID {session_id} on {self.target_ip}")
-        
-        # Script PowerShell robusto para tentar desconectar
-        ps_script = f"""
-        $ErrorActionPreference = 'Stop'
-        
-        # Enviar aviso ao usuário
-        try {{
-            msg {session_id} /TIME:5 "Você será desconectado em 5 segundos pelo administrador." 2>&1 | Out-Null
-            Write-Output "Aviso enviado para sessão {session_id}."
-        }} catch {{
-            Write-Output "Aviso: Não foi possível enviar mensagem (msg.exe falhou ou não suportado)."
-        }}
-
-        # Aguardar 5 segundos
-        Start-Sleep -Seconds 5
-
-        try {{
-            # Tentativa 1: rwinsta (Reset Session)
-            Write-Output "Tentando rwinsta para sessão {session_id}..."
-            rwinsta {session_id} 2>&1 | Out-Null
-            if ($LASTEXITCODE -eq 0) {{
-                Write-Output "Sessão {session_id} desconectada com sucesso via rwinsta."
-                exit 0
-            }}
-        }} catch {{
-            Write-Output "Erro ao executar rwinsta: $_"
-        }}
-
-        try {{
-            # Tentativa 2: logoff (Logoff Session)
-            Write-Output "Tentando logoff para sessão {session_id}..."
-            logoff {session_id} 2>&1 | Out-Null
-            if ($LASTEXITCODE -eq 0) {{
-                Write-Output "Sessão {session_id} desconectada com sucesso via logoff."
-                exit 0
-            }}
-        }} catch {{
-            Write-Output "Erro ao executar logoff: $_"
-        }}
-
-        # Se chegou aqui, falhou
-        Write-Output "Falha ao desconectar sessão {session_id} usando ambos rwinsta e logoff."
-        exit 1
-        """
-
-        result = self.handler.execute_script(ps_script)
-        
-        output_msg = "\\n".join(result.get("output", []))
-        
-        if result.get("success") and "desconectada com sucesso" in output_msg:
-             yield f"Sessão {session_id} desconectada com sucesso."
-        else:
-             yield f"Falha ao desconectar sessão {session_id}. Detalhes:\\n{output_msg}"
-
-    def get_user_activity_events(self, start_time, end_time):
-        logging.info(f"Executing 'get_user_activity_events' on {self.target_ip} for period {start_time} to {end_time}")
-        """Busca eventos de atividade usando múltiplas fontes de dados com fallbacks robustos."""
-        script = self._load_script("get_user_activity", {
-            "__START_TIME__": start_time,
-            "__END_TIME__": end_time
-        })
-        
-        result = self.handler.execute_script(script)
-        logging.debug(f"Raw output for get_user_activity_events: {result.get('output')}")
-        full_json_str = "".join(result.get("output", []))
-        if not full_json_str:
-            logging.warning(f"No output received for get_user_activity_events on {self.target_ip}")
-            yield {"error": "no_output"}
-            return
-        
-        try:
-            event_list = json.loads(full_json_str)
-            if isinstance(event_list, dict) and "error" in event_list:
-                logging.warning(f"Remote error reported for get_user_activity_events on {self.target_ip}: {event_list.get('error')}")
-                yield event_list
-            else:
-                logging.info(f"Successfully retrieved {len(event_list) if isinstance(event_list, list) else 1} activity events from {self.target_ip}")
-                yield [event_list] if isinstance(event_list, dict) else event_list
-        except json.JSONDecodeError as e:
-            logging.error(f"JSON decode error for get_user_activity_events on {self.target_ip}: {e}. Raw output: {full_json_str}")
-            yield {"error": "json_decode"}
+    # User management methods moved to UserSessionManager
 
     def get_remote_services(self):
         """Obtém lista de serviços do host remoto."""
@@ -382,7 +244,10 @@ class RemoteCommands:
         if output:
             try:
                 full_json = "".join(output)
-                return json.loads(full_json)
+                data = json.loads(full_json)
+                if isinstance(data, dict) and "error" in data:
+                     return {"error": f"Erro no script remoto: {data['error']}"}
+                return data
             except json.JSONDecodeError as e:
                 logging.error(f"JSON decode error in get_system_info_raw: {e}")
                 return {"error": "Falha ao decodificar JSON de resposta."}

@@ -1,5 +1,5 @@
 import { X, AlertCircle } from 'lucide-react';
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Host } from '../../types';
 
 interface AddHostModalProps {
@@ -8,16 +8,31 @@ interface AddHostModalProps {
     onAdd: (name: string, address: string, mac: string, ports: number[], group: string) => Promise<void>;
     isAdding: boolean;
     existingHosts: Host[];
+    existingGroups: string[];
 }
 
-export function AddHostModal({ isOpen, onClose, onAdd, isAdding, existingHosts }: AddHostModalProps) {
+export function AddHostModal({ isOpen, onClose, onAdd, isAdding, existingHosts, existingGroups }: AddHostModalProps) {
     const [name, setName] = useState('');
     const [address, setAddress] = useState('');
     const [group, setGroup] = useState('');
-
     const [mac, setMac] = useState('');
     const [portsStr, setPortsStr] = useState('');
     const [error, setError] = useState<string | null>(null);
+
+    const [showSuggestions, setShowSuggestions] = useState(false);
+    const wrapperRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        function handleClickOutside(event: MouseEvent) {
+            if (wrapperRef.current && !wrapperRef.current.contains(event.target as Node)) {
+                setShowSuggestions(false);
+            }
+        }
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => {
+            document.removeEventListener("mousedown", handleClickOutside);
+        };
+    }, [wrapperRef]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -48,11 +63,15 @@ export function AddHostModal({ isOpen, onClose, onAdd, isAdding, existingHosts }
         setError(null);
     };
 
+    const filteredGroups = existingGroups.filter(g =>
+        g.toLowerCase().includes(group.toLowerCase())
+    );
+
     if (!isOpen) return null;
 
     return (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-            <div className="bg-zinc-900 border border-zinc-800 rounded-xl w-full max-w-md p-6 shadow-2xl">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={onClose}>
+            <div className="bg-zinc-900 border border-zinc-800 rounded-xl w-full max-w-md p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
                 <div className="flex justify-between items-center mb-4">
                     <h3 className="text-xl font-bold text-white">Adicionar Novo Host</h3>
                     <button onClick={onClose} className="text-zinc-400 hover:text-white">
@@ -102,15 +121,35 @@ export function AddHostModal({ isOpen, onClose, onAdd, isAdding, existingHosts }
                             placeholder="ex: 00:11:22:33:44:55"
                         />
                     </div>
-                    <div>
+                    <div className="relative" ref={wrapperRef}>
                         <label className="block text-sm font-medium text-zinc-400 mb-1">Grupo (Opcional)</label>
                         <input
                             type="text"
                             value={group}
-                            onChange={e => setGroup(e.target.value)}
+                            onChange={e => {
+                                setGroup(e.target.value);
+                                setShowSuggestions(true);
+                            }}
+                            onFocus={() => setShowSuggestions(true)}
                             className={`w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 focus:outline-none focus:border-blue-500 placeholder:text-zinc-500 ${group ? 'text-white' : 'text-zinc-500'}`}
                             placeholder="ex: Servidores, Impressoras"
                         />
+                        {showSuggestions && filteredGroups.length > 0 && (
+                            <div className="absolute z-10 w-full mt-1 bg-zinc-900 border border-zinc-800 rounded-lg shadow-xl max-h-40 overflow-y-auto">
+                                {filteredGroups.map(g => (
+                                    <div
+                                        key={g}
+                                        className="px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-800 cursor-pointer"
+                                        onClick={() => {
+                                            setGroup(g);
+                                            setShowSuggestions(false);
+                                        }}
+                                    >
+                                        {g}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-zinc-400 mb-1">Monitorar Portas (Opcional)</label>

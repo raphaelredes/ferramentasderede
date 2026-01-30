@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { HashRouter as Router, Routes, Route } from 'react-router-dom';
 import { Sidebar } from './components/Sidebar';
 import Dashboard from './pages/Dashboard';
 import { Tools } from './pages/Tools';
@@ -41,6 +41,7 @@ function App() {
                   <main className="flex-1 overflow-auto">
                     <Routes>
                       <Route path="/" element={<Dashboard />} />
+                      <Route path="/dashboard" element={<Dashboard />} />
                       <Route path="/host/:ip" element={<HostDetails />} />
                       <Route path="/tools" element={<Tools />} />
                       <Route path="/terminal" element={<Terminal />} />

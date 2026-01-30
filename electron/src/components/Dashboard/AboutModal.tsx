@@ -10,8 +10,8 @@ export function AboutModal({ isOpen, onClose }: AboutModalProps) {
     if (!isOpen) return null;
 
     return createPortal(
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999] p-4 animate-in fade-in duration-200">
-            <div className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden scale-100 animate-in zoom-in-95 duration-200 relative">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999] p-4 animate-in fade-in duration-200" onClick={onClose}>
+            <div className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden scale-100 animate-in zoom-in-95 duration-200 relative" onClick={(e) => e.stopPropagation()}>
 
                 {/* Decorative Background Elements */}
                 <div className="absolute top-0 left-0 w-full h-32 bg-gradient-to-b from-blue-500/10 to-transparent pointer-events-none" />
@@ -52,14 +52,24 @@ export function AboutModal({ isOpen, onClose }: AboutModalProps) {
 
                     <div className="grid grid-cols-2 gap-4">
                         <button
-                            onClick={() => window.electron.openExternal("https://t.me/raphaelrego")}
+                            onClick={() => {
+                                const url = "https://t.me/raphaelrego";
+                                if (window.electron) window.electron.openExternal(url);
+                                else if (window.pywebview?.api) window.pywebview.api.open_url(url);
+                                else window.open(url, '_blank');
+                            }}
                             className="flex items-center justify-center gap-2 p-3 bg-[#0088cc]/10 hover:bg-[#0088cc]/20 text-[#0088cc] rounded-xl transition-colors border border-[#0088cc]/20 hover:border-[#0088cc]/40 group"
                         >
                             <Send size={18} className="group-hover:-translate-y-0.5 group-hover:translate-x-0.5 transition-transform" />
                             <span className="font-medium">Telegram</span>
                         </button>
                         <button
-                            onClick={() => window.electron.openExternal("https://www.ferramentasderede.com.br/")}
+                            onClick={() => {
+                                const url = "https://www.ferramentasderede.com.br/";
+                                if (window.electron) window.electron.openExternal(url);
+                                else if (window.pywebview?.api) window.pywebview.api.open_url(url);
+                                else window.open(url, '_blank');
+                            }}
                             className="flex items-center justify-center gap-2 p-3 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 rounded-xl transition-colors border border-blue-500/20 hover:border-blue-500/40 group"
                         >
                             <Globe size={18} className="group-hover:rotate-12 transition-transform" />

@@ -14,7 +14,7 @@ interface MonitoringContextType {
     stats: MonitoringStats;
     isLoading: boolean;
     lastUpdated: Date | null;
-    refreshHosts: () => Promise<void>;
+    refreshHosts: (silent?: boolean) => Promise<boolean>;
     uniqueGroups: string[];
 }
 
@@ -91,10 +91,12 @@ export const MonitoringProvider: React.FC<{ children: React.ReactNode }> = ({ ch
                 : 0;
 
             setStats({ total, online, offline, avgLatency });
+            return true; // Success
 
         } catch (error) {
             console.error('Error fetching hosts:', error);
             if (!silent) showToast('Erro ao carregar hosts', 'error');
+            return false; // Failure
         } finally {
             if (!silent) setIsLoading(false);
             isFirstLoad.current = false;
@@ -102,15 +104,38 @@ export const MonitoringProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }, [showToast]);
 
     // Initial load and polling
+    // Initial load and polling
     useEffect(() => {
-        fetchHosts();
+        let isMounted = true;
+        let retryCount = 0;
+        const maxRetries = 20; // Try for 20 seconds
 
-        // Poll every 5 seconds
-        pollingIntervalRef.current = setInterval(() => {
-            fetchHosts(true);
-        }, 5000);
+        const initialFetch = async () => {
+            while (retryCount < maxRetries && isMounted) {
+                const success = await fetchHosts(retryCount > 0); // Silent on retries
+
+                if (success) {
+                    if (isMounted) {
+                        // Start polling only after success
+                        pollingIntervalRef.current = setInterval(() => {
+                            fetchHosts(true);
+                        }, 2000);
+                    }
+                    return;
+                }
+
+                retryCount++;
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+            if (isMounted && retryCount >= maxRetries) {
+                showToast('Não foi possível conectar ao servidor local.', 'error');
+            }
+        };
+
+        initialFetch();
 
         return () => {
+            isMounted = false;
             if (pollingIntervalRef.current) {
                 clearInterval(pollingIntervalRef.current);
             }
@@ -126,7 +151,7 @@ export const MonitoringProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             stats,
             isLoading,
             lastUpdated,
-            refreshHosts: () => fetchHosts(false),
+            refreshHosts: (silent = false) => fetchHosts(silent),
             uniqueGroups
         }}>
             {children}

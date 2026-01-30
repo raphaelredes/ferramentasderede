@@ -4,20 +4,26 @@ import logging
 import socket
 import ipaddress
 from typing import List, Dict, Any
-from concurrent.futures import ThreadPoolExecutor
+# from concurrent.futures import ThreadPoolExecutor # REMOVED: Using dedicated threads
 from .ping import check_host_status_detailed
 from . import mac_utils
 from .tools import NetworkTools
+
+from src.core.host_manager import HostManager
 
 class HostMonitor:
     def __init__(self):
         self._hosts: Dict[str, Dict[str, Any]] = {}
         self._lock = threading.Lock()
         self._running = False
-        self._executor = ThreadPoolExecutor(max_workers=50)
-        self._monitor_thread = None
+        # self._executor = ThreadPoolExecutor(max_workers=50) # REMOVED
+        self._host_threads: Dict[str, threading.Thread] = {} # Map IP -> Thread
+        self._stop_events: Dict[str, threading.Event] = {} # Map IP -> Stop Event
+        
         self._last_resolution_times = {}
-        self._processing_hosts = set()
+        # self._processing_hosts = set() # Not needed with dedicated threads
+        self._tools = NetworkTools()
+        self._host_manager = HostManager()
 
     def start_monitoring(self, hosts: List[Dict[str, Any]], on_update_callback=None):
         """Inicia o monitoramento para uma lista de hosts."""
@@ -29,8 +35,8 @@ class HostMonitor:
         self._on_update_callback = on_update_callback
         self.update_hosts(hosts)
         
-        self._monitor_thread = threading.Thread(target=self._main_loop, daemon=True)
-        self._monitor_thread.start()
+        # self._monitor_thread = threading.Thread(target=self._main_loop, daemon=True) # REMOVED
+        # self._monitor_thread.start()
         
         self._dns_thread = threading.Thread(target=self._dns_loop, daemon=True)
         self._dns_thread.start()
@@ -39,17 +45,20 @@ class HostMonitor:
         """Para todo o monitoramento."""
         self._running = False
         self._on_update_callback = None
-        if self._executor:
-            self._executor.shutdown(wait=False)
-            self._executor = ThreadPoolExecutor(max_workers=50) # Recreate for next start
         
+        # Stop all host threads
         with self._lock:
+            for ip, event in self._stop_events.items():
+                event.set()
+            
+            # Wait for threads? No, let them die naturally or daemon
+            self._host_threads.clear()
+            self._stop_events.clear()
             self._hosts.clear()
             self._last_resolution_times.clear()
-            self._processing_hosts.clear()
 
     def update_hosts(self, hosts: List[Dict[str, Any]]):
-        """Atualiza a lista de hosts monitorados."""
+        """Atualiza a lista de hosts monitorados e gerencia threads."""
         if not self._running:
             return
 
@@ -64,7 +73,7 @@ class HostMonitor:
                 
                 current_ips.add(ip)
                 
-                # Se é um novo host, inicializar stats
+                # Se é um novo host, inicializar stats e thread
                 if ip not in self._hosts:
                     self._hosts[ip] = {
                         'online': False,
@@ -86,26 +95,61 @@ class HostMonitor:
                         'consecutive_successes': 0,
                         'consecutive_failures': 0,
                         'is_smart_offline': False,
-                        'is_smart_offline': False,
-                        'history': [], # List of {timestamp, latency, packet_loss} - managed manually to avoid deque serialization issues
+                        'has_ever_been_online': False,
+                        'history': [], 
                         'ports': host.get('ports', []),
                         'ports_status': {},
                         'monitoring_start_time': time.time()
                     }
+                    
+                    # Start dedicated thread for this host
+                    if self._hosts[ip]['monitoring']:
+                        self._start_host_thread(ip)
+                        
                 else:
                     # Atualizar flag de monitoramento, hostname e portas se host já existe
-                    self._hosts[ip]['monitoring'] = host.get('monitoring', True)
+                    was_monitoring = self._hosts[ip].get('monitoring', True)
+                    is_monitoring = host.get('monitoring', True)
+                    
+                    self._hosts[ip]['monitoring'] = is_monitoring
                     self._hosts[ip]['hostname'] = host.get('hostname')
                     self._hosts[ip]['ports'] = host.get('ports', [])
+                    
+                    # Handle monitoring toggle
+                    if is_monitoring and not was_monitoring:
+                        self._start_host_thread(ip)
+                    elif not is_monitoring and was_monitoring:
+                        self._stop_host_thread(ip)
 
             # Remover hosts que não estão mais na lista
             ips_to_remove = [ip for ip in self._hosts if ip not in current_ips]
             for ip in ips_to_remove:
+                self._stop_host_thread(ip)
                 del self._hosts[ip]
                 if ip in self._last_resolution_times:
                     del self._last_resolution_times[ip]
-                if ip in self._processing_hosts:
-                    self._processing_hosts.discard(ip)
+
+    def _start_host_thread(self, ip: str):
+        """Inicia uma thread dedicada para monitorar um host."""
+        if ip in self._host_threads and self._host_threads[ip].is_alive():
+            return
+
+        stop_event = threading.Event()
+        self._stop_events[ip] = stop_event
+        
+        thread = threading.Thread(target=self._monitor_host_task, args=(ip, stop_event), daemon=True)
+        self._host_threads[ip] = thread
+        thread.start()
+        logging.info(f"Started monitoring thread for {ip}")
+
+    def _stop_host_thread(self, ip: str):
+        """Para a thread de monitoramento de um host."""
+        if ip in self._stop_events:
+            self._stop_events[ip].set()
+            del self._stop_events[ip]
+        if ip in self._host_threads:
+            del self._host_threads[ip]
+            logging.info(f"Stopped monitoring thread for {ip}")
 
     def reset_host_stats(self, ip: str):
         """Reseta as estatísticas de ping para um host específico."""
@@ -125,37 +169,30 @@ class HostMonitor:
                 stats['consecutive_successes'] = 0
                 stats['consecutive_failures'] = 0
                 stats['is_smart_offline'] = False
-                # Keep history for context, or clear it? Better keep it to show the "drop"
+                stats['has_ever_been_online'] = False
                 logging.info(f"Estatísticas resetadas para o host {ip}")
 
-    def _main_loop(self):
-        """Loop principal que agenda as tarefas de ping."""
-        while self._running:
+    def _monitor_host_task(self, ip: str, stop_event: threading.Event):
+        """Tarefa executada pela thread dedicada de cada host."""
+        while not stop_event.is_set() and self._running:
             start_time = time.time()
             
-            # Snapshot dos hosts para iterar sem bloquear por muito tempo
+            # Get current hostname/data safely
+            hostname = None
             with self._lock:
-                hosts_to_process = [(ip, data['hostname'], data.get('monitoring', True)) 
-                                  for ip, data in self._hosts.items()]
-
-            for ip, hostname, monitoring in hosts_to_process:
-                if monitoring:
-                    # Check if already processing to avoid queue flooding
-                    should_process = False
-                    with self._lock:
-                        if ip not in self._processing_hosts:
-                            self._processing_hosts.add(ip)
-                            should_process = True
-                    
-                    if should_process:
-                        self._executor.submit(self._process_host, ip, hostname)
+                if ip in self._hosts:
+                    hostname = self._hosts[ip].get('hostname')
                 else:
-                    pass
-
-            # Aguardar 1 segundo entre ciclos (mais rápido com icmplib)
+                    break # Host removed
+            
+            # Process the host (Ping)
+            self._process_host(ip, hostname)
+            
+            # Calculate sleep time to maintain 1s interval
             elapsed = time.time() - start_time
             sleep_time = max(0.1, 1.0 - elapsed)
-            time.sleep(sleep_time)
+            
+            stop_event.wait(sleep_time)
 
     def _dns_loop(self):
         """Loop dedicado para resolução de DNS em background."""
@@ -207,6 +244,9 @@ class HostMonitor:
                                                     })
                                                 except:
                                                     pass
+                                    
+                                    # Persistir no banco de dados (fora do lock)
+                                    self._host_manager.update_host_details(ip, hostname=new_hostname, domain=new_domain)
                             except Exception as e:
                                 # logging.error(f"Error resolving {ip}: {e}")
                                 pass
@@ -235,14 +275,41 @@ class HostMonitor:
                                                     pass
                             except:
                                 pass
+                        
+                        # --- MAC Address Resolution (Background) ---
+                        # Moved from _process_host to avoid blocking the 1s ping loop
+                        needs_mac = False
+                        current_mac = None
+                        is_online = False
+                        with self._lock:
+                            if ip in self._hosts:
+                                current_mac = self._hosts[ip].get('mac')
+                                is_online = self._hosts[ip].get('online', False)
+                                last_mac_attempt = self._hosts[ip].get('last_mac_attempt', 0)
+                                if not current_mac and is_online and (time.time() - last_mac_attempt > 300): # Retry every 5 mins
+                                    needs_mac = True
+                                    self._hosts[ip]['last_mac_attempt'] = time.time()
+                        
+                        if needs_mac:
+                            try:
+                                mac_address = mac_utils.resolve_mac_address(ip)
+                                if mac_address:
+                                    with self._lock:
+                                        if ip in self._hosts:
+                                            self._hosts[ip]['mac'] = mac_address
+                                    # Persist
+                                    self._host_manager.update_host_details(ip, mac=mac_address)
+                            except:
+                                pass
+
                     except:
                         pass
                     
                     # Pequena pausa entre resoluções para não saturar CPU/Rede
-                    time.sleep(0.5) # Aumentado para 500ms para dar tempo ao sistema
+                    time.sleep(0.1) 
                 
-                # Aguardar 10 segundos antes da próxima rodada completa de DNS
-                time.sleep(10)
+                # Aguardar 5 segundos antes da próxima rodada completa de DNS/MAC
+                time.sleep(5)
             except Exception as e:
                 logging.error(f"Error in DNS loop: {e}")
                 time.sleep(5)
@@ -250,8 +317,6 @@ class HostMonitor:
     def _process_host(self, ip: str, hostname: str):
         """Processa um único host: ping (DNS já resolvido em background)."""
         if not self._running:
-            with self._lock:
-                self._processing_hosts.discard(ip)
             return
 
         try:
@@ -291,7 +356,26 @@ class HostMonitor:
             ping_count = 5 if is_calibrating else 1
             
             if not resolution_failed:
-                result = check_host_status_detailed(ping_ip, count=ping_count, is_wan=is_wan)
+                # OTIMIZAÇÃO: Não resolver nomes no loop principal para permitir uso do icmplib (rápido)
+                # A resolução de nomes é feita pela thread _dns_loop em background
+                # fast_mode=True pula TCP/ARP checks para garantir ciclo de 1s
+                result = check_host_status_detailed(ping_ip, count=ping_count, is_wan=is_wan, resolve_names=False, fast_mode=True)
+                
+                # Se resolveu hostname, atualizar
+                if result.get('resolved_hostname'):
+                    fqdn = result['resolved_hostname']
+                    parts = fqdn.split('.', 1)
+                    new_hostname = parts[0]
+                    new_domain = parts[1] if len(parts) > 1 else None
+                    
+                    with self._lock:
+                        if ip in self._hosts:
+                            self._hosts[ip]['hostname'] = new_hostname
+                            if new_domain:
+                                self._hosts[ip]['domain'] = new_domain
+                    
+                    # Persistir no banco de dados
+                    self._host_manager.update_host_details(ip, hostname=new_hostname, domain=new_domain)
             else:
                 # Se não conseguiu resolver, considera offline imediatamente
                 result = {
@@ -299,21 +383,13 @@ class HostMonitor:
                     'latency': None,
                     'packet_loss': ping_count,
                     'packet_loss_pct': 100,
-                    'total_packets': ping_count
+                    'total_packets': ping_count,
+                    'resolved_hostname': None
                 }
 
             # --- Atualizar MAC Address ---
+            # REMOVIDO: Movido para _dns_loop para não bloquear o ping
             mac_address = None
-            if result['online']:
-                needs_mac = False
-                with self._lock:
-                    if ip in self._hosts:
-                        current_mac = self._hosts[ip].get('mac')
-                        if not current_mac:
-                            needs_mac = True
-                
-                if needs_mac:
-                    mac_address = mac_utils.resolve_mac_address(ping_ip)
 
             # --- Atualizar Estatísticas e Lógica Smart ---
             with self._lock:
@@ -342,8 +418,8 @@ class HostMonitor:
                     stats['is_smart_offline'] = True
                 
                 # Lógica de Recuperação (Smart Recovery)
-                # Se estava offline e teve 10 sucessos consecutivos -> RESET
-                if stats.get('is_smart_offline', False) and stats.get('consecutive_successes', 0) >= 10:
+                # Se estava offline e voltou a responder -> RESET IMEDIATO
+                if result['online'] and (stats.get('is_smart_offline', False) or stats.get('packet_loss_pct', 0) > 60):
                     logging.info(f"Smart Recovery: Host {ip} recovered. Resetting stats.")
                     # Resetar stats mas manter IP e hostname
                     stats['latency'] = result['latency'] # Manter o atual
@@ -352,20 +428,12 @@ class HostMonitor:
                     stats['packet_loss_pct'] = 0
                     stats['total_packets'] = ping_count # Começar com este ping
                     stats['packets_sent_history'] = ping_count
-                    stats['packets_lost_history'] = 0
-                    stats['latency_sum'] = (result['latency'] * ping_count) if result['latency'] else 0
-                    stats['latency_count'] = ping_count
-                    stats['calibration_done'] = False # Recalibrar se necessário
-                    stats['consecutive_successes'] = 1
-                    stats['consecutive_failures'] = 0
-                    stats['is_smart_offline'] = False
-                    stats['is_smart_offline'] = False
-                    stats['online'] = True
-                    # stats['last_checked'] = time.time()
-                    from datetime import datetime
-                    stats['last_checked'] = datetime.now().isoformat()
-                    if mac_address: stats['mac'] = mac_address
-                    # Add history point for recovery
+                    stats['packets_lost_history'] = 0 # Reset lost history
+                    stats['consecutive_failures'] = 0 # Reset failures
+                    stats['online'] = True # Force online
+                    stats['has_ever_been_online'] = True # Force ever online
+                    stats['is_smart_offline'] = False # Reset smart offline flag
+                    
                     if 'history' not in stats: stats['history'] = []
                     stats['history'].append({
                         'timestamp': time.time(),
@@ -377,6 +445,9 @@ class HostMonitor:
 
                 # Atualização Normal de Stats
                 stats['online'] = result['online']
+                if result['online']:
+                    stats['has_ever_been_online'] = True
+                
                 if mac_address:
                     stats['mac'] = mac_address
                 stats['latency'] = result['latency']
@@ -457,11 +528,8 @@ class HostMonitor:
 
         except Exception as e:
             logging.error(f"Erro ao processar host {ip}: {e}")
-        finally:
-            with self._lock:
-                self._processing_hosts.discard(ip)
 
-    def _check_port(self, ip, port, timeout=1):
+    def _check_port(self, ip, port, timeout=0.2):
         """Verifica se uma porta TCP específica está aberta."""
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:

@@ -118,9 +118,12 @@ export const HostCard = memo(function HostCard({
             x = x - 200;
         }
 
-        // Adjust for bottom edge (approximate menu height)
-        if (y + 220 > window.innerHeight) {
-            y = y - 220;
+        // Adjust for bottom edge (approximate menu height ~320px)
+        const MENU_HEIGHT = 320;
+        if (y + MENU_HEIGHT > window.innerHeight) {
+            y = y - MENU_HEIGHT;
+            // Ensure we don't go off the top
+            if (y < 0) y = 0;
         }
 
         setContextMenu({ x, y });
@@ -210,8 +213,13 @@ export const HostCard = memo(function HostCard({
                 {...attributes}
                 onClick={() => {
                     if (!isDragging && !isOverlay) {
-                        setDetailsHost(host);
-                        setIsDetailsModalOpen(true);
+                        // showToast('Click detected', 'info'); // Debug
+                        if (onViewDetails) {
+                            onViewDetails(host);
+                        } else {
+                            setDetailsHost(host);
+                            setIsDetailsModalOpen(true);
+                        }
                     }
                 }}
                 onContextMenu={handleContextMenu}
@@ -224,6 +232,8 @@ export const HostCard = memo(function HostCard({
                             : 'border-zinc-800 hover:border-zinc-700 hover:shadow-lg'
                     }`}
             >
+                {/* Fallback button for Webview if card click fails */}
+                {/* Fallback button removed as per user request */}
                 <div className="flex items-start justify-between mb-4">
                     <div className="flex items-center gap-3">
                         <div
@@ -238,7 +248,10 @@ export const HostCard = memo(function HostCard({
                             <div className="flex items-center gap-2 group/name">
                                 {(() => {
                                     const rawName = host.name || host.hostname || host.address;
-                                    const displayName = rawName ? rawName.split('.')[0] : '';
+                                    // Check if it looks like an IP address
+                                    const isIp = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(rawName || '');
+                                    // If it's an IP, show full. If it's a hostname, show only the first part (host without domain)
+                                    const displayName = rawName ? (isIp ? rawName : rawName.split('.')[0]) : '';
                                     const isLong = displayName.length > 12;
 
                                     return (
@@ -314,6 +327,16 @@ export const HostCard = memo(function HostCard({
                             {/* Subtle background pulse */}
                             <div className="absolute inset-0 bg-blue-500/5 animate-pulse" />
                         </div>
+                    ) : (!stats.has_ever_been_online) ? (
+                        <div className="flex flex-col items-center justify-center py-2 text-red-500 gap-2 bg-red-500/5 rounded-lg border border-red-500/20 h-[74px]">
+                            <div className="flex items-center gap-2">
+                                <AlertTriangle className="animate-pulse" size={18} />
+                                <span className="text-sm font-bold tracking-wide">HOST OFFLINE</span>
+                            </div>
+                            <span className="text-[10px] text-red-400/60 font-mono">
+                                Sem resposta
+                            </span>
+                        </div>
                     ) : (stats.packet_loss_pct > 60) ? (
                         <div className="flex flex-col items-center justify-center py-2 text-red-500 gap-2 bg-red-500/5 rounded-lg border border-red-500/20 h-[74px]">
                             <div className="flex items-center gap-2">
@@ -352,8 +375,8 @@ export const HostCard = memo(function HostCard({
                             <div className="relative z-10 grid grid-cols-3 gap-2 h-full">
                                 <div className="bg-zinc-950/50 rounded p-2 backdrop-blur-sm border border-zinc-800/50">
                                     <p className="text-zinc-500 mb-1">Latência</p>
-                                    <p className={`font-mono ${stats.latency && stats.latency > 100 ? 'text-yellow-500' : 'text-zinc-300'}`}>
-                                        {stats.latency ? `${Math.round(stats.latency)}ms` : '-'}
+                                    <p className={`font-mono ${stats.average_latency && stats.average_latency > 100 ? 'text-yellow-500' : 'text-zinc-300'}`}>
+                                        {stats.average_latency ? `${Math.round(stats.average_latency)}ms` : '-'}
                                     </p>
                                 </div>
                                 <div className="bg-zinc-950/50 rounded p-2 backdrop-blur-sm border border-zinc-800/50">
@@ -381,7 +404,8 @@ export const HostCard = memo(function HostCard({
 
                 {/* Ports Status */}
                 {(optimisticPorts.length > 0) || onUpdateHost ? (
-                    <div className="mt-3 flex flex-wrap gap-2 relative z-10 border-t border-zinc-800/50 pt-3">
+                    <div className="mt-3 flex flex-wrap items-center gap-2 relative z-10 border-t border-zinc-800/50 pt-3">
+                        <span className="text-[10px] uppercase font-medium text-zinc-600 mr-1">Portas:</span>
                         {optimisticPorts.map((port) => {
                             const isOpen = stats.ports_status ? stats.ports_status[port] : undefined;
                             return (

@@ -74,7 +74,7 @@ def parse_ping_output(output):
         
     return None
 
-def check_host_status_detailed(ip_address, count=1, is_wan=False):
+def check_host_status_detailed(ip_address, count=1, is_wan=False, resolve_names=False, fast_mode=False):
     """Verifica status e latência de um host usando icmplib (rápido) ou subprocess (lento)."""
     
     # Definir timeout baseado no modo (Burst vs Normal) e Tipo de Rede (LAN vs WAN)
@@ -86,10 +86,12 @@ def check_host_status_detailed(ip_address, count=1, is_wan=False):
     if count > 1:
         timeout_val = 0.5 if is_wan else 0.2
     else:
-        timeout_val = 1.0
+        # Se fast_mode, usar timeout agressivo de 500ms
+        timeout_val = 0.5 if fast_mode else 1.0
 
-    # Tentar icmplib primeiro (muito mais rápido)
-    if ICMPLIB_AVAILABLE:
+    # Tentar icmplib primeiro (muito mais rápido) - APENAS SE NÃO PRECISAR RESOLVER NOMES
+    # icmplib não suporta resolução de nomes reversa (ping -a) nativamente da mesma forma que o ping do Windows
+    if ICMPLIB_AVAILABLE and not resolve_names:
         try:
             # privileged=False tenta usar datagram sockets (não requer admin no Linux, mas pode falhar no Windows sem admin)
             # Se falhar, tentamos o método antigo.
@@ -103,7 +105,10 @@ def check_host_status_detailed(ip_address, count=1, is_wan=False):
                     'latency': host.avg_rtt,
                     'packet_loss': int(host.packet_loss * host.packets_sent), # icmplib retorna float 0.0-1.0
                     'packet_loss_pct': host.packet_loss * 100,
-                    'total_packets': host.packets_sent
+                    'total_packets': host.packets_sent,
+                    'total_packets': host.packets_sent,
+                    'resolved_hostname': None,
+                    'domain': None
                 }
         except Exception as e:
             # Se der erro (ex: permissão), cai para o fallback
@@ -113,6 +118,8 @@ def check_host_status_detailed(ip_address, count=1, is_wan=False):
     # Fallback para o método antigo (subprocess)
     try:
         # Converter timeout para formato do comando ping
+        # OTIMIZAÇÃO: Timeout máximo de 1000ms para garantir updates rápidos
+        timeout_val = min(timeout_val, 1.0)
         timeout_ms = str(int(timeout_val * 1000))
         timeout_s = str(timeout_val)
 
@@ -122,7 +129,7 @@ def check_host_status_detailed(ip_address, count=1, is_wan=False):
         # Solução: Executar 'ping -n 1' várias vezes em loop se count > 1.
         # Isso é muito mais rápido para hosts online (retorno imediato).
         
-        if count > 1:
+        if count > 1 and not resolve_names:
             total_sent = 0
             total_lost = 0
             rtt_sum = 0
@@ -170,17 +177,29 @@ def check_host_status_detailed(ip_address, count=1, is_wan=False):
                 'latency': avg_latency,
                 'packet_loss': total_lost,
                 'packet_loss_pct': packet_loss_pct,
-                'total_packets': total_sent
+                'total_packets': total_sent,
+                'total_packets': total_sent,
+                'resolved_hostname': None,
+                'domain': None
             }
 
         # Comportamento padrão para count=1 (ou se decidirmos não usar o loop)
+        # Se resolve_names=True, adicionar flag -a no Windows
         if os.name == 'nt':
-            command = ["ping", "-n", str(count), "-w", timeout_ms, ip_address]
+            command = ["ping", "-n", str(count), "-w", timeout_ms]
+            if resolve_names:
+                command.append("-a")
+            command.append(ip_address)
         else:
             command = ["ping", "-c", str(count), "-W", timeout_s, ip_address]
         
         # Windows needs CREATE_NO_WINDOW
         creation_flags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+        
+        # Se estiver resolvendo nomes, aumentar o timeout total pois o DNS pode demorar
+        proc_timeout = (float(timeout_val) * count) + 2
+        if resolve_names:
+            proc_timeout += 2 # +2s para DNS
         
         try:
             result = subprocess.run(
@@ -190,7 +209,7 @@ def check_host_status_detailed(ip_address, count=1, is_wan=False):
                 encoding='cp850', 
                 errors='replace',
                 creationflags=creation_flags,
-                timeout=(float(timeout_val) * count) + 2 # Timeout total de segurança
+                timeout=proc_timeout
             )
         except subprocess.TimeoutExpired:
             return {
@@ -198,7 +217,10 @@ def check_host_status_detailed(ip_address, count=1, is_wan=False):
                 'latency': None,
                 'packet_loss': count,
                 'packet_loss_pct': 100,
-                'total_packets': count
+                'total_packets': count,
+                'total_packets': count,
+                'resolved_hostname': None,
+                'domain': None
             }
         
         online = result.returncode == 0
@@ -206,6 +228,8 @@ def check_host_status_detailed(ip_address, count=1, is_wan=False):
         packet_loss = 0
         packet_loss_pct = 0
         total_packets = count
+        resolved_hostname = None
+        domain = None
         
         if online:
             latency = parse_ping_output(result.stdout)
@@ -219,12 +243,40 @@ def check_host_status_detailed(ip_address, count=1, is_wan=False):
                 total_packets = int(sent_match.group(1))
                 if total_packets > 0:
                     packet_loss_pct = (packet_loss / total_packets) * 100
+            
+            # Extrair Hostname se solicitado
+            if resolve_names and os.name == 'nt':
+                    match = re.search(r"(?:Disparando|Pinging)(?:\s+contra)?\s+(.*?)\s+\[", result.stdout, re.IGNORECASE)
+                    if match:
+                        hostname_cand = match.group(1).strip()
+                        if hostname_cand != ip_address:
+                            resolved_hostname = hostname_cand
+                            # Extract domain if present (e.g., host.domain.com -> domain.com)
+                            if '.' in resolved_hostname:
+                                parts = resolved_hostname.split('.')
+                                if len(parts) > 1:
+                                    domain = '.'.join(parts[1:])
+            
+            # Fallback: Use socket.getfqdn() if ping -a failed to resolve a name or returned the IP
+            if resolve_names and (not resolved_hostname or resolved_hostname == ip_address):
+                try:
+                    fqdn = socket.getfqdn(ip_address)
+                    if fqdn and fqdn != ip_address:
+                        resolved_hostname = fqdn
+                        if '.' in resolved_hostname:
+                            parts = resolved_hostname.split('.')
+                            if len(parts) > 1:
+                                domain = '.'.join(parts[1:])
+                except:
+                    pass
+
         else:
             packet_loss = count
             packet_loss_pct = 100
             
             # Fallback: Tentar TCP connect se ping falhar (apenas se count for 1, para não demorar muito)
-            if count == 1:
+            # OTIMIZAÇÃO: Se fast_mode, pular TCP connect para garantir ciclo de 1s
+            if count == 1 and not fast_mode:
                 try:
                     start_time = time.time()
                     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -241,25 +293,30 @@ def check_host_status_detailed(ip_address, count=1, is_wan=False):
                     pass
         
         # Fallback 2: Verificar tabela ARP (para hosts na mesma sub-rede que bloqueiam tudo)
-        if not online and count == 1:
+        # OTIMIZAÇÃO: Se fast_mode, pular ARP check pois arp -a é lento
+        if not online and count == 1 and not fast_mode:
             if check_arp_table(ip_address):
                 online = True
                 latency = 0 # Latência desprezível na rede local
 
-        # Fallback 3: Tentar via PowerShell (Test-Connection) se tudo falhar
-        # Isso ajuda se o ambiente Python tiver restrições de rede que o Shell do usuário não tem
-        if not online and os.name == 'nt' and count == 1:
-            ps_online, ps_latency = check_powershell_ping(ip_address)
-            if ps_online:
-                online = True
-                latency = ps_latency
+    # Fallback 3: Tentar via PowerShell (Test-Connection) se tudo falhar
+        # REMOVIDO: PowerShell é muito lento (3-5s) e causa atraso no monitoramento em tempo real.
+        # Se o ping ICMP e TCP falharem, consideramos offline para manter o ciclo de 1s.
+        # if not online and os.name == 'nt' and count == 1:
+        #     ps_online, ps_latency = check_powershell_ping(ip_address)
+        #     if ps_online:
+        #         online = True
+        #         latency = ps_latency
         
         return {
             'online': online, 
             'latency': latency,
             'packet_loss': packet_loss,
             'packet_loss_pct': packet_loss_pct,
-            'total_packets': total_packets
+            'total_packets': total_packets,
+            'total_packets': total_packets,
+            'resolved_hostname': resolved_hostname,
+            'domain': domain
         }
         
     except Exception as e:
@@ -269,7 +326,9 @@ def check_host_status_detailed(ip_address, count=1, is_wan=False):
             'latency': None,
             'packet_loss': count,
             'packet_loss_pct': 100,
-            'total_packets': count
+            'total_packets': count,
+            'resolved_hostname': None,
+            'domain': None
         }
 
 def check_powershell_ping(ip_address):

@@ -2,7 +2,9 @@
   "name": "network-tools",
   "productName": "Ferramentas de Rede",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.2.1",
+  "description": "Ferramentas de Rede Integradas",
+  "author": "Raphael Rego",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build && electron-builder",

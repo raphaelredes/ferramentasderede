@@ -74,6 +74,7 @@ class HostManager:
                 self.hosts.append({
                     'name': h['hostname'], # UI usa 'name'
                     'ip': h['address'],    # UI usa 'ip'
+                    'domain': h.get('domain'),
                     'mac': h['mac'],
                     'nickname': h['description'],
                     'group': h['group_name'],
@@ -103,6 +104,7 @@ class HostManager:
                 hosts_to_save.append({
                     'address': h.get('ip'),
                     'hostname': h.get('name'),
+                    'domain': h.get('domain'),
                     'mac': h.get('mac'),
                     'description': h.get('nickname'),
                     'group_name': h.get('group'),
@@ -120,7 +122,7 @@ class HostManager:
             logging.error(f"Erro ao salvar hosts no DB: {e}")
 
     def export_to_json_file(self, file_path: str):
-        """Exports the current hosts from DB to a JSON file, including Trusted Hosts."""
+        """Exports the current hosts from DB to an encrypted JSON file."""
         try:
             self.load_hosts() # Ensure we have the latest data from DB
             
@@ -134,24 +136,46 @@ class HostManager:
                 "trusted_hosts": trusted_hosts
             }
             
-            with open(file_path, 'w', encoding='utf-8') as f:
-                json.dump(export_data, f, indent=4)
+            json_str = json.dumps(export_data, indent=4)
             
-            logging.info(f"Hosts and TrustedHosts exported successfully to {file_path}")
+            # Encrypt and save
+            from src.core.security import SecurityManager
+            from src.config.settings import APP_DATA_DIR
+            sec_manager = SecurityManager(APP_DATA_DIR)
+            sec_manager.save_encrypted_file(file_path, json_str)
+            
+            logging.info(f"Hosts and TrustedHosts exported successfully (encrypted) to {file_path}")
             return True
         except Exception as e:
             logging.error(f"Failed to export hosts to JSON: {e}")
             return False
 
     def import_from_json_file(self, file_path: str):
-        """Imports hosts and Trusted Hosts from a JSON file into DB and System."""
+        """Imports hosts and Trusted Hosts from a JSON file (encrypted or plain) into DB and System."""
         try:
             if not os.path.exists(file_path):
                 return False, "File not found."
 
-            with open(file_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
+            data = None
             
+            # Try to load as encrypted first
+            try:
+                from src.core.security import SecurityManager
+                from src.config.settings import APP_DATA_DIR
+                sec_manager = SecurityManager(APP_DATA_DIR)
+                json_str = sec_manager.load_encrypted_file(file_path)
+                data = json.loads(json_str)
+            except Exception:
+                # Fallback to plain text (legacy support)
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                except Exception as e:
+                    return False, f"Failed to load file (invalid format or decryption failed): {e}"
+            
+            if data is None:
+                return False, "Failed to parse file data."
+
             hosts_data = []
             trusted_hosts_data = []
 
@@ -197,7 +221,8 @@ class HostManager:
         
         # Verificar duplicatas em memória (rápido) ou DB
         # Vamos confiar no DB constraint de UNIQUE(address) mas verificar nome também
-        if any(h['name'] == name or h['ip'] == ip for h in self.hosts):
+        # Se name for None ou vazio, não verificar duplicidade de nome
+        if any((name and h['name'] == name) or h['ip'] == ip for h in self.hosts):
             return False, "Host com este nome ou IP já existe."
         
         # Salvar no DB
@@ -260,6 +285,46 @@ class HostManager:
                 
         return host_found
 
+    def update_host_details(self, ip, hostname=None, domain=None):
+        """Atualiza detalhes específicos (hostname, domínio) de um host."""
+        host_found = False
+        
+        # Atualizar em memória
+        for host in self.hosts:
+            if host['ip'] == ip:
+                if hostname: host['name'] = hostname # UI usa 'name' como hostname
+                if domain: host['domain'] = domain
+                host_found = True
+                break
+        
+        # Atualizar no DB
+        if host_found:
+            try:
+                with db._get_connection() as conn:
+                    cursor = conn.cursor()
+                    updates = []
+                    params = []
+                    
+                    if hostname:
+                        updates.append("hostname = ?")
+                        params.append(hostname)
+                    
+                    if domain:
+                        updates.append("domain = ?")
+                        params.append(domain)
+                        
+                    if updates:
+                        params.append(ip)
+                        sql = f"UPDATE hosts SET {', '.join(updates)} WHERE address = ?"
+                        cursor.execute(sql, params)
+                        conn.commit()
+                        logging.debug(f"Host {ip}: Detalhes atualizados (Hostname: {hostname}, Domain: {domain})")
+                        return True
+            except Exception as e:
+                logging.error(f"Erro ao atualizar detalhes do host {ip} no DB: {e}")
+                
+        return False
+
     def add_secondary_ip(self, host_name, ip, label=None):
         """Adiciona um IP secundário ao host."""
         # SQLite schema atual não suporta secondary_ips explicitamente na tabela principal
@@ -277,15 +342,14 @@ class HostManager:
             logging.error(f"Erro ao limpar hosts: {e}")
 
     def update_hosts(self, updated_hosts_list):
-        """Substitui a lista de hosts inteira."""
-        # Perigoso em DB grande, mas ok para < 1000 hosts
-        self.clear_all_hosts()
+        """Substitui a lista de hosts inteira atomicamente."""
         
         hosts_to_save = []
         for h in updated_hosts_list:
              hosts_to_save.append({
                 'address': h.get('ip'),
                 'hostname': h.get('name'),
+                'domain': h.get('domain'),
                 'mac': h.get('mac'),
                 'description': h.get('nickname'),
                 'group_name': h.get('group'),
@@ -299,7 +363,7 @@ class HostManager:
                 'last_status': h.get('last_status')
             })
         
-        if db.bulk_save_hosts(hosts_to_save):
+        if db.replace_all_hosts(hosts_to_save):
             self.hosts = updated_hosts_list
 
     def import_from_csv(self, filepath):

@@ -1,4 +1,4 @@
-import { X, LogOut, AlertTriangle, User, Monitor } from 'lucide-react';
+import { X, LogOut, User, Monitor } from 'lucide-react';
 import { createPortal } from 'react-dom';
 
 interface DisconnectUserModalProps {

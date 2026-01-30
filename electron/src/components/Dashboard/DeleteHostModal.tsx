@@ -13,8 +13,8 @@ export function DeleteHostModal({ isOpen, onClose, onConfirm, host, isDeleting }
     if (!isOpen || !host) return null;
 
     return (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-            <div className="bg-zinc-900 border border-zinc-800 rounded-xl w-full max-w-md p-6 shadow-2xl">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={onClose}>
+            <div className="bg-zinc-900 border border-zinc-800 rounded-xl w-full max-w-md p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
                 <div className="flex items-center gap-3 text-red-500 mb-4">
                     <div className="p-3 bg-red-500/10 rounded-full">
                         <Trash2 size={24} />

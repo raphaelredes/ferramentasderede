@@ -99,19 +99,40 @@ def system_info(request: SystemInfoRequest, x_temp_auth: str = Header(default=No
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro interno no servidor: {str(e)}")
 
-    # Update host with current user if available
-    if isinstance(result, dict) and "CurrentUser" in result and result["CurrentUser"] != "N/A":
+    # Update host with current user and TeamViewer ID if available
+    if isinstance(result, dict):
+        updates_needed = False
         try:
-            from api.routes.network import get_hosts_list, save_hosts_list, host_monitor
+            from api.routes.network import get_hosts_list, save_hosts_list, host_manager_instance
+            
+            # We need to fetch fresh list or use manager directly
+            # Using manager directly is better for atomic updates but we need the object first
             current_hosts = get_hosts_list()
             target_host = next((h for h in current_hosts if h.address == request.target_ip), None)
+            
             if target_host:
-                target_host.current_user = result["CurrentUser"]
-                save_hosts_list(current_hosts)
-                # Optional: update monitor if needed, but maybe not strictly necessary for just this field
-                # host_monitor.update_hosts([h.dict() for h in current_hosts]) 
+                if "CurrentUser" in result and result["CurrentUser"] != "N/A":
+                    target_host.current_user = result["CurrentUser"]
+                    updates_needed = True
+                
+                if "TeamViewerID" in result and result["TeamViewerID"] != "N/A" and result["TeamViewerID"] != "Unknown":
+                    target_host.teamviewer_id = result["TeamViewerID"]
+                    updates_needed = True
+                
+                if updates_needed:
+                    # Persist using HostManager
+                    # Re-construct dict for update
+                    host_data = {
+                        'ip': target_host.address,
+                        'current_user': target_host.current_user,
+                        'teamviewer_id': target_host.teamviewer_id
+                    }
+                    # We can use update_host_details or update_hosts. update_hosts expects full list or list of dicts.
+                    # Let's use save_hosts_list helper which handles the conversion
+                    save_hosts_list(current_hosts)
+                    
         except Exception as e:
-            print(f"Erro ao atualizar CurrentUser no host: {e}")
+            print(f"Erro ao atualizar informações do host: {e}")
 
     return result
 

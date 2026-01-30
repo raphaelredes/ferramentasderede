@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Monitor } from 'lucide-react';
 import {
@@ -9,14 +9,23 @@ import {
     useSensor,
     useSensors,
     DragEndEvent,
-    DragOverlay
+    DragOverlay,
+    CollisionDetection,
+    pointerWithin,
+    rectIntersection
 } from '@dnd-kit/core';
+
+
+
 import {
     arrayMove,
     SortableContext,
     sortableKeyboardCoordinates,
     rectSortingStrategy
 } from '@dnd-kit/sortable';
+import { CredentialModal } from '../components/CredentialModal';
+import TrustedHostsModal from '../components/TrustedHostsModal';
+
 import { DashboardHeader } from '../components/Dashboard/DashboardHeader';
 import { FilterBar } from '../components/Dashboard/FilterBar';
 import { HostCard } from '../components/Dashboard/HostCard';
@@ -25,10 +34,12 @@ import { AddHostModal } from '../components/Dashboard/AddHostModal';
 import { DeleteHostModal } from '../components/Dashboard/DeleteHostModal';
 import { TrashDroppable } from '../components/Dashboard/TrashDroppable';
 import { SetGroupModal } from '../components/Dashboard/SetGroupModal';
+import { HostDetailsModal } from '../components/Dashboard/HostDetailsModal';
 import { Host } from '../types';
 import { useMonitoring } from '../contexts/MonitoringContext';
 import { useHostActions } from '../hooks/useHostActions';
 import { useToast } from '../contexts/ToastContext';
+import { useTools } from '../contexts/ToolsContext';
 import { HelpButton } from '../components/HelpButton';
 import { HostListSkeleton } from '../components/Dashboard/HostListSkeleton';
 
@@ -50,7 +61,26 @@ export default function Dashboard() {
         updateHost
     } = useHostActions();
 
+    const { setPendingAction } = useTools();
+
     const navigate = useNavigate();
+
+    const customCollisionDetection: CollisionDetection = useCallback((args) => {
+        const pointerCollisions = pointerWithin(args);
+
+        // First, check if the pointer is over the trash (strict)
+        const trashCollision = pointerCollisions.find(c => c.id === 'trash-droppable');
+        if (trashCollision) {
+            return [trashCollision];
+        }
+
+        // Otherwise, use closestCenter for the sortable list, BUT EXCLUDE THE TRASH
+        // This ensures the trash only activates on strict pointer overlap
+        return closestCenter({
+            ...args,
+            droppableContainers: args.droppableContainers.filter(container => container.id !== 'trash-droppable')
+        });
+    }, []);
 
     // Modal State
     const [isAddHostModalOpen, setIsAddHostModalOpen] = useState(false);
@@ -58,6 +88,15 @@ export default function Dashboard() {
     const [hostToDelete, setHostToDelete] = useState<Host | null>(null);
     const [isSetGroupModalOpen, setIsSetGroupModalOpen] = useState(false);
     const [hostToSetGroup, setHostToSetGroup] = useState<Host | null>(null);
+
+    // Details Modal State
+    const [detailsHost, setDetailsHost] = useState<Host | null>(null);
+    const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
+    const [isEditingName, setIsEditingName] = useState(false);
+    const [editedName, setEditedName] = useState('');
+    const [modalStatus, setModalStatus] = useState<{ type: 'success' | 'error' | 'info', message: string } | null>(null);
+    const [copiedIp, setCopiedIp] = useState(false);
+    const [copiedHostname, setCopiedHostname] = useState(false);
 
     // Context Menu State
     const [activeContextMenu, setActiveContextMenu] = useState<string | null>(null);
@@ -77,7 +116,7 @@ export default function Dashboard() {
     const onAddHost = async (name: string, address: string, mac: string, ports: number[], group: string) => {
         const success = await addHost(name, address, mac, ports, group);
         if (success) {
-            await fetchHosts();
+            await fetchHosts(true);
             setIsAddHostModalOpen(false);
         }
     };
@@ -132,12 +171,167 @@ export default function Dashboard() {
         });
     }, [fetchHosts, showToast]);
 
-    const setDetailsHostCallback = useCallback((_host: Host) => {
-        // No-op, kept for prop compatibility if needed, but we navigate now
+    // Details Modal Handlers
+    const handleModalCopy = (text: string, type: 'ip' | 'hostname') => {
+        navigator.clipboard.writeText(text);
+        if (type === 'ip') {
+            setCopiedIp(true);
+            setTimeout(() => setCopiedIp(false), 2000);
+        } else {
+            setCopiedHostname(true);
+            setTimeout(() => setCopiedHostname(false), 2000);
+        }
+    };
+
+    const handleRefreshDetails = async () => {
+        if (!detailsHost) return;
+        await fetchHosts();
+        const freshHost = hosts.find(h => h.address === detailsHost.address);
+        if (freshHost) {
+            setDetailsHost(freshHost);
+        }
+    };
+
+    // Sync detailsHost with hosts list to reflect background updates
+    useEffect(() => {
+        if (isDetailsModalOpen && detailsHost) {
+            const freshHost = hosts.find(h => h.address === detailsHost.address);
+            if (freshHost && freshHost !== detailsHost) {
+                setDetailsHost(freshHost);
+            }
+        }
+    }, [hosts, isDetailsModalOpen, detailsHost]);
+
+    // Auth & Action State
+    const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+    const [isTrustedHostsModalOpen, setIsTrustedHostsModalOpen] = useState(false);
+    const [pendingPowerAction, setPendingPowerAction] = useState<{
+        host: Host;
+        type: 'shutdown' | 'restart' | 'wol' | 'message' | 'cancel';
+        message?: string;
+        delay?: number;
+        auth?: { user: string; pass: string };
+    } | null>(null);
+    const [pendingTrustedAction, setPendingTrustedAction] = useState<(() => Promise<void>) | null>(null);
+
+    const executePowerAction = async (
+        host: Host,
+        type: 'shutdown' | 'restart' | 'wol' | 'message' | 'cancel',
+        message: string = '',
+        delay: number = 0,
+        user: string,
+        pass: string,
+        tempAuth: boolean = false
+    ) => {
+        const headers: HeadersInit = {
+            'Content-Type': 'application/json'
+        };
+        if (tempAuth) {
+            headers['X-Temp-Auth'] = 'true';
+        }
+
+        try {
+            const body = {
+                target_ip: host.address, // Use address as IP might be resolving
+                username: user,
+                password: pass,
+                action: type,
+                message: message,
+                timeout: delay,
+                force: true
+            };
+
+            const res = await fetch('http://127.0.0.1:8000/system/power', {
+                method: 'POST',
+                headers: headers,
+                body: JSON.stringify(body)
+            });
+
+            if (res.ok) {
+                const reader = res.body?.getReader();
+                const decoder = new TextDecoder();
+                let hasError = false;
+
+                if (reader) {
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+
+                        const chunk = decoder.decode(value);
+                        const lines = chunk.split('\n');
+
+                        for (const line of lines) {
+                            if (!line.trim()) continue;
+                            try {
+                                const data = JSON.parse(line);
+                                if (data.status === 'error') {
+                                    hasError = true;
+                                    if (data.code === "TRUSTED_HOSTS_REQUIRED") {
+                                        setPendingTrustedAction(() => async () => executePowerAction(host, type, message, delay, user, pass, true));
+                                        setIsTrustedHostsModalOpen(true);
+                                        return;
+                                    }
+                                    showToast(`Erro: ${data.message}`, 'error');
+                                    return;
+                                }
+                            } catch (e) {
+                                console.error('Error parsing power action response:', e);
+                            }
+                        }
+                    }
+                }
+
+                if (!hasError) {
+                    showToast(`Ação ${type} enviada com sucesso`, 'success');
+                }
+            } else {
+                const err = await res.json().catch(() => ({}));
+                if (res.status === 403 && err.detail === "TRUSTED_HOSTS_REQUIRED") {
+                    setPendingTrustedAction(() => async () => executePowerAction(host, type, message, delay, user, pass, true));
+                    setIsTrustedHostsModalOpen(true);
+                    return;
+                }
+                showToast('Erro ao executar ação', 'error');
+            }
+        } catch (e) {
+            console.error(e);
+            showToast('Erro ao executar ação', 'error');
+        }
+    };
+
+    const handleAction = async (host: Host, type: 'shutdown' | 'restart' | 'wol' | 'message' | 'cancel', message?: string, delay?: number) => {
+        setPendingPowerAction({ host, type, message, delay });
+        setIsAuthModalOpen(true);
+    };
+
+    const handleConfirmTrustedHosts = async () => {
+        if (pendingTrustedAction) {
+            setIsTrustedHostsModalOpen(false);
+            await pendingTrustedAction();
+            setPendingTrustedAction(null);
+        }
+    };
+
+    const handleSaveName = async () => {
+        if (!detailsHost) return;
+        const success = await updateHost(detailsHost.address, { name: editedName });
+        if (success) {
+            setModalStatus({ type: 'success', message: 'Nome atualizado com sucesso!' });
+            setTimeout(() => setModalStatus(null), 3000);
+            setIsEditingName(false);
+            handleRefreshDetails();
+        } else {
+            setModalStatus({ type: 'error', message: 'Erro ao atualizar nome.' });
+            setTimeout(() => setModalStatus(null), 3000);
+        }
+    };
+
+    const setDetailsHostCallback = useCallback((host: Host) => {
+        setDetailsHost(host);
     }, []);
 
-    const setIsDetailsModalOpenCallback = useCallback((_isOpen: boolean) => {
-        // No-op
+    const setIsDetailsModalOpenCallback = useCallback((isOpen: boolean) => {
+        setIsDetailsModalOpen(isOpen);
     }, []);
 
     const sensors = useSensors(
@@ -148,38 +342,6 @@ export default function Dashboard() {
     );
 
     const [activeId, setActiveId] = useState<string | null>(null);
-
-    const handleDragEndDnd = (event: DragEndEvent) => {
-        const { active, over } = event;
-
-        setActiveId(null);
-
-        if (!over) return;
-
-        // Handle drop on trash
-        if (over.id === 'trash-droppable') {
-            const host = hosts.find(h => h.address === active.id);
-            if (host) {
-                handleDeleteClick(host);
-            }
-            return;
-        }
-
-        if (active.id !== over.id) {
-            const oldIndex = hosts.findIndex((host) => host.address === active.id);
-            const newIndex = hosts.findIndex((host) => host.address === over.id);
-
-            const newHosts = arrayMove(hosts, oldIndex, newIndex);
-
-            const newOrder = newHosts.map(h => h.address);
-            setHostOrder(newOrder);
-            localStorage.setItem('hostOrder', JSON.stringify(newOrder));
-
-            if (sortBy !== 'manual') {
-                setSortBy('manual');
-            }
-        }
-    };
 
     // Filter and Sort Logic
     const filteredHosts = hosts.filter(host => {
@@ -203,10 +365,16 @@ export default function Dashboard() {
         if (sortBy === 'manual') {
             const indexA = hostOrder.indexOf(a.address);
             const indexB = hostOrder.indexOf(b.address);
-            if (indexA === -1 && indexB === -1) return 0;
-            if (indexA === -1) return 1;
-            if (indexB === -1) return -1;
-            return indexA - indexB;
+
+            // Both present: sort by order
+            if (indexA !== -1 && indexB !== -1) return indexA - indexB;
+
+            // One present: present comes first
+            if (indexA !== -1) return -1;
+            if (indexB !== -1) return 1;
+
+            // Both missing: sort by name (stable fallback)
+            return a.name.localeCompare(b.name);
         }
 
         if (sortBy === 'name') return a.name.localeCompare(b.name);
@@ -229,6 +397,38 @@ export default function Dashboard() {
         }
         return 0;
     });
+
+    const handleDragEndDnd = (event: DragEndEvent) => {
+        const { active, over } = event;
+
+        setActiveId(null);
+
+        if (!over) return;
+
+        // Handle drop on trash
+        if (over.id === 'trash-droppable') {
+            const host = hosts.find(h => h.address === active.id);
+            if (host) {
+                handleDeleteClick(host);
+            }
+            return;
+        }
+
+        if (active.id !== over.id) {
+            const oldIndex = filteredHosts.findIndex((host) => host.address === active.id);
+            const newIndex = filteredHosts.findIndex((host) => host.address === over.id);
+
+            const newHosts = arrayMove(filteredHosts, oldIndex, newIndex);
+
+            const newOrder = newHosts.map(h => h.address);
+            setHostOrder(newOrder);
+            localStorage.setItem('hostOrder', JSON.stringify(newOrder));
+
+            if (sortBy !== 'manual') {
+                setSortBy('manual');
+            }
+        }
+    };
 
     return (
         <div className="p-8 max-w-[1600px] mx-auto">
@@ -290,7 +490,7 @@ export default function Dashboard() {
                 ) : (
                     <DndContext
                         sensors={sensors}
-                        collisionDetection={closestCenter}
+                        collisionDetection={customCollisionDetection}
                         onDragStart={(event) => setActiveId(event.active.id as string)}
                         onDragEnd={handleDragEndDnd}
                         onDragCancel={() => setActiveId(null)}
@@ -313,7 +513,7 @@ export default function Dashboard() {
                                             calibration_done: false
                                         };
 
-                                        const isReorderEnabled = sortBy === 'manual' && filterStatus === 'all' && searchTerm === '';
+                                        const isReorderEnabled = sortBy === 'manual' && filterStatus === 'all' && searchTerm === '' && activeGroupTab === 'all';
 
                                         return (
                                             <SortableHostCard
@@ -327,13 +527,19 @@ export default function Dashboard() {
                                                 setDetailsHost={setDetailsHostCallback}
                                                 setIsDetailsModalOpen={setIsDetailsModalOpenCallback}
                                                 isDragDisabled={!isReorderEnabled}
-                                                onPing={(host) => navigate('/tools', { state: { target: host.ip || host.address, tool: 'ping', autoRun: true } })}
-                                                onTraceroute={(host) => navigate('/tools', { state: { target: host.ip || host.address, tool: 'traceroute', autoRun: false } })}
+                                                onPing={(host) => {
+                                                    setPendingAction({ type: 'ping', target: host.ip || host.address, id: crypto.randomUUID() });
+                                                    navigate('/tools');
+                                                }}
+                                                onTraceroute={(host) => {
+                                                    setPendingAction({ type: 'traceroute', target: host.ip || host.address, id: crypto.randomUUID() });
+                                                    navigate('/tools');
+                                                }}
                                                 onDelete={handleDeleteClick}
                                                 onUpdateHost={updateHost}
                                                 activeContextMenu={activeContextMenu}
                                                 onContextMenuOpen={setActiveContextMenu}
-                                                onViewDetails={(host) => navigate(`/host/${host.address}`, { state: { host } })}
+                                                onViewDetails={undefined}
                                                 onSetGroup={handleSetGroupClick}
                                             />
                                         );
@@ -379,7 +585,7 @@ export default function Dashboard() {
                         </DragOverlay>
 
                         {activeId && (
-                            <div className="sticky bottom-8 left-0 w-full flex justify-center z-50 pointer-events-none">
+                            <div className="fixed bottom-8 left-0 w-full flex justify-center z-[100] pointer-events-none">
                                 <div className="pointer-events-auto">
                                     <TrashDroppable />
                                 </div>
@@ -395,6 +601,7 @@ export default function Dashboard() {
                 onAdd={onAddHost}
                 isAdding={isAddingHost}
                 existingHosts={hosts}
+                existingGroups={uniqueGroups}
             />
 
             <DeleteHostModal
@@ -413,6 +620,56 @@ export default function Dashboard() {
                 existingGroups={uniqueGroups}
             />
 
-        </div >
+            <HostDetailsModal
+                isOpen={isDetailsModalOpen}
+                onClose={() => setIsDetailsModalOpen(false)}
+                host={detailsHost}
+                hostStatus={{}}
+                onRefresh={handleRefreshDetails}
+                onAction={handleAction}
+                onDelete={handleDeleteClick}
+                onSaveName={handleSaveName}
+                isEditingName={isEditingName}
+                setIsEditingName={setIsEditingName}
+                editedName={editedName}
+                setEditedName={setEditedName}
+                modalStatus={modalStatus}
+                handleModalCopy={handleModalCopy}
+                copiedIp={copiedIp}
+                copiedHostname={copiedHostname}
+                onUpdateHost={updateHost}
+            />
+
+            <CredentialModal
+                isOpen={isAuthModalOpen}
+                onClose={() => {
+                    setIsAuthModalOpen(false);
+                    setPendingPowerAction(null);
+                }}
+                title="Autenticação Necessária"
+                initialDomain={pendingPowerAction?.host.domain || ''}
+                onConfirm={(username, password) => {
+                    if (pendingPowerAction) {
+                        executePowerAction(
+                            pendingPowerAction.host,
+                            pendingPowerAction.type,
+                            pendingPowerAction.message,
+                            pendingPowerAction.delay,
+                            username,
+                            password
+                        );
+                        setIsAuthModalOpen(false);
+                        setPendingPowerAction(null);
+                    }
+                }}
+            />
+
+            <TrustedHostsModal
+                isOpen={isTrustedHostsModalOpen}
+                onClose={() => setIsTrustedHostsModalOpen(false)}
+                onConfirm={handleConfirmTrustedHosts}
+            />
+
+        </div>
     );
 }

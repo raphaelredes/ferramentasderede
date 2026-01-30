@@ -1,5 +1,4 @@
 import { useState, useRef, useEffect } from 'react';
-import { useLocation } from 'react-router-dom';
 import { Play, Square, Terminal as TerminalIcon, Eraser, Network as NetworkIcon, Activity } from 'lucide-react';
 import { clsx } from 'clsx';
 import { NetworkScanner } from '../components/Tools/NetworkScanner';
@@ -16,7 +15,11 @@ export function Tools() {
         runPing,
         runTraceroute,
         stopTool,
-        clearToolOutput
+        clearToolOutput,
+        pendingAction,
+        setPendingAction,
+        processedActionIds,
+        markActionAsProcessed
     } = useTools();
 
     const [localPingTarget, setLocalPingTarget] = useState('8.8.8.8');
@@ -25,51 +28,39 @@ export function Tools() {
     const outputEndRef = useRef<HTMLDivElement>(null);
     const [existingHosts, setExistingHosts] = useState<Host[]>([]);
 
-    const scrollToBottom = () => {
-        outputEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    };
-
-    // Scroll on output change
+    // Handle pending actions from context (e.g. from Dashboard)
     useEffect(() => {
-        scrollToBottom();
-    }, [pingState.output, traceState.output, activeTab]);
-
-    // Handle navigation state
-    const location = useLocation();
-    useEffect(() => {
-        if (location.state) {
-            const { target, tool, autoRun } = location.state as { target?: string; tool?: 'ping' | 'traceroute'; autoRun?: boolean };
-
-            if (tool) {
-                setActiveTab(tool);
+        if (pendingAction) {
+            // Skip if already processed this exact action ID
+            if (processedActionIds.has(pendingAction.id)) {
+                return;
             }
 
-            if (target) {
-                if (tool === 'ping' || !tool) {
-                    setLocalPingTarget(target);
-                    if (autoRun && !pingState.isRunning) {
-                        runPing(target);
-                    }
-                }
-                if (tool === 'traceroute') {
-                    setLocalTraceTarget(target);
-                    if (autoRun && !traceState.isRunning) {
-                        runTraceroute(target);
-                    }
-                }
+            const { type, target } = pendingAction;
+
+            if (type === 'ping') {
+                setActiveTab('ping');
+                setLocalPingTarget(target);
+                // Auto-run disabled per user request
+            } else if (type === 'traceroute') {
+                setActiveTab('traceroute');
+                setLocalTraceTarget(target);
+                // Auto-run disabled per user request
             }
 
-            // Clear state to prevent re-running on simple re-renders (though location.state persists until navigation)
-            // Ideally we'd replace history but for now this is fine as long as we check isRunning
-            window.history.replaceState({}, document.title);
+            // Mark as processed in Context (survives remounts)
+            markActionAsProcessed(pendingAction.id);
+
+            // Clear pending action immediately
+            setPendingAction(null);
         }
-    }, [location.state, runPing, runTraceroute, pingState.isRunning, traceState.isRunning]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [pendingAction, setPendingAction, processedActionIds, markActionAsProcessed]);
 
-    // Fetch existing hosts on mount
     useEffect(() => {
         fetch('http://127.0.0.1:8000/hosts')
             .then(res => res.json())
-            .then(data => setExistingHosts(data))
+            .then(setExistingHosts)
             .catch(console.error);
     }, []);
 
@@ -105,7 +96,7 @@ export function Tools() {
         run: (t: string) => void,
         stop: () => void,
         clear: () => void,
-        icon: React.ReactNode,
+        _icon: React.ReactNode,
         colorClass: string,
         borderColorClass: string
     ) => (
@@ -216,35 +207,37 @@ export function Tools() {
                 </button>
             </div>
 
-            {activeTab === 'ping' && renderDiagnosticTool(
-                'ping',
-                pingState,
-                localPingTarget,
-                setLocalPingTarget,
-                runPing,
-                () => stopTool('ping'),
-                () => clearToolOutput('ping'),
-                <Activity size={18} />,
-                'text-blue-400',
-                'border-blue-900/30 hover:border-blue-500/50'
-            )}
+            <div className="flex-1 min-h-0">
+                {activeTab === 'ping' && renderDiagnosticTool(
+                    'ping',
+                    pingState,
+                    localPingTarget,
+                    setLocalPingTarget,
+                    runPing,
+                    () => stopTool('ping'),
+                    () => clearToolOutput('ping'),
+                    <Activity size={18} />,
+                    'text-blue-400',
+                    'border-blue-900/30 hover:border-blue-500/50'
+                )}
 
-            {activeTab === 'traceroute' && renderDiagnosticTool(
-                'traceroute',
-                traceState,
-                localTraceTarget,
-                setLocalTraceTarget,
-                runTraceroute,
-                () => stopTool('traceroute'),
-                () => clearToolOutput('traceroute'),
-                <NetworkIcon size={18} />,
-                'text-purple-400',
-                'border-purple-900/30 hover:border-purple-500/50'
-            )}
+                {activeTab === 'traceroute' && renderDiagnosticTool(
+                    'traceroute',
+                    traceState,
+                    localTraceTarget,
+                    setLocalTraceTarget,
+                    runTraceroute,
+                    () => stopTool('traceroute'),
+                    () => clearToolOutput('traceroute'),
+                    <NetworkIcon size={18} />,
+                    'text-purple-400',
+                    'border-purple-900/30 hover:border-purple-500/50'
+                )}
 
-            {activeTab === 'scanner' && (
-                <NetworkScanner onAddHost={handleAddHost} existingHosts={existingHosts} />
-            )}
+                {activeTab === 'scanner' && (
+                    <NetworkScanner onAddHost={handleAddHost} existingHosts={existingHosts} />
+                )}
+            </div>
         </div>
     );
 }

@@ -7,7 +7,7 @@ import base64
 import logging
 import subprocess
 from pypsrp.wsman import WSMan
-from pypsrp.powershell import PowerShell, RunspacePool
+from pypsrp.powershell import PowerShell, RunspacePool, PSInvocationState
 from pypsrp.exceptions import WinRMError
 from requests.exceptions import ConnectionError, ConnectTimeout
 
@@ -195,9 +195,9 @@ class WinRMHandler:
                 f.write(f"\n--- CMD: {command} ---\n")
         except: pass
 
-        while self.ps.invocation_state_info.state == 'Running':
-            if self.ps.streams.output:
-                for line in self.ps.streams.output:
+        while self.ps.state == PSInvocationState.RUNNING:
+            if self.ps.output:
+                for line in self.ps.output:
                     s_line = str(line)
                     # Debug log
                     try:
@@ -205,7 +205,7 @@ class WinRMHandler:
                             f.write(f"OUT: {s_line}\n")
                     except: pass
                     yield s_line + "\n"
-                self.ps.streams.output.clear()
+                self.ps.output.clear()
             
             if self.ps.streams.error:
                 for error in self.ps.streams.error:
@@ -220,15 +220,15 @@ class WinRMHandler:
             time.sleep(0.1)
 
         # Pega qualquer saída restante
-        if self.ps.streams.output:
-            for line in self.ps.streams.output:
+        if self.ps.output:
+            for line in self.ps.output:
                 s_line = str(line)
                 try:
                     with open("terminal_debug.log", "a", encoding="utf-8") as f:
                         f.write(f"OUT (FINAL): {s_line}\n")
                 except: pass
                 yield s_line + "\n"
-            self.ps.streams.output.clear()
+            self.ps.output.clear()
 
         if self.ps.had_errors and self.ps.streams.error:
             for error in self.ps.streams.error:
@@ -242,28 +242,32 @@ class WinRMHandler:
 
     @staticmethod
     def get_trusted_hosts():
-        """Retorna a lista atual de TrustedHosts."""
+        """Retorna a lista atual de TrustedHosts via Registry (evita PowerShell/AV)."""
         try:
-            cmd = ["powershell", "-NoProfile", "-NonInteractive", "-Command", 
-                   "(Get-Item WSMan:\\localhost\\Client\\TrustedHosts).Value"]
-            result = subprocess.run(cmd, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
-            return result.stdout.strip()
+            import winreg
+            key_path = r"SOFTWARE\Microsoft\Windows\CurrentVersion\WSMAN\Client"
+            # OpenKey defaults to KEY_READ
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path) as key:
+                value, type_ = winreg.QueryValueEx(key, "TrustedHosts")
+                return value
+        except FileNotFoundError:
+            return ""
         except Exception as e:
-            logging.error(f"Erro ao obter TrustedHosts: {e}")
+            logging.error(f"Erro ao obter TrustedHosts via Registry: {e}")
             return ""
 
     @staticmethod
     def set_trusted_hosts(value):
-        """Define o valor de TrustedHosts."""
+        """Define o valor de TrustedHosts via Registry (evita PowerShell/AV)."""
         try:
-            # Escape aspas simples se houver (embora IPs não tenham)
-            safe_value = value.replace("'", "''")
-            cmd = ["powershell", "-NoProfile", "-NonInteractive", "-Command", 
-                   f"Set-Item WSMan:\\localhost\\Client\\TrustedHosts -Value '{safe_value}' -Force"]
-            result = subprocess.run(cmd, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
-            return result.returncode == 0
+            import winreg
+            key_path = r"SOFTWARE\Microsoft\Windows\CurrentVersion\WSMAN\Client"
+            # Precisamos de acesso de escrita
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path, 0, winreg.KEY_SET_VALUE) as key:
+                winreg.SetValueEx(key, "TrustedHosts", 0, winreg.REG_SZ, value)
+            return True
         except Exception as e:
-            logging.error(f"Erro ao definir TrustedHosts: {e}")
+            logging.error(f"Erro ao definir TrustedHosts via Registry: {e}")
             return False
 
     @staticmethod

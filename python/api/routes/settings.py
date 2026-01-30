@@ -54,20 +54,33 @@ def load_settings() -> Settings:
     if not os.path.exists(SETTINGS_FILE):
         return Settings()
     try:
-        with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-            # Handle legacy format migration if needed, or just parse
-            # For now assuming clean start or compatible structure, 
-            # but let's be robust against missing keys by using Pydantic defaults
-            return Settings(**data)
+        # Try to load as encrypted first
+        try:
+            from src.core.security import SecurityManager
+            from src.config.settings import APP_DATA_DIR
+            sec_manager = SecurityManager(APP_DATA_DIR)
+            json_str = sec_manager.load_encrypted_file(SETTINGS_FILE)
+            data = json.loads(json_str)
+        except Exception:
+            # Fallback to plain text (legacy support)
+            with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                
+        return Settings(**data)
     except Exception as e:
         print(f"Error loading settings: {e}")
         return Settings()
 
 def save_settings_to_file(settings: Settings):
     try:
-        with open(SETTINGS_FILE, 'w', encoding='utf-8') as f:
-            json.dump(settings.model_dump(), f, indent=4)
+        json_str = json.dumps(settings.model_dump(), indent=4)
+        
+        # Encrypt and save
+        from src.core.security import SecurityManager
+        from src.config.settings import APP_DATA_DIR
+        sec_manager = SecurityManager(APP_DATA_DIR)
+        sec_manager.save_encrypted_file(SETTINGS_FILE, json_str)
+        
     except Exception as e:
         print(f"Error saving settings: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to save settings: {str(e)}")
@@ -88,26 +101,39 @@ def save_settings(settings: Settings):
 @router.get("/settings/trusted-hosts")
 def get_trusted_hosts():
     """Get list of TrustedHosts from WinRM configuration."""
-    from src.system.winrm import get_trusted_hosts as winrm_get_trusted
-    return winrm_get_trusted()
+    from src.system.core.winrm_handler import WinRMHandler
+    hosts = WinRMHandler.get_trusted_hosts()
+    # Normalize return type to list of strings
+    if not hosts:
+        return []
+    if hosts == "*":
+        return ["*"]
+    return [h.strip() for h in hosts.split(',') if h.strip()]
 
 @router.post("/settings/trusted-hosts")
 def add_trusted_host(host: str):
     """Add a host to TrustedHosts (requires Admin)."""
-    from src.system.winrm import add_trusted_host as winrm_add_trusted
-    if winrm_add_trusted(host):
+    from src.system.core.winrm_handler import WinRMHandler
+    if WinRMHandler.add_trusted_host(host):
         return {"status": "success", "message": f"Added {host} to TrustedHosts."}
     else:
         raise HTTPException(status_code=500, detail="Failed to add TrustedHost.")
 
 @router.delete("/settings/trusted-hosts")
-def clear_trusted_hosts():
-    """Clear all TrustedHosts."""
-    from src.system.winrm import clear_trusted_hosts as winrm_clear_trusted
-    if winrm_clear_trusted():
-        return {"status": "success", "message": "TrustedHosts cleared."}
+def remove_trusted_host_endpoint(host: Optional[str] = None):
+    """Remove a single TrustedHost or clear all."""
+    from src.system.core.winrm_handler import WinRMHandler
+    if host:
+        if WinRMHandler.remove_trusted_host(host):
+            return {"status": "success", "message": f"Removed {host} from TrustedHosts."}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to remove TrustedHost.")
     else:
-        raise HTTPException(status_code=500, detail="Failed to clear TrustedHosts.")
+        # Clear all logic (set to empty string)
+        if WinRMHandler.set_trusted_hosts(""):
+            return {"status": "success", "message": "TrustedHosts cleared."}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to clear TrustedHosts.")
 
 # --- Data Management ---
 
@@ -131,11 +157,28 @@ def export_hosts():
 
 @router.post("/settings/import")
 async def import_hosts(file: UploadFile = File(...)):
-    """Upload and replace hosts."""
+    """Upload and replace hosts (supports encrypted and legacy plain JSON)."""
     try:
         contents = await file.read()
-        # Validate JSON
-        data = json.loads(contents)
+        
+        data = None
+        # Try to decrypt first
+        try:
+            from src.core.security import SecurityManager
+            from src.config.settings import APP_DATA_DIR
+            sec_manager = SecurityManager(APP_DATA_DIR)
+            # contents is bytes, decrypt_data expects bytes and returns bytes
+            decrypted_bytes = sec_manager.decrypt_data(contents)
+            data = json.loads(decrypted_bytes.decode('utf-8'))
+        except Exception:
+            # Fallback to plain text (legacy support)
+            try:
+                data = json.loads(contents.decode('utf-8'))
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Invalid file format (not JSON or encrypted): {e}")
+
+        if data is None:
+             raise HTTPException(status_code=400, detail="Failed to parse file data.")
         
         hosts_data = []
         trusted_hosts_data = []

@@ -50,45 +50,35 @@ function Parse-UserLine {
         
         if ($sId) {
             $duration = "N/A"
-            
-            # WMI Fallback for LogonTime if missing or invalid
-            if (-not $logonTime -or $logonTime -eq "N/A") {
-                try {
-                    $wmiSession = Get-WmiObject -Class Win32_LogonSession | Where-Object { $_.LogonId -eq $sId } | Select-Object -First 1
-                    if ($wmiSession -and $wmiSession.StartTime) {
-                        $logonTime = [System.Management.ManagementDateTimeConverter]::ToDateTime($wmiSession.StartTime).ToString("g")
-                    }
+            $preciseLogonDate = $null
+
+            # Tentar obter LogonTime preciso via processo winlogon.exe da sessão
+            try {
+                $winlogon = Get-WmiObject -Class Win32_Process -Filter "Name='winlogon.exe' AND SessionId=$sId" | Select-Object -First 1
+                if ($winlogon -and $winlogon.CreationDate) {
+                    $preciseLogonDate = [System.Management.ManagementDateTimeConverter]::ToDateTime($winlogon.CreationDate)
+                    # Write-Host "DEBUG: Found winlogon for session $sId, time: $preciseLogonDate"
                 }
-                catch {}
+            } catch {
+                # Write-Host "DEBUG: Failed to get winlogon for session $sId: $_"
             }
 
-            if ($logonTime) {
+            # Se falhou winlogon, tentar Win32_LogonSession (menos confiável pois ID de logon != SessionID)
+            # Mas podemos tentar correlacionar via Win32_LoggedOnUser -> Win32_Session -> Win32_LogonSession (complexo)
+            # Simplificação: Se winlogon falhar, tentar parsear o texto do quser (com risco de formato de data)
+            
+            if (-not $preciseLogonDate -and $logonTime -and $logonTime -ne "N/A") {
                 try {
-                    $logonDate = $null
-                    # Try parsing various formats
-                    if ($logonTime -match '^\d{14}\.\d{6}[+-]\d{3}$') {
-                        # WMI format
-                        $logonDate = [System.Management.ManagementDateTimeConverter]::ToDateTime($logonTime)
-                    }
-                    elseif ($logonTime -match '^\d{1,2}/\d{1,2}/\d{4}') {
-                        # Standard date format
-                        try { $logonDate = [DateTime]::Parse($logonTime) } catch {}
-                    }
-                    
-                    if (-not $logonDate) {
-                        try { $logonDate = [DateTime]::Parse($logonTime) } catch {}
-                    }
+                    # Tentar parsear data do quser (formato local)
+                    $preciseLogonDate = [DateTime]::Parse($logonTime)
+                } catch {}
+            }
 
-                    if ($logonDate) {
-                        $span = (Get-Date) - $logonDate
-                        $duration = "{0:dd}d {0:hh}h {0:mm}m" -f $span
-                        # Normalize display format
-                        $logonTime = $logonDate.ToString("g")
-                    }
-                }
-                catch {
-                    $duration = "N/A"
-                }
+            if ($preciseLogonDate) {
+                $span = (Get-Date) - $preciseLogonDate
+                $duration = "{0:dd}d {0:hh}h {0:mm}m" -f $span
+                # Formatar para exibição consistente
+                $logonTime = $preciseLogonDate.ToString("g")
             }
 
             return [PSCustomObject]@{
@@ -180,14 +170,31 @@ try {
         }
 
         if (-not $alreadyFound) {
-            $u = [PSCustomObject]@{
-                UserName    = $user
-                SessionId   = "Console"
-                State       = "Active"
-                SessionName = "Console"
-                Source      = "WMI_ComputerSystem"
+            # Validação extra: Se o usuário do Console for o mesmo que está rodando o script (WinRM user),
+            # verificar se ele realmente tem um processo explorer.exe (indicando desktop ativo).
+            # Isso evita falsos positivos onde o WinRM reporta o próprio usuário como "Console".
+            $isValid = $true
+            if ($user -eq $env:USERNAME) {
+                $explorerProc = Get-WmiObject -Class Win32_Process -Filter "Name='explorer.exe'" | Where-Object { 
+                    $owner = $_.GetOwner()
+                    $owner.ReturnValue -eq 0 -and $owner.User -eq $user
+                }
+                if (-not $explorerProc) {
+                    # Write-Host "DEBUG: Usuário $user detectado no Console mas sem explorer.exe. Ignorando (provável sessão WinRM)."
+                    $isValid = $false
+                }
             }
-            Add-User -uObj $u
+
+            if ($isValid) {
+                $u = [PSCustomObject]@{
+                    UserName    = $user
+                    SessionId   = "Console"
+                    State       = "Active"
+                    SessionName = "Console"
+                    Source      = "WMI_ComputerSystem"
+                }
+                Add-User -uObj $u
+            }
         }
         else {
             # Write-Host "Usuário $user já listado, ignorando entrada duplicada do Console."

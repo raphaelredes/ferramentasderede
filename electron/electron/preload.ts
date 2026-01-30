@@ -25,4 +25,6 @@ contextBridge.exposeInMainWorld('electron', {
   launchTeamViewer: (id?: string) => ipcRenderer.invoke('launch-teamviewer', id),
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
   getLocalDomain: () => ipcRenderer.invoke('get-local-domain'),
+  showItemInFolder: (path: string) => ipcRenderer.invoke('show-item-in-folder', path),
+  saveFileAs: (filename: string, content: string) => ipcRenderer.invoke('save-file-as', filename, content),
 })

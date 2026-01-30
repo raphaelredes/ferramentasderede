@@ -190,8 +190,8 @@ export function CredentialModal({
     };
 
     return createPortal(
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[9999] backdrop-blur-sm">
-            <div className="bg-zinc-900 border border-zinc-800 rounded-xl w-full max-w-md p-6 shadow-2xl animate-in fade-in zoom-in duration-200 flex flex-col max-h-[90vh]">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[9999] backdrop-blur-sm" onClick={onClose}>
+            <div className="bg-zinc-900 border border-zinc-800 rounded-xl w-full max-w-md p-6 shadow-2xl animate-in fade-in zoom-in duration-200 flex flex-col max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
                 <div className="flex items-center justify-between mb-6 shrink-0">
                     <h3 className="text-xl font-bold text-white flex items-center gap-2">
                         <Lock className="text-blue-500" size={20} />

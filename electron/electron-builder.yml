@@ -6,15 +6,20 @@ asar: false
 files:
   - dist-electron/**/*
   - dist/**/*
-# extraResources:
-#   - from: ../python/dist/server/
-#     to: server
-#     filter:
-#       - "**/*"
+extraResources:
+  - from: ../python/dist/server
+    to: server
+    filter:
+      - "**/*"
 win:
-  target: dir
-  icon: public/electron-vite.svg
-nsis:
-  oneClick: false
-  allowToChangeInstallationDirectory: true
-  createDesktopShortcut: true
+  # --- Solução Definitiva SmartScreen (Code Signing) ---
+  # Para remover o aviso de "Fornecedor Desconhecido", você deve adquirir um certificado (EV ou OV).
+  # Configuração recomendada (ou use variáveis de ambiente CSC_LINK / CSC_KEY_PASSWORD):
+  # certificateFile: "path/to/certificate.pfx"
+  # certificatePassword: "password"
+  # ----------------------------------------------------
+  target: portable
+  icon: public/icon.png
+compression: "store"
+portable:
+  artifactName: "Ferramentas de Rede v${version}.exe"

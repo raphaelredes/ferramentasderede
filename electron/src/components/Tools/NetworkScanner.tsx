@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import {
     Search,
     Play,
@@ -11,11 +11,14 @@ import {
     Cpu,
     Plus,
     X,
-    LayoutList
+    LayoutList,
+    ArrowUpDown,
+    ArrowUp,
+    ArrowDown,
+    Upload
 } from 'lucide-react';
 import { Host } from '../../types';
 import { useTools } from '../../contexts/ToolsContext';
-import { useLoading } from '../../contexts/LoadingContext';
 
 interface NetworkScannerProps {
     onAddHost: (host: Host) => void;
@@ -35,17 +38,14 @@ export const NetworkScanner: React.FC<NetworkScannerProps> = ({ onAddHost, exist
         runScanSession
     } = useTools();
 
-    const { setLoading } = useLoading();
-
-    // Update global loading state whenever sessions change
-    useEffect(() => {
-        const isAnySessionRunning = scanSessions.some(s => s.isRunning);
-        setLoading('tools', isAnySessionRunning);
-    }, [scanSessions, setLoading]);
+    const hasInitialized = useRef(false);
 
     // Initialize with a default session if empty
     useEffect(() => {
         const init = async () => {
+            if (hasInitialized.current) return;
+            hasInitialized.current = true;
+
             if (scanSessions.length === 0) {
                 let defaultCidr = '';
                 try {
@@ -110,6 +110,104 @@ export const NetworkScanner: React.FC<NetworkScannerProps> = ({ onAddHost, exist
 
     const activeSession = scanSessions.find(s => s.id === activeSessionId);
 
+    // Sorting State
+    const [sortBy, setSortBy] = React.useState<'ip' | 'name' | 'vendor'>('ip');
+    const [sortDirection, setSortDirection] = React.useState<'asc' | 'desc'>('asc');
+    const [viewMode, setViewMode] = React.useState<'results' | 'available'>('results');
+
+    const sortHosts = (hosts: any[]) => {
+        return [...hosts].sort((a, b) => {
+            let comparison = 0;
+            switch (sortBy) {
+                case 'ip':
+                    const ipA = a.ip.split('.').map(Number);
+                    const ipB = b.ip.split('.').map(Number);
+                    for (let i = 0; i < 4; i++) {
+                        if (ipA[i] !== ipB[i]) {
+                            comparison = ipA[i] - ipB[i];
+                            break;
+                        }
+                    }
+                    break;
+                case 'name':
+                    const nameA = (a.hostname || a.ip).toLowerCase();
+                    const nameB = (b.hostname || b.ip).toLowerCase();
+                    comparison = nameA.localeCompare(nameB);
+                    break;
+                case 'vendor':
+                    const vendorA = (a.vendor || '').toLowerCase();
+                    const vendorB = (b.vendor || '').toLowerCase();
+                    comparison = vendorA.localeCompare(vendorB);
+                    break;
+            }
+            return sortDirection === 'asc' ? comparison : -comparison;
+        });
+    };
+
+    const sortedResults = activeSession ? sortHosts(activeSession.results) : [];
+
+    const exportToCSV = async () => {
+        if (!activeSession) return;
+
+        let csvContent = '';
+        let filename = '';
+
+        if (viewMode === 'results') {
+            if (activeSession.results.length === 0) return;
+
+            const headers = ['IP', 'Hostname', 'Vendor', 'MAC', 'Status'];
+            const rows = activeSession.results.map(host => [
+                host.ip,
+                host.hostname || '',
+                host.vendor || '',
+                host.mac || '',
+                host.status
+            ]);
+
+            csvContent = [
+                headers.join(','),
+                ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+            ].join('\n');
+
+            filename = `scan_results_${activeSession.cidr.replace(/[\/\\]/g, '_')}_${new Date().toISOString().slice(0, 10)}.csv`;
+        } else if (viewMode === 'available') {
+            if (!activeSession.availableRanges || activeSession.availableRanges.length === 0) return;
+
+            const headers = ['IP/Range'];
+            const rows = activeSession.availableRanges.map(range => [range]);
+
+            csvContent = [
+                headers.join(','),
+                ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+            ].join('\n');
+
+            filename = `available_ips_${activeSession.cidr.replace(/[\/\\]/g, '_')}_${new Date().toISOString().slice(0, 10)}.csv`;
+        }
+
+        if (!csvContent) return;
+
+        try {
+            let path: string | null = null;
+            if (window.electron && window.electron.saveFileAs) {
+                path = await window.electron.saveFileAs(filename, csvContent);
+            } else if (window.pywebview?.api?.saveFileAs) {
+                path = await window.pywebview.api.saveFileAs(filename, csvContent);
+            }
+
+            if (path) {
+                if (window.electron && window.electron.showItemInFolder) {
+                    window.electron.showItemInFolder(path);
+                } else if (window.pywebview?.api?.showItemInFolder) {
+                    window.pywebview.api.showItemInFolder(path);
+                }
+            }
+        } catch (e) {
+            console.error("Error exporting CSV:", e);
+        }
+    };
+
+    const [showInfoModal, setShowInfoModal] = React.useState(false);
+
     return (
         <div className="flex flex-col h-full bg-zinc-950/50 rounded-xl border border-zinc-800/50 overflow-hidden">
             {/* Tabs Header */}
@@ -164,6 +262,42 @@ export const NetworkScanner: React.FC<NetworkScannerProps> = ({ onAddHost, exist
                             />
                         </div>
 
+                        {viewMode === 'results' && (
+                            <div className="flex items-center gap-2">
+                                <div className="relative">
+                                    <ArrowUpDown className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" size={16} />
+                                    <select
+                                        value={sortBy}
+                                        onChange={(e) => setSortBy(e.target.value as any)}
+                                        className="bg-zinc-900/50 border border-zinc-800 text-zinc-300 pl-9 pr-8 py-2 rounded-lg focus:outline-none focus:border-blue-500/50 appearance-none cursor-pointer hover:bg-zinc-800/50 transition-colors text-sm"
+                                    >
+                                        <option value="ip">IP</option>
+                                        <option value="name">Nome</option>
+                                        <option value="vendor">Fabricante</option>
+                                    </select>
+                                </div>
+                                <button
+                                    onClick={() => setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc')}
+                                    className="p-2 bg-zinc-900/50 border border-zinc-800 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800/50 transition-colors"
+                                    title={sortDirection === 'asc' ? "Crescente" : "Decrescente"}
+                                >
+                                    {sortDirection === 'asc' ? <ArrowUp size={16} /> : <ArrowDown size={16} />}
+                                </button>
+                            </div>
+                        )}
+
+                        <button
+                            onClick={exportToCSV}
+                            disabled={viewMode === 'results' ? activeSession.results.length === 0 : (!activeSession.availableRanges || activeSession.availableRanges.length === 0)}
+                            className={`p-2 bg-zinc-900/50 border border-zinc-800 rounded-lg transition-colors ${(viewMode === 'results' ? activeSession.results.length === 0 : (!activeSession.availableRanges || activeSession.availableRanges.length === 0))
+                                    ? 'text-zinc-600 cursor-not-allowed'
+                                    : 'text-zinc-400 hover:text-white hover:bg-zinc-800/50'
+                                }`}
+                            title="Exportar CSV"
+                        >
+                            <Upload size={16} />
+                        </button>
+
                         <button
                             onClick={() => startScan(activeSession.id)}
                             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all border ${activeSession.isRunning
@@ -203,77 +337,144 @@ export const NetworkScanner: React.FC<NetworkScannerProps> = ({ onAddHost, exist
                         </div>
                     )}
 
-                    {/* Results Grid */}
-                    <div className="flex-1 overflow-y-auto p-4">
-                        {activeSession.results.length === 0 ? (
-                            <div className="h-full flex flex-col items-center justify-center text-zinc-500 gap-4">
-                                <div className="w-16 h-16 rounded-2xl bg-zinc-900/50 flex items-center justify-center border border-zinc-800/50">
-                                    <Search size={32} className="opacity-50" />
+                    {/* View Tabs */}
+                    <div className="flex items-center px-4 border-b border-zinc-800/50 bg-zinc-900/20">
+                        <button
+                            onClick={() => setViewMode('results')}
+                            className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${viewMode === 'results'
+                                ? 'border-blue-500 text-blue-400'
+                                : 'border-transparent text-zinc-500 hover:text-zinc-300'
+                                }`}
+                        >
+                            Dispositivos Encontrados ({activeSession.results.length})
+                        </button>
+                        <button
+                            onClick={() => setViewMode('available')}
+                            className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${viewMode === 'available'
+                                ? 'border-blue-500 text-blue-400'
+                                : 'border-transparent text-zinc-500 hover:text-zinc-300'
+                                }`}
+                        >
+                            IPs Disponíveis {activeSession.availableCount !== undefined ? `(${activeSession.availableCount})` : ''}
+                            {viewMode === 'available' && (
+                                <div
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        setShowInfoModal(true);
+                                    }}
+                                    className="p-1 hover:bg-blue-500/20 rounded-full transition-colors cursor-pointer"
+                                    title="Informações sobre disponibilidade"
+                                >
+                                    <div className="w-4 h-4 rounded-full border border-current flex items-center justify-center text-[10px] font-bold">i</div>
                                 </div>
-                                <p className="text-sm">Inicie uma varredura para encontrar dispositivos na rede.</p>
-                            </div>
+                            )}
+                        </button>
+                    </div>
+
+                    {/* Content Area */}
+                    <div className="flex-1 overflow-y-auto p-4">
+                        {viewMode === 'results' ? (
+                            activeSession.results.length === 0 ? (
+                                <div className="h-full flex flex-col items-center justify-center text-zinc-500 gap-4">
+                                    <div className="w-16 h-16 rounded-2xl bg-zinc-900/50 flex items-center justify-center border border-zinc-800/50">
+                                        <Search size={32} className="opacity-50" />
+                                    </div>
+                                    <p className="text-sm">Inicie uma varredura para encontrar dispositivos na rede.</p>
+                                </div>
+                            ) : (
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                                    {sortedResults.map((host) => {
+                                        const isAdded = existingHosts.some(h => h.address === host.ip);
+
+                                        return (
+                                            <div key={host.ip} className="group bg-zinc-900/30 hover:bg-zinc-800/50 border border-zinc-800/50 hover:border-zinc-700 rounded-xl p-3 transition-all duration-200">
+                                                <div className="flex items-start justify-between mb-2">
+                                                    <div className="p-2 bg-zinc-950 rounded-lg border border-zinc-800 group-hover:border-zinc-700 transition-colors">
+                                                        {getVendorIcon(host.vendor, host.hostname)}
+                                                    </div>
+                                                    <div className={`w-2 h-2 rounded-full ${host.status === 'online' ? 'bg-green-500' : 'bg-zinc-700'}`} />
+                                                </div>
+
+                                                <div className="mb-3">
+                                                    <h3 className="text-zinc-100 font-medium text-lg tracking-tight">{host.ip}</h3>
+                                                    <p className="text-zinc-400 text-xs truncate" title={host.hostname || 'Sem hostname'}>
+                                                        {host.hostname || 'Unknown Host'}
+                                                    </p>
+                                                </div>
+
+                                                <button
+                                                    onClick={() => !isAdded && onAddHost({
+                                                        address: host.ip,
+                                                        name: host.hostname || host.ip,
+                                                        type: 'generic',
+                                                        monitoring: true,
+                                                        mac: host.mac,
+                                                        vendor: host.vendor,
+                                                        hostname: host.hostname
+                                                    })}
+                                                    disabled={isAdded}
+                                                    className={`w-full py-1.5 rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1.5 ${isAdded
+                                                        ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed'
+                                                        : 'bg-zinc-800 hover:bg-blue-600 text-zinc-300 hover:text-white border border-zinc-700 hover:border-blue-500'
+                                                        }`}
+                                                >
+                                                    {isAdded ? (
+                                                        <>Adicionado</>
+                                                    ) : (
+                                                        <>
+                                                            <Plus size={12} />
+                                                            Adicionar no painel
+                                                        </>
+                                                    )}
+                                                </button>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )
                         ) : (
-                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-                                {activeSession.results.map((host) => {
-                                    const isAdded = existingHosts.some(h => h.address === host.ip);
-
-                                    return (
-                                        <div key={host.ip} className="group bg-zinc-900/30 hover:bg-zinc-800/50 border border-zinc-800/50 hover:border-zinc-700 rounded-xl p-3 transition-all duration-200">
-                                            <div className="flex items-start justify-between mb-2">
-                                                <div className="p-2 bg-zinc-950 rounded-lg border border-zinc-800 group-hover:border-zinc-700 transition-colors">
-                                                    {getVendorIcon(host.vendor, host.hostname)}
-                                                </div>
-                                                <div className={`w-2 h-2 rounded-full ${host.status === 'online' ? 'bg-green-500' : 'bg-zinc-700'}`} />
+                            // Available IPs View
+                            <div className="h-full">
+                                {(!activeSession.availableRanges || activeSession.availableRanges.length === 0) ? (
+                                    <div className="h-full flex flex-col items-center justify-center text-zinc-500 gap-4">
+                                        <p className="text-sm">Nenhum IP disponível ou varredura não concluída.</p>
+                                    </div>
+                                ) : (
+                                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-3">
+                                        {activeSession.availableRanges.map((range, idx) => (
+                                            <div key={idx} className="bg-zinc-900/30 border border-zinc-800/50 rounded-lg p-3 flex items-center justify-center text-zinc-400 text-sm font-mono hover:bg-zinc-800/50 hover:text-zinc-200 transition-colors">
+                                                {range}
                                             </div>
-
-                                            <div className="mb-3">
-                                                <h3 className="text-zinc-100 font-medium text-lg tracking-tight">{host.ip}</h3>
-                                                <p className="text-zinc-400 text-xs truncate" title={host.hostname || 'Sem hostname'}>
-                                                    {host.hostname || 'Unknown Host'}
-                                                </p>
-                                            </div>
-
-                                            <div className="space-y-1 mb-3">
-                                                <div className="flex items-center justify-between text-[10px] text-zinc-500">
-                                                    <span>MAC</span>
-                                                    <span className="font-mono text-zinc-400">{host.mac || 'Desconhecido'}</span>
-                                                </div>
-                                                <div className="flex items-center justify-between text-[10px] text-zinc-500">
-                                                    <span>Vendor</span>
-                                                    <span className="text-zinc-400 truncate max-w-[100px]" title={host.vendor}>{host.vendor || 'Desconhecido'}</span>
-                                                </div>
-                                            </div>
-
-                                            <button
-                                                onClick={() => !isAdded && onAddHost({
-                                                    address: host.ip,
-                                                    name: host.hostname || host.ip,
-                                                    type: 'generic',
-                                                    monitoring: true,
-                                                    mac: host.mac,
-                                                    vendor: host.vendor,
-                                                    hostname: host.hostname
-                                                })}
-                                                disabled={isAdded}
-                                                className={`w-full py-1.5 rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1.5 ${isAdded
-                                                    ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed'
-                                                    : 'bg-zinc-800 hover:bg-blue-600 text-zinc-300 hover:text-white border border-zinc-700 hover:border-blue-500'
-                                                    }`}
-                                            >
-                                                {isAdded ? (
-                                                    <>Adicionado</>
-                                                ) : (
-                                                    <>
-                                                        <Plus size={12} />
-                                                        Adicionar no painel
-                                                    </>
-                                                )}
-                                            </button>
-                                        </div>
-                                    );
-                                })}
+                                        ))}
+                                    </div>
+                                )}
                             </div>
                         )}
+                    </div>
+                </div>
+            )}
+
+            {/* Info Modal */}
+            {showInfoModal && (
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[9999] flex items-center justify-center p-4" onClick={() => setShowInfoModal(false)}>
+                    <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 max-w-sm w-full shadow-2xl animate-in fade-in zoom-in duration-200" onClick={e => e.stopPropagation()}>
+                        <div className="flex items-center gap-3 text-blue-400 mb-4">
+                            <div className="p-2 bg-blue-500/10 rounded-full">
+                                <div className="w-6 h-6 rounded-full border-2 border-current flex items-center justify-center text-sm font-bold">i</div>
+                            </div>
+                            <h3 className="text-lg font-bold">Informação Importante</h3>
+                        </div>
+                        <p className="text-zinc-300 text-sm leading-relaxed">
+                            A disponibilidade é baseada apenas no momento do ping.
+                            <br /><br />
+                            <span className="text-zinc-400">Isso não garante que o IP esteja realmente livre, pois a máquina pode estar desligada, desconectada ou bloqueando solicitações ICMP (Ping).</span>
+                        </p>
+                        <button
+                            onClick={() => setShowInfoModal(false)}
+                            className="mt-6 w-full py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg font-medium transition-colors"
+                        >
+                            Entendi
+                        </button>
                     </div>
                 </div>
             )}

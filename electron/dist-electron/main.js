@@ -13,17 +13,29 @@ const RENDERER_DIST = path.join(process.env.APP_ROOT, "dist");
 process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, "public") : RENDERER_DIST;
 let win;
 let pythonProcess = null;
+function logToFile(message) {
+  const logPath = path.join(electron.app.getPath("temp"), "network_tools_debug.log");
+  const fs = require("fs");
+  const timestamp = (/* @__PURE__ */ new Date()).toISOString();
+  fs.appendFileSync(logPath, `[${timestamp}] ${message}
+`);
+}
+logToFile("=== APP STARTED (Main Process) ===");
 function startPythonBackend() {
   var _a, _b;
   let pythonExecutable = "python";
   let scriptArgs = [];
   let cwd = process.env.APP_ROOT;
-  if (electron.app.isPackaged) {
-    const serverPath = path.join(process.resourcesPath, "server", "server.exe");
-    pythonExecutable = serverPath;
+  logToFile(`app.isPackaged: ${electron.app.isPackaged}`);
+  const potentialServerPath = path.join(process.resourcesPath, "server", "server.exe");
+  const fs = require("fs");
+  if (fs.existsSync(potentialServerPath)) {
+    pythonExecutable = potentialServerPath;
     scriptArgs = [];
     cwd = path.join(process.resourcesPath, "server");
-    console.log(`Iniciando backend Python (Prod): ${serverPath}`);
+    logToFile(`Modo Produção detectado (server.exe encontrado).`);
+    logToFile(`Server Path: ${pythonExecutable}`);
+    logToFile(`CWD: ${cwd}`);
   } else {
     const pythonDir = path.join(process.env.APP_ROOT, "..", "python");
     const scriptPath = path.join(pythonDir, "api", "server.py");
@@ -32,27 +44,42 @@ function startPythonBackend() {
     cwd = pythonDir;
     console.log(`Iniciando backend Python (Dev): ${pythonExecutable} ${scriptPath}`);
     console.log(`CWD: ${cwd}`);
+    logToFile(`Modo Dev detectado (server.exe não encontrado).`);
   }
-  pythonProcess = node_child_process.spawn(pythonExecutable, scriptArgs, {
-    cwd,
-    stdio: ["ignore", "pipe", "pipe"]
-  });
-  (_a = pythonProcess.stdout) == null ? void 0 : _a.on("data", (data) => {
-    console.log(`[Python API]: ${data}`);
-  });
-  (_b = pythonProcess.stderr) == null ? void 0 : _b.on("data", (data) => {
-    console.error(`[Python API Error]: ${data}`);
-  });
-  pythonProcess.on("close", (code, signal) => {
-    console.log(`Backend Python encerrado. Código: ${code}, Sinal: ${signal}`);
-  });
-  pythonProcess.on("error", (err) => {
-    console.error(`Falha ao iniciar backend Python: ${err}`);
-  });
+  try {
+    logToFile(`Executando spawn: ${pythonExecutable} com args: ${JSON.stringify(scriptArgs)} em ${cwd}`);
+    pythonProcess = node_child_process.spawn(pythonExecutable, scriptArgs, {
+      cwd,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    (_a = pythonProcess.stdout) == null ? void 0 : _a.on("data", (data) => {
+      const msg = data.toString();
+      console.log(`[Python API]: ${msg}`);
+      logToFile(`[Python API]: ${msg}`);
+    });
+    (_b = pythonProcess.stderr) == null ? void 0 : _b.on("data", (data) => {
+      const msg = data.toString();
+      console.error(`[Python API Error]: ${msg}`);
+      logToFile(`[Python API Error]: ${msg}`);
+    });
+    pythonProcess.on("close", (code, signal) => {
+      const msg = `Backend Python encerrado. Código: ${code}, Sinal: ${signal}`;
+      console.log(msg);
+      logToFile(msg);
+    });
+    pythonProcess.on("error", (err) => {
+      const msg = `Falha ao iniciar backend Python: ${err}`;
+      console.error(msg);
+      logToFile(msg);
+    });
+  } catch (e) {
+    logToFile(`Erro crítico ao tentar iniciar processo: ${e}`);
+  }
 }
 function killPythonBackend() {
   if (pythonProcess) {
     console.log("Encerrando backend Python...");
+    logToFile("Encerrando backend Python...");
     if (!pythonProcess.killed) {
       pythonProcess.kill();
     }
@@ -60,6 +87,7 @@ function killPythonBackend() {
   }
 }
 function createWindow() {
+  logToFile("createWindow called");
   win = new electron.BrowserWindow({
     width: 1200,
     height: 800,
@@ -77,6 +105,7 @@ function createWindow() {
   });
   win.removeMenu();
   win.webContents.on("did-finish-load", () => {
+    logToFile("win.webContents did-finish-load");
     win == null ? void 0 : win.webContents.send("main-process-message", (/* @__PURE__ */ new Date()).toLocaleString());
   });
   if (VITE_DEV_SERVER_URL) {
@@ -89,6 +118,10 @@ function createWindow() {
   });
   win.on("blur", () => {
     win == null ? void 0 : win.webContents.send("window-focus-change", false);
+  });
+  win.once("ready-to-show", () => {
+    logToFile("win ready-to-show");
+    win == null ? void 0 : win.show();
   });
 }
 electron.app.on("window-all-closed", () => {
@@ -107,6 +140,7 @@ electron.app.on("before-quit", () => {
   killPythonBackend();
 });
 electron.app.whenReady().then(() => {
+  logToFile("app.whenReady fired");
   startPythonBackend();
   createWindow();
   const { ipcMain } = require("electron");
@@ -138,6 +172,11 @@ electron.app.whenReady().then(() => {
     await shell.openExternal(url);
     return true;
   });
+  ipcMain.handle("show-item-in-folder", async (_, path2) => {
+    const { shell } = require("electron");
+    shell.showItemInFolder(path2);
+    return true;
+  });
   ipcMain.handle("launch-teamviewer", async (_, id) => {
     const paths = [
       "C:\\Program Files\\TeamViewer\\TeamViewer.exe",
@@ -159,6 +198,22 @@ electron.app.whenReady().then(() => {
   });
   ipcMain.handle("get-local-domain", async () => {
     return process.env.USERDNSDOMAIN || process.env.USERDOMAIN || "";
+  });
+  ipcMain.handle("save-file-as", async (_, filename, content) => {
+    const { dialog } = require("electron");
+    const fs = require("fs");
+    const { filePath } = await dialog.showSaveDialog({
+      defaultPath: filename,
+      filters: [
+        { name: "CSV Files", extensions: ["csv"] },
+        { name: "All Files", extensions: ["*"] }
+      ]
+    });
+    if (filePath) {
+      fs.writeFileSync(filePath, content, "utf-8");
+      return filePath;
+    }
+    return null;
   });
 });
 exports.MAIN_DIST = MAIN_DIST;

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Monitor, X, AlertCircle, Globe, Hash, Info, Clock, RefreshCw, Server, Power, Zap, Trash2, Check, Copy, Pencil, Activity } from 'lucide-react';
+import { Monitor, X, AlertCircle, Globe, Hash, Info, Clock, RefreshCw, Server, Power, Trash2, Check, Copy, Pencil, Activity } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Host } from '../../types';
 import { RemoteAccessModal } from './RemoteAccessModal';
@@ -83,7 +83,7 @@ export function HostDetailsModal({
     if (!isOpen || !host) return null;
 
     return (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={onClose}>
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4" onClick={onClose}>
             <div className="bg-zinc-900 border border-zinc-800 rounded-xl w-full max-w-2xl shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
                 <div className="p-6 border-b border-zinc-800 flex justify-between items-start">
                     <div className="flex items-center gap-4">
@@ -406,14 +406,7 @@ export function HostDetailsModal({
                                     <Power size={20} />
                                     <span className="text-[10px] font-medium">Desligar</span>
                                 </button>
-                                <button
-                                    onClick={() => onAction(host, 'wol')}
-                                    className="flex flex-col items-center gap-2 p-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-yellow-400 rounded-xl transition-colors border border-zinc-700/50 hover:border-yellow-500/30"
-                                    title="Wake-on-LAN"
-                                >
-                                    <Zap size={20} />
-                                    <span className="text-[10px] font-medium">Wake</span>
-                                </button>
+
                             </div>
 
                             {scheduledAction && onCancelAction && (

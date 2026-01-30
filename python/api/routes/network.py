@@ -7,6 +7,8 @@ import time
 import sys
 import os
 import threading
+import base64
+import subprocess
 from typing import List, Optional
 
 # Adicionar diretório pai ao path para importar módulos do src
@@ -89,26 +91,33 @@ def refresh_host(address: str):
         if not target_host:
             raise HTTPException(status_code=404, detail="Host não encontrado.")
             
-        fqdn = net_tools.resolve_ip_and_hostname(address)
+        # Tentar resolver via ping -a explicitamente (prioridade) ou fallback padrão
+        fqdn = net_tools.resolve_via_ping_a(address)
+        if not fqdn:
+            fqdn = net_tools.resolve_ip_and_hostname(address)
+            
         ip = address # Assumindo que address é o IP
+        
+        hostname = None
+        domain = None
         
         if fqdn and fqdn not in ["N/A", "Inválido", "Erro"]:
             parts = fqdn.split('.', 1)
-            target_host.hostname = parts[0]
-            if len(parts) > 1: target_host.domain = parts[1]
+            hostname = parts[0]
+            if len(parts) > 1: domain = parts[1]
+            
+            target_host.hostname = hostname
+            target_host.domain = domain
         
         if ip and ip != "N/A":
             target_host.ip = ip
 
-        # Try to fetch system info to get current user (if credentials available in vault/cache or if we can)
-        # Note: This endpoint is usually called without credentials. 
-        # Ideally, current_user is updated via /system/info or a background task.
-        # But if we want to update it here, we'd need credentials.
-        # For now, we'll rely on the frontend calling /system/info or the background monitor updating it.
-        # However, the user asked to search by it, so we need to ensure it's persisted.
-        # The Host model update above ensures persistence if save_hosts_list is called.
-                
-        save_hosts_list(current_hosts)
+        # Persistir usando update_host_details para eficiência e segurança
+        host_manager_instance.update_host_details(address, hostname=hostname, domain=domain)
+        
+        # Também salvar a lista completa para garantir outros campos se necessário (embora update_host_details seja suficiente para nomes)
+        # save_hosts_list(current_hosts) # Desnecessário se usarmos update_host_details para o que importa
+        
         return {"status": "success", "message": "Informações atualizadas.", "host": target_host}
     except HTTPException as he: raise he
     except Exception as e: raise HTTPException(status_code=500, detail=f"Erro ao atualizar host: {str(e)}")
@@ -156,7 +165,6 @@ class DiscoveryRequest(BaseModel):
     task_id: Optional[str] = None
     timeout: Optional[int] = 200
     max_workers: Optional[int] = 50
-    online_vendor_lookup: Optional[bool] = False
 
 class StopRequest(BaseModel):
     task_id: str
@@ -206,6 +214,7 @@ def save_hosts_list(hosts_list):
             'mac': h.mac,
             'nickname': h.name, # Use name as nickname/description if not separate
             'group': h.group,
+            'domain': h.domain,
             'tags': [], # Host model doesn't have tags yet, maybe add?
             'ports': h.ports,
             'monitoring': h.monitoring,
@@ -339,7 +348,6 @@ def discover_network(request: DiscoveryRequest):
     task_id = request.task_id or f"scanner_{time.time()}"
     timeout = request.timeout or 200
     max_workers = request.max_workers or 50
-    online_lookup = request.online_vendor_lookup or False
     
     def event_generator():
         try:
@@ -350,7 +358,8 @@ def discover_network(request: DiscoveryRequest):
                 yield json.dumps({"error": "CIDR inválido."}).encode('utf-8') + b"\n"
                 return
 
-            iterator = net_tools.discover_hosts(network, task_id, timeout=timeout, max_workers=max_workers, online_vendor_lookup=online_lookup)
+            # Note: scan_mode removed from signature in tools.py
+            iterator = net_tools.discover_hosts(network, task_id, timeout=timeout, max_workers=max_workers)
             for host in iterator:
                 yield json.dumps(host).encode('utf-8') + b"\n"
                 time.sleep(0.01)
@@ -403,6 +412,56 @@ def wake_on_lan(request: WolRequest):
     success, message = net_tools.send_wol_packet(request.mac_address)
     if success: return {"status": "success", "message": message}
     else: raise HTTPException(status_code=400, detail=message)
+
+class ExternalTerminalRequest(BaseModel):
+    ip: str
+    username: str
+    password: str
+
+@router.post("/tools/terminal/external")
+def open_external_terminal(request: ExternalTerminalRequest):
+    try:
+        # Escape characters for PowerShell
+        safe_pass = request.password.replace("'", "''")
+        safe_user = request.username.replace("'", "''")
+        
+        # Construct the PowerShell command
+        # We use Start-Process to open a new window
+        # We also attempt to add the host to TrustedHosts if not present
+        ps_command = (
+            f"$ip = '{request.ip}'; "
+            f"$user = '{safe_user}'; "
+            f"$pass = '{safe_pass}'; "
+            f"$sec = ConvertTo-SecureString $pass -AsPlainText -Force; "
+            f"$cred = New-Object System.Management.Automation.PSCredential($user, $sec); "
+            f"$trusted = (Get-Item WSMan:\\localhost\\Client\\TrustedHosts).Value; "
+            f"if ($trusted -ne '*' -and $trusted -notlike \"*$ip*\") {{ "
+            f"    Write-Host 'Configurando TrustedHosts para $ip...' -ForegroundColor Yellow; "
+            f"    try {{ "
+            f"        $newTrusted = if ($trusted) {{ \"$trusted, $ip\" }} else {{ $ip }}; "
+            f"        Set-Item WSMan:\\localhost\\Client\\TrustedHosts -Value $newTrusted -Force -ErrorAction Stop; "
+            f"        Write-Host 'IP adicionado aos TrustedHosts com sucesso.' -ForegroundColor Green; "
+            f"    }} catch {{ "
+            f"        Write-Warning 'Não foi possível adicionar aos TrustedHosts (Requer Admin). A conexão pode falhar.'; "
+            f"        Write-Warning 'Erro: $_'; "
+            f"    }} "
+            f"}} "
+            f"Write-Host 'Conectando a $ip...' -ForegroundColor Cyan; "
+            f"Enter-PSSession -ComputerName $ip -Credential $cred"
+        )
+        
+        # Encode command for -EncodedCommand to avoid complex escaping issues in Popen
+        encoded_cmd = base64.b64encode(ps_command.encode('utf-16le')).decode('utf-8')
+        
+        # Launch PowerShell in a new window using CREATE_NEW_CONSOLE
+        subprocess.Popen(
+            ["powershell", "-NoExit", "-EncodedCommand", encoded_cmd],
+            creationflags=subprocess.CREATE_NEW_CONSOLE
+        )
+        
+        return {"status": "success", "message": "Terminal externo iniciado."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao iniciar terminal: {str(e)}")
 
 @router.websocket("/ws/terminal")
 async def websocket_terminal(websocket: WebSocket):
@@ -461,13 +520,14 @@ async def websocket_terminal(websocket: WebSocket):
                 command = data.get("command")
                 try:
                     queue = asyncio.Queue()
+                    loop = asyncio.get_running_loop()
                     def producer():
                         try:
                             for chunk in winrm_session.execute_streaming_command(command):
-                                asyncio.run_coroutine_threadsafe(queue.put({"type": "output", "data": chunk}), asyncio.get_event_loop())
-                            asyncio.run_coroutine_threadsafe(queue.put(None), asyncio.get_event_loop())
+                                asyncio.run_coroutine_threadsafe(queue.put({"type": "output", "data": chunk}), loop)
+                            asyncio.run_coroutine_threadsafe(queue.put(None), loop)
                         except Exception as e:
-                            asyncio.run_coroutine_threadsafe(queue.put({"type": "error", "message": str(e)}), asyncio.get_event_loop())
+                            asyncio.run_coroutine_threadsafe(queue.put({"type": "error", "message": str(e)}), loop)
 
                     t = threading.Thread(target=producer, daemon=True)
                     t.start()

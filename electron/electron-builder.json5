@@ -1,15 +1,24 @@
 // @see - https://www.electron.build/configuration/configuration
 {
   "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
-  "appId": "YourAppID",
+  "appId": "com.ferramentasderede.app",
   "asar": true,
-  "productName": "YourAppName",
+  "productName": "Ferramentas de Rede",
   "directories": {
     "output": "release/${version}"
   },
   "files": [
     "dist",
     "dist-electron"
+  ],
+  "extraResources": [
+    {
+      "from": "../python/dist/server",
+      "to": "server",
+      "filter": [
+        "**/*"
+      ]
+    }
   ],
   "mac": {
     "target": [

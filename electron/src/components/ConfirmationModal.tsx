@@ -51,8 +51,8 @@ export function ConfirmationModal({
     const color = colors[type];
 
     return (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fadeIn">
-            <div className={clsx("bg-zinc-900 border rounded-xl p-6 max-w-md w-full shadow-2xl space-y-6", color.border)}>
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fadeIn" onClick={onClose}>
+            <div className={clsx("bg-zinc-900 border rounded-xl p-6 max-w-md w-full shadow-2xl space-y-6", color.border)} onClick={(e) => e.stopPropagation()}>
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                         <div className={clsx("p-3 rounded-full", color.bg, color.icon)}>

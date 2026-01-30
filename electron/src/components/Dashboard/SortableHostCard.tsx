@@ -19,7 +19,7 @@ interface SortableHostCardProps {
     onUpdateHost?: (address: string, updates: HostUpdate) => Promise<boolean>;
     activeContextMenu?: string | null;
     onContextMenuOpen?: (id: string | null) => void;
-    onViewDetails: (host: Host) => void;
+    onViewDetails?: (host: Host) => void;
     onSetGroup?: (host: Host) => void;
 }
 

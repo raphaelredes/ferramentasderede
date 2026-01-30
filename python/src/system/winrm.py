@@ -43,3 +43,15 @@ def clear_trusted_hosts() -> bool:
     else:
         logging.error(f"Failed to clear TrustedHosts: {result['error']}")
         return False
+
+def remove_trusted_host(host: str) -> bool:
+    """Remove a single host from TrustedHosts."""
+    current = get_trusted_hosts()
+    if host not in current:
+        return True
+    
+    current.remove(host)
+    if not current:
+        return clear_trusted_hosts()
+        
+    return set_trusted_hosts(current)

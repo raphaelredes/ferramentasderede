@@ -43,8 +43,8 @@ const TrustedHostsModal: React.FC<TrustedHostsModalProps> = ({ isOpen, onClose, 
     };
 
     return createPortal(
-        <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/50 backdrop-blur-sm">
-            <div className="bg-zinc-900 border border-zinc-700 rounded-lg shadow-xl w-full max-w-md p-6 animate-in fade-in zoom-in duration-200">
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={onClose}>
+            <div className="bg-zinc-900 border border-zinc-700 rounded-lg shadow-xl w-full max-w-md p-6 animate-in fade-in zoom-in duration-200" onClick={(e) => e.stopPropagation()}>
                 <div className="flex items-start gap-4">
                     <div className="p-3 bg-amber-500/10 rounded-full shrink-0">
                         <ShieldAlert className="w-8 h-8 text-amber-500" />

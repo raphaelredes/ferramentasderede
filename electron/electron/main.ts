@@ -20,19 +20,34 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, 
 let win: BrowserWindow | null
 let pythonProcess: ChildProcess | null = null
 
+// Função para logar em arquivo
+function logToFile(message: string) {
+  const logPath = path.join(app.getPath('temp'), 'network_tools_debug.log');
+  const fs = require('fs');
+  const timestamp = new Date().toISOString();
+  fs.appendFileSync(logPath, `[${timestamp}] ${message}\n`);
+}
+
+logToFile('=== APP STARTED (Main Process) ===');
+
 // Função para iniciar o backend Python
 function startPythonBackend() {
   let pythonExecutable = 'python'
   let scriptArgs: string[] = []
   let cwd = process.env.APP_ROOT
 
-  if (app.isPackaged) {
-    // Em produção, o executável está em resources/server/server.exe
-    const serverPath = path.join(process.resourcesPath, 'server', 'server.exe')
-    pythonExecutable = serverPath
+  logToFile(`app.isPackaged: ${app.isPackaged}`);
+  const potentialServerPath = path.join(process.resourcesPath, 'server', 'server.exe');
+  const fs = require('fs');
+
+  if (fs.existsSync(potentialServerPath)) {
+    // Se o executável existe nos resources, estamos em produção (ou teste de build)
+    pythonExecutable = potentialServerPath
     scriptArgs = []
     cwd = path.join(process.resourcesPath, 'server')
-    console.log(`Iniciando backend Python (Prod): ${serverPath}`)
+    logToFile(`Modo Produção detectado (server.exe encontrado).`);
+    logToFile(`Server Path: ${pythonExecutable}`);
+    logToFile(`CWD: ${cwd}`);
   } else {
     // Em dev, rodar o script python
     const pythonDir = path.join(process.env.APP_ROOT, '..', 'python')
@@ -43,34 +58,49 @@ function startPythonBackend() {
     cwd = pythonDir
     console.log(`Iniciando backend Python (Dev): ${pythonExecutable} ${scriptPath}`)
     console.log(`CWD: ${cwd}`)
+    logToFile(`Modo Dev detectado (server.exe não encontrado).`);
   }
 
-  pythonProcess = spawn(pythonExecutable, scriptArgs, {
-    cwd: cwd,
-    stdio: ['ignore', 'pipe', 'pipe']
-  })
+  try {
+    logToFile(`Executando spawn: ${pythonExecutable} com args: ${JSON.stringify(scriptArgs)} em ${cwd}`);
+    pythonProcess = spawn(pythonExecutable, scriptArgs, {
+      cwd: cwd,
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
 
-  pythonProcess.stdout?.on('data', (data) => {
-    console.log(`[Python API]: ${data}`)
-  })
+    pythonProcess.stdout?.on('data', (data) => {
+      const msg = data.toString();
+      console.log(`[Python API]: ${msg}`)
+      logToFile(`[Python API]: ${msg}`);
+    })
 
-  pythonProcess.stderr?.on('data', (data) => {
-    console.error(`[Python API Error]: ${data}`)
-  })
+    pythonProcess.stderr?.on('data', (data) => {
+      const msg = data.toString();
+      console.error(`[Python API Error]: ${msg}`)
+      logToFile(`[Python API Error]: ${msg}`);
+    })
 
-  pythonProcess.on('close', (code, signal) => {
-    console.log(`Backend Python encerrado. Código: ${code}, Sinal: ${signal}`)
-  })
+    pythonProcess.on('close', (code, signal) => {
+      const msg = `Backend Python encerrado. Código: ${code}, Sinal: ${signal}`;
+      console.log(msg)
+      logToFile(msg);
+    })
 
-  pythonProcess.on('error', (err) => {
-    console.error(`Falha ao iniciar backend Python: ${err}`)
-  })
+    pythonProcess.on('error', (err) => {
+      const msg = `Falha ao iniciar backend Python: ${err}`;
+      console.error(msg)
+      logToFile(msg);
+    })
+  } catch (e) {
+    logToFile(`Erro crítico ao tentar iniciar processo: ${e}`);
+  }
 }
 
 // Função para encerrar o backend Python
 function killPythonBackend() {
   if (pythonProcess) {
     console.log('Encerrando backend Python...')
+    logToFile('Encerrando backend Python...');
     if (!pythonProcess.killed) {
       pythonProcess.kill()
     }
@@ -79,6 +109,7 @@ function killPythonBackend() {
 }
 
 function createWindow() {
+  logToFile('createWindow called');
   win = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -98,6 +129,7 @@ function createWindow() {
 
   // Test active push message to Renderer-process.
   win.webContents.on('did-finish-load', () => {
+    logToFile('win.webContents did-finish-load');
     win?.webContents.send('main-process-message', (new Date).toLocaleString())
   })
 
@@ -115,6 +147,11 @@ function createWindow() {
   win.on('blur', () => {
     win?.webContents.send('window-focus-change', false)
   })
+
+  win.once('ready-to-show', () => {
+    logToFile('win ready-to-show');
+    win?.show();
+  });
 }
 
 app.on('window-all-closed', () => {
@@ -136,6 +173,7 @@ app.on('before-quit', () => {
 })
 
 app.whenReady().then(() => {
+  logToFile('app.whenReady fired');
   startPythonBackend()
   createWindow()
 
@@ -175,6 +213,12 @@ app.whenReady().then(() => {
     return true
   })
 
+  ipcMain.handle('show-item-in-folder', async (_: any, path: string) => {
+    const { shell } = require('electron')
+    shell.showItemInFolder(path)
+    return true
+  })
+
   ipcMain.handle('launch-teamviewer', async (_: any, id?: string) => {
     const paths = [
       'C:\\Program Files\\TeamViewer\\TeamViewer.exe',
@@ -198,5 +242,24 @@ app.whenReady().then(() => {
 
   ipcMain.handle('get-local-domain', async () => {
     return process.env.USERDNSDOMAIN || process.env.USERDOMAIN || ''
+  })
+
+  ipcMain.handle('save-file-as', async (_: any, filename: string, content: string) => {
+    const { dialog } = require('electron')
+    const fs = require('fs')
+
+    const { filePath } = await dialog.showSaveDialog({
+      defaultPath: filename,
+      filters: [
+        { name: 'CSV Files', extensions: ['csv'] },
+        { name: 'All Files', extensions: ['*'] }
+      ]
+    })
+
+    if (filePath) {
+      fs.writeFileSync(filePath, content, 'utf-8')
+      return filePath
+    }
+    return null
   })
 })

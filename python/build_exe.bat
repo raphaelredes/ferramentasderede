@@ -16,15 +16,15 @@ echo      OK!
 echo.
 
 echo [3/3] Verificando resultado...
-if exist dist\FerramentasDeRede_v1.1.exe (
-    echo      SUCESSO! Executavel criado em: dist\FerramentasDeRede_v1.1.exe
-    for %%A in (dist\FerramentasDeRede_v1.1.exe) do echo      Tamanho: %%~zA bytes
-) else (
-    echo      ERRO! Executavel nao foi criado.
+if not exist "dist\server\server.exe" (
+    echo [ERRO] O executavel do servidor nao foi encontrado em dist\server\server.exe
+    exit /b 1
 )
+echo      SUCESSO! Executavel criado em: dist\server\server.exe
+for %%A in (dist\server\server.exe) do echo      Tamanho: %%~zA bytes
 echo.
 
 echo ===================================
 echo  Build concluido!
 echo ===================================
-pause
+

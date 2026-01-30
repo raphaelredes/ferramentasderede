@@ -44,7 +44,7 @@ export function useHosts() {
                 const newStatus: Record<string, boolean> = {};
                 const newStats: Record<string, HostStatistics> = {};
 
-                let hostsUpdated = false;
+
 
                 // Use functional update to access current hosts without adding dependency
                 setHosts(prevHosts => {

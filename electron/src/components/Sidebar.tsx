@@ -12,7 +12,7 @@ export function Sidebar() {
     const location = useLocation();
     const navigate = useNavigate();
     const { isLoading } = useLoading();
-    const { isRunning: isToolsRunning } = useTools();
+    const { isRunning: isToolsRunning, completedTools, clearCompletedTool } = useTools();
     const { isLoading: isMonitoringLoading } = useMonitoring();
     const [time, setTime] = useState(new Date());
     const [isAboutModalOpen, setIsAboutModalOpen] = useState(false);
@@ -26,7 +26,7 @@ export function Sidebar() {
 
     const menuItems = [
         { id: 'dashboard', label: 'Painel', icon: LayoutDashboard, path: '/' },
-        { id: 'tools', label: 'Ferramentas', icon: Network, path: '/tools' },
+        { id: 'tools', label: 'Ferramentas', icon: Network, path: '/tools', relatedTools: ['scanner', 'ping', 'traceroute'] },
         { id: 'terminal', label: 'Terminal Remoto', icon: Terminal, path: '/terminal' },
         { id: 'security', label: 'Segurança', icon: Shield, path: '/security' },
         { id: 'settings', label: 'Configurações', icon: Settings, path: '/settings' },
@@ -40,7 +40,7 @@ export function Sidebar() {
             isCollapsed ? "w-20" : "w-64"
         )}>
             <div className="p-6 flex items-center justify-center border-b border-zinc-800 relative">
-                <img src="/logo.png?v=4" alt="Logo" className="w-12 h-12 object-contain drop-shadow-[0_0_10px_rgba(0,123,255,0.3)]" />
+                <img src="logo.png" alt="Logo" className="w-12 h-12 object-contain drop-shadow-[0_0_10px_rgba(0,123,255,0.3)]" />
             </div>
 
             <nav className="flex-1 px-4 space-y-2 mt-4">
@@ -54,10 +54,19 @@ export function Sidebar() {
 
                     const isItemLoading = isLoading(item.id) || (item.id === 'tools' && isToolsRunning);
 
+                    // Check if any related tool is completed
+                    const isCompleted = item.relatedTools?.some(tool => completedTools.has(tool));
+
                     return (
                         <button
                             key={item.id}
-                            onClick={() => navigate(item.path)}
+                            onClick={() => {
+                                navigate(item.path);
+                                // Clear completion status for related tools
+                                if (item.relatedTools) {
+                                    item.relatedTools.forEach(tool => clearCompletedTool(tool));
+                                }
+                            }}
                             title={isCollapsed ? item.label : undefined}
                             className={twMerge(
                                 "w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors text-sm font-medium border border-transparent relative",
@@ -75,12 +84,22 @@ export function Sidebar() {
                                         <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-blue-500"></span>
                                     </span>
                                 )}
+                                {!isItemLoading && isCompleted && !isActive && (
+                                    <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
+                                        <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]"></span>
+                                    </span>
+                                )}
                             </div>
                             {!isCollapsed && (
                                 <div className="flex-1 flex items-center justify-between">
                                     <span>{item.label}</span>
                                     {isItemLoading && (
                                         <div className="w-4 h-4 rounded-full border-2 border-blue-500 border-t-transparent animate-spin" />
+                                    )}
+                                    {!isItemLoading && isCompleted && !isActive && (
+                                        <div className="text-[10px] font-bold text-green-500 bg-green-500/10 px-1.5 py-0.5 rounded border border-green-500/20">
+                                            OK
+                                        </div>
                                     )}
                                 </div>
                             )}
@@ -100,7 +119,7 @@ export function Sidebar() {
             />
 
             <div className="p-4 border-t border-zinc-800 flex flex-col gap-3">
-                <div className="flex gap-2">
+                <div className={twMerge("flex gap-2", isCollapsed && "flex-col-reverse")}>
                     <button
                         onClick={() => setIsAboutModalOpen(true)}
                         title="Sobre"
