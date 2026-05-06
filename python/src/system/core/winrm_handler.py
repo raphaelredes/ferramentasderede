@@ -20,33 +20,93 @@ class WinRMHandler:
         self.pool = None
         self.ps = None  # Objeto PowerShell persistente
 
+    @staticmethod
+    def _domain_for_target_ip(ip_address):
+        """Look up the AD domain configured for the network this IP belongs to.
+
+        Returns the domain string (e.g. "dominio-a.local") or None if no
+        configured network matches or if Settings can't be loaded.
+
+        Imported lazily to avoid circular imports between system and api layers.
+        """
+        try:
+            import ipaddress
+            from api.routes.settings import load_settings
+            settings = load_settings()
+            ip_obj = ipaddress.ip_address(ip_address)
+            for net in (settings.networks or []):
+                if not net.enabled or not net.domain:
+                    continue
+                try:
+                    if ip_obj in ipaddress.ip_network(net.cidr, strict=False):
+                        return net.domain
+                except (ValueError, TypeError):
+                    continue
+        except Exception as e:
+            logging.debug(f"_domain_for_target_ip failed: {e}")
+        return None
+
+    def _username_variants(self):
+        """Build the ordered list of username variants to try.
+
+        Heuristics:
+          - Always try the user-provided value first.
+          - If user@domain: also try domain\\user and netbios\\user.
+          - If domain\\user: also try user@domain.
+          - If bare 'user' AND the target IP is in a network with a configured
+            domain: try user@domain and domain\\user too. This is the
+            cross-domain auto-helper — if the analyst on Domínio A tries
+            to reach a machine in Domínio B without qualifying, we reach
+            for the right qualifier from settings instead of failing fast.
+        """
+        seen = set()
+        variants = []
+
+        def add(u):
+            if u and u not in seen:
+                seen.add(u)
+                variants.append(u)
+
+        add(self.username)
+
+        if "@" in self.username:
+            user_part, domain_part = self.username.split("@", 1)
+            add(f"{domain_part}\\{user_part}")
+            if "." in domain_part:
+                add(f"{domain_part.split('.')[0]}\\{user_part}")
+        elif "\\" in self.username:
+            domain_part, user_part = self.username.split("\\", 1)
+            # No reliable way to recover full UPN from a NetBIOS name, but
+            # if the input was already FQDN\\user we can flip it.
+            if "." in domain_part:
+                add(f"{user_part}@{domain_part}")
+        else:
+            # Bare username — consult settings for the target's domain.
+            target_domain = self._domain_for_target_ip(self.target_ip)
+            if target_domain:
+                add(f"{self.username}@{target_domain}")
+                add(f"{target_domain}\\{self.username}")
+                if "." in target_domain:
+                    add(f"{target_domain.split('.')[0]}\\{self.username}")
+
+        return variants
+
     def connect(self):
         """Estabelece a conexão e abre um RunspacePool e PowerShell persistentes."""
-        
-        # Tentativa 1: Credenciais originais
-        result = self._try_connect(self.username, self.password)
-        if result.get("success"):
-            return result
+        last_result = None
+        for variant in self._username_variants():
+            if variant != self.username:
+                logging.info(f"Tentando variante de username: {variant}")
+            result = self._try_connect(variant, self.password)
+            if result.get("success"):
+                self.username = variant
+                return result
+            last_result = result
+            # Don't keep retrying variants if the failure isn't auth-related.
+            if result.get("code") not in (None, "AUTH_FAILED", "CROSS_DOMAIN_AUTH"):
+                break
 
-        # Tentativa 2: Se falhar e for email (UPN), tentar formato DOMAIN\User
-        if "@" in self.username:
-            try:
-                user_part, domain_part = self.username.split("@", 1)
-                # Tenta tanto com o domínio completo quanto com a primeira parte (chute para NetBIOS)
-                alt_usernames = [f"{domain_part}\\{user_part}"]
-                if "." in domain_part:
-                    alt_usernames.append(f"{domain_part.split('.')[0]}\\{user_part}")
-
-                for alt_user in alt_usernames:
-                    logging.info(f"Tentando autenticação com formato alternativo: {alt_user}")
-                    result_alt = self._try_connect(alt_user, self.password)
-                    if result_alt.get("success"):
-                        self.username = alt_user # Atualiza para usos futuros
-                        return result_alt
-            except Exception as e:
-                logging.error(f"Erro ao tentar formatos alternativos de usuário: {e}")
-
-        return result
+        return last_result or {"error": "Falha ao conectar.", "code": "UNKNOWN"}
 
     def _classify_error(self, exc, method):
         """Classify a WinRM exception into a stable error code + friendly message.
