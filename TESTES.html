@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Plano de Testes — Ferramentas de Rede</title>
+<style>
+  :root {
+    --bg: #0a0a0b;
+    --panel: #15161a;
+    --panel-2: #1c1d22;
+    --border: #2a2b30;
+    --text: #e4e4e7;
+    --muted: #8a8b92;
+    --accent: #3b82f6;
+    --green: #22c55e;
+    --red: #ef4444;
+    --orange: #f97316;
+    --purple: #a855f7;
+    --yellow: #eab308;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.55;
+    font-size: 15px;
+  }
+  body { padding: 32px 16px 80px; }
+  .container { max-width: 980px; margin: 0 auto; }
+  h1 {
+    font-size: 28px; margin: 0 0 4px; letter-spacing: -0.02em;
+  }
+  .lead { color: var(--muted); margin: 0 0 24px; }
+  h2 {
+    font-size: 20px; margin: 32px 0 12px;
+    border-left: 3px solid var(--accent);
+    padding-left: 10px;
+  }
+  h3 { font-size: 16px; margin: 20px 0 8px; color: var(--text); }
+  p { margin: 8px 0; }
+  code, pre {
+    font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+    font-size: 13px;
+  }
+  code {
+    background: var(--panel-2);
+    padding: 1px 6px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    color: #cbd5e1;
+  }
+  pre {
+    background: #000;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    overflow-x: auto;
+    color: #cbd5e1;
+    margin: 8px 0;
+  }
+  ul { padding-left: 22px; margin: 8px 0; }
+  li { margin: 4px 0; }
+  a { color: var(--accent); }
+
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 18px;
+    margin: 12px 0;
+  }
+  .test {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 8px;
+    padding: 14px 16px;
+    margin: 14px 0;
+  }
+  .test.crit { border-left-color: var(--red); }
+  .test.high { border-left-color: var(--orange); }
+  .test.med  { border-left-color: var(--yellow); }
+  .test.low  { border-left-color: var(--muted); }
+
+  .row { display: flex; gap: 12px; align-items: baseline; }
+  .id {
+    font-family: "Cascadia Code", monospace;
+    font-size: 12px;
+    color: var(--muted);
+    min-width: 60px;
+  }
+  .title { font-weight: 600; flex: 1; }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+  }
+  .badge-crit { background: rgba(239,68,68,0.15); color: #fca5a5; }
+  .badge-high { background: rgba(249,115,22,0.15); color: #fdba74; }
+  .badge-med  { background: rgba(234,179,8,0.15); color: #fde68a; }
+  .badge-low  { background: rgba(148,163,184,0.15); color: #cbd5e1; }
+  .badge-new  { background: rgba(34,197,94,0.15); color: #86efac; }
+
+  .step { margin: 10px 0 4px; font-weight: 600; color: var(--text); font-size: 14px; }
+  .expect {
+    background: rgba(34,197,94,0.06);
+    border-left: 3px solid var(--green);
+    padding: 8px 12px;
+    border-radius: 4px;
+    margin: 8px 0 4px;
+  }
+  .expect strong { color: #86efac; }
+  .fail {
+    background: rgba(239,68,68,0.06);
+    border-left: 3px solid var(--red);
+    padding: 8px 12px;
+    border-radius: 4px;
+    margin: 4px 0 8px;
+    color: #fca5a5;
+  }
+
+  table {
+    width: 100%; border-collapse: collapse;
+    margin: 8px 0;
+    font-size: 13px;
+  }
+  th, td {
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+    vertical-align: top;
+  }
+  th { color: var(--muted); font-weight: 600; }
+
+  .toc {
+    columns: 2;
+    column-gap: 32px;
+    background: var(--panel-2);
+    padding: 14px 18px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+  }
+  .toc ul { padding-left: 16px; }
+  .toc a { color: var(--accent); text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+
+  details {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 12px;
+    margin: 6px 0;
+  }
+  summary { cursor: pointer; font-weight: 600; color: var(--accent); }
+
+  hr { border: none; border-top: 1px solid var(--border); margin: 24px 0; }
+
+  .check {
+    display: inline-block;
+    width: 14px; height: 14px;
+    border: 1.5px solid var(--muted);
+    border-radius: 3px;
+    margin-right: 8px;
+    vertical-align: -2px;
+  }
+  @media print {
+    body { background: white; color: black; padding: 12px; }
+    .card, .test, .toc, details { background: #f5f5f5; border-color: #ccc; }
+    code, pre { background: #eaeaea; color: #000; border-color: #ccc; }
+    a { color: #1d4ed8; }
+    h2 { border-left-color: #1d4ed8; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>Plano de Testes — Ferramentas de Rede</h1>
+<p class="lead">Roteiro completo de validação após a refatoração técnica e implementação multi-domínio / multi-VLAN.<br>
+Gerado em <strong>2026-05-06</strong>. Ambiente alvo: rede ampla com 2 domínios e várias VLANs.</p>
+
+<div class="card">
+  <strong>Como usar este documento:</strong> abra em qualquer navegador (offline, é um único arquivo). Cada teste tem um ID, severidade, passos e o resultado esperado. Marque mentalmente os ✅ conforme valida.<br>
+  Se algo der errado, anote o ID do teste — facilita o debug depois.
+</div>
+
+<h2>📋 Sumário</h2>
+<div class="toc">
+  <ul>
+    <li><a href="#preparo">0. Preparação do ambiente</a></li>
+    <li><a href="#sec-seguranca">1. Segurança (críticos)</a></li>
+    <li><a href="#sec-build">2. Build &amp; saúde geral</a></li>
+    <li><a href="#sec-multi">3. Multi-domínio / multi-VLAN ⭐</a></li>
+    <li><a href="#sec-stab">4. Estabilidade (DB, polling, race)</a></li>
+    <li><a href="#sec-winrm">5. Acesso remoto (WinRM)</a></li>
+    <li><a href="#sec-ux">6. UX e regressões funcionais</a></li>
+    <li><a href="#troubleshoot">7. Troubleshooting</a></li>
+  </ul>
+</div>
+
+<h2 id="preparo">0. Preparação do ambiente</h2>
+
+<div class="card">
+  <h3 style="margin-top:0">0.1. Pré-requisitos</h3>
+  <ul>
+    <li><strong>Python 3.13+</strong> instalado e no PATH</li>
+    <li><strong>Node.js 20+</strong> com <code>npm install</code> já rodado em <code>electron/</code></li>
+    <li>Acesso administrativo na máquina de teste (para WinRM e firewall)</li>
+    <li><strong>Wireshark</strong> instalado (para confirmar item ⭐3.3)</li>
+    <li>Idealmente: máquina dual-NIC ligada às duas VLANs/domínios. Se só tem uma, marque os testes multi-VLAN como N/A — eles não dão pra validar de verdade.</li>
+  </ul>
+</div>
+
+<div class="test high">
+  <div class="row"><span class="id">T0.1</span><span class="title">Atualizar dependências Python</span><span class="badge badge-high">obrigatório</span></div>
+  <div class="step">Executar:</div>
+  <pre>cd C:\Users\raphael.rego\Desktop\ferramentasderede\python
+pip install -r requirements.txt</pre>
+  <div class="expect">✅ <strong>Esperado:</strong> mensagem <code>Successfully installed dnspython-2.7.0</code> (ou "already satisfied" se já estava instalado). Demais deps já estavam.</div>
+  <div class="fail">❌ Se falhar: provavelmente proxy/firewall bloqueando PyPI. Configure variável <code>HTTPS_PROXY</code> antes.</div>
+</div>
+
+<div class="test high">
+  <div class="row"><span class="id">T0.2</span><span class="title">Subir o app pelo diretório principal</span><span class="badge badge-high">obrigatório</span></div>
+  <div class="step">Em outro terminal, fechar qualquer instância anterior:</div>
+  <pre>taskkill /F /IM electron.exe 2&gt;nul
+taskkill /F /IM python.exe 2&gt;nul</pre>
+  <div class="step">Iniciar:</div>
+  <pre>python C:\Users\raphael.rego\Desktop\ferramentasderede\python\main.py</pre>
+  <div class="expect">✅ <strong>Esperado:</strong> Vite abre, janela do Electron sobe, dashboard carrega lista de hosts.</div>
+  <div class="fail">❌ Se a janela ficar branca por mais de 10s: provavelmente o backend não subiu — abra <code>%TEMP%\network_tools_debug.log</code>.</div>
+</div>
+
+<hr>
+<h2 id="sec-seguranca">1. Segurança (críticos)</h2>
+
+<div class="test crit">
+  <div class="row"><span class="id">T1.1</span><span class="title">Bind do backend está em 127.0.0.1 (não exposto na LAN)</span><span class="badge badge-crit">CRÍTICO</span></div>
+  <div class="step">Com o app rodando, em outro terminal:</div>
+  <pre>netstat -ano | findstr :8000</pre>
+  <div class="expect">✅ <strong>Esperado:</strong> apenas <code>127.0.0.1:8000 ... LISTENING</code>. Nenhuma linha com <code>0.0.0.0:8000</code>.</div>
+  <div class="fail">❌ Se aparecer <code>0.0.0.0:8000</code>: ainda há um processo antigo rodando — mate todos os python.exe e suba de novo.</div>
+</div>
+
+<div class="test crit">
+  <div class="row"><span class="id">T1.2</span><span class="title">API não responde de outra máquina na LAN</span><span class="badge badge-crit">CRÍTICO</span></div>
+  <div class="step">De outra máquina na mesma rede (ou de um celular no Wi-Fi corporativo), tentar:</div>
+  <pre>curl http://&lt;IP-da-sua-máquina&gt;:8000/hosts</pre>
+  <div class="expect">✅ <strong>Esperado:</strong> conexão recusada / timeout. <em>Não pode</em> retornar a lista de hosts.</div>
+  <div class="fail">❌ Se retornar dados: ⚠️ revise <code>NT_API_HOST</code> e a configuração de firewall.</div>
+</div>
+
+<div class="test crit">
+  <div class="row"><span class="id">T1.3</span><span class="title">Terminal externo (PowerShell) não vaza senha no histórico</span><span class="badge badge-crit">CRÍTICO</span></div>
+  <div class="step">No app, abrir um host com WinRM funcionando, clicar em "Abrir Terminal Externo" com credenciais.</div>
+  <div class="step">Na janela do PowerShell que abriu, digitar:</div>
+  <pre>Get-History | Format-List
+Get-ChildItem env: | Where-Object { $_.Name -like "NT_*" }</pre>
+  <div class="expect">✅ <strong>Esperado:</strong> nenhum comando contendo a senha em texto claro. As variáveis <code>NT_REMOTE_*</code> não devem aparecer (foram removidas no início do script).</div>
+  <div class="fail">❌ Se aparecer a senha em <code>$pass</code> ou em <code>Get-History</code>: a refatoração do <code>open_external_terminal</code> não rodou — confirme que copiou <code>python/api/routes/network.py</code>.</div>
+</div>
+
+<div class="test crit">
+  <div class="row"><span class="id">T1.4</span><span class="title">IPC do Electron rejeita argumentos maliciosos</span><span class="badge badge-crit">CRÍTICO</span></div>
+  <div class="step">No app, abrir DevTools (Ctrl+Shift+I) → Console. Executar:</div>
+  <pre>await window.electron.ipcRenderer.invoke('launch-rdp', '1.1.1.1 &amp; calc.exe')</pre>
+  <div class="expect">✅ <strong>Esperado:</strong> erro <code>"Invalid host"</code>. Calculadora <em>não</em> deve abrir.</div>
+  <div class="step">Repetir para os outros handlers:</div>
+  <pre>await window.electron.openExternal('javascript:alert(1)')   // deve dar Invalid URL
+await window.electron.showItemInFolder('..\\..\\Windows')   // deve dar Invalid path</pre>
+  <div class="expect">✅ <strong>Esperado:</strong> todos rejeitam.</div>
+</div>
+
+<hr>
+<h2 id="sec-build">2. Build &amp; saúde geral</h2>
+
+<div class="test high">
+  <div class="row"><span class="id">T2.1</span><span class="title">TypeScript sem erros</span><span class="badge badge-high">alto</span></div>
+  <div class="step">Em <code>electron/</code>:</div>
+  <pre>npx tsc --noEmit</pre>
+  <div class="expect">✅ <strong>Esperado:</strong> saída vazia (zero erros).</div>
+</div>
+
+<div class="test med">
+  <div class="row"><span class="id">T2.2</span><span class="title">Vite build conclui sem erro</span><span class="badge badge-med">médio</span></div>
+  <pre>npx vite build</pre>
+  <div class="expect">✅ <strong>Esperado:</strong> três <code>✓ built in</code> no fim. Bundle do renderer ~1MB, main ~6KB, preload ~0.8KB.</div>
+</div>
+
+<div class="test med">
+  <div class="row"><span class="id">T2.3</span><span class="title">Endpoints básicos respondem</span><span class="badge badge-med">médio</span></div>
+  <pre>curl http://127.0.0.1:8000/
+curl http://127.0.0.1:8000/network/interfaces</pre>
+  <div class="expect">✅ <strong>Esperado:</strong> primeiro retorna <code>{"status":"online","version":"2.0.0"}</code>. Segundo retorna JSON com a lista de NICs IPv4 ativas.</div>
+</div>
+
+<hr>
+<h2 id="sec-multi">3. Multi-domínio / Multi-VLAN ⭐</h2>
+
+<div class="card">
+  <strong>Pré-requisito desta seção:</strong> máquina conectada a pelo menos duas redes diferentes (duas NICs físicas, ou uma NIC + VPN, ou uma NIC + Hyper-V/WSL). Se você só tem uma, pule para o item 4.
+</div>
+
+<div class="test high">
+  <div class="row"><span class="id">T3.1</span><span class="title">Endpoint <code>/network/interfaces</code> detecta TODAS as NICs ativas</span><span class="badge badge-new">novo</span></div>
+  <pre>curl http://127.0.0.1:8000/network/interfaces</pre>
+  <div class="expect">✅ <strong>Esperado:</strong> JSON com uma entrada por NIC IPv4 que não seja loopback (127.x) nem APIPA (169.254.x). Cada uma com <code>name</code>, <code>ip</code>, <code>cidr</code>, <code>mac</code>.</div>
+  <div class="fail">❌ Se vier vazio: confira que <code>psutil</code> está instalado.</div>
+</div>
+
+<div class="test high">
+  <div class="row"><span class="id">T3.2</span><span class="title">Aba "Redes / VLANs" em Configurações</span><span class="badge badge-new">novo</span></div>
+  <div class="step">Abrir o app → <strong>Configurações</strong>. Confirmar que existem 4 abas: Scanner de Rede / <strong>Redes / VLANs</strong> / Acesso Remoto / Dados.</div>
+  <div class="step">Clicar em "Redes / VLANs". Conferir os blocos:</div>
+  <ul>
+    <li><strong>Interfaces detectadas</strong> — mostra suas NICs locais. Botão "Importar" em cada.</li>
+    <li><strong>Redes gerenciadas</strong> — vazio na primeira vez, com botão "Adicionar rede".</li>
+  </ul>
+  <div class="step">Clicar em "Importar" em cada NIC. Cada importação adiciona uma rede com nome = nome da NIC e source_ip preenchido.</div>
+  <div class="step">Para cada rede importada, preencher (se aplicável):</div>
+  <ul>
+    <li><strong>Nome</strong>: ex. "Domínio A — VLAN admin"</li>
+    <li><strong>DNS server</strong>: ex. <code>10.10.0.1</code></li>
+    <li><strong>Domínio AD</strong>: ex. <code>dominio-a.local</code></li>
+  </ul>
+  <div class="step">Clicar em <strong>Salvar Alterações</strong>.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> toast verde de sucesso. Recarregar a página → as redes persistem.</div>
+</div>
+
+<div class="test crit">
+  <div class="row"><span class="id">T3.3</span><span class="title">⭐ Ping com source_ip sai pela NIC correta</span><span class="badge badge-crit">CRÍTICO</span></div>
+  <div class="step">Abrir Wireshark. Filtrar por <code>icmp</code>. Selecionar a interface da NIC #1.</div>
+  <div class="step">No app: <strong>Ferramentas → Ping</strong>. No dropdown "Sair pela rede", escolher a rede da NIC #1. Pingar <code>8.8.8.8</code>.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> Wireshark vê pacotes saindo. <em>Source = IP da NIC #1.</em></div>
+  <div class="step">Parar. Trocar para a NIC #2 no dropdown. Pingar de novo. Mudar Wireshark para a outra NIC.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> agora os pacotes saem pela NIC #2. Confirma que o <code>-S</code>/<code>-I</code> está funcionando.</div>
+  <div class="fail">❌ Se sair sempre pela mesma NIC: o flag não está chegando ao comando <code>ping</code>. Confira <code>python/src/network/ping.py</code> linha ~30.</div>
+</div>
+
+<div class="test high">
+  <div class="row"><span class="id">T3.4</span><span class="title">Traceroute respeita source_ip</span><span class="badge badge-new">novo</span></div>
+  <div class="step">Mesma ideia do T3.3, mas em <strong>Ferramentas → Traceroute</strong>.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> a primeira linha do tracert mostra o gateway da NIC selecionada (não o gateway default).</div>
+</div>
+
+<div class="test high">
+  <div class="row"><span class="id">T3.5</span><span class="title">DNS por servidor específico (multi-domínio)</span><span class="badge badge-new">novo</span></div>
+  <div class="step">Suponha que <code>SERVIDOR1</code> existe nos dois domínios com IPs diferentes. Sem o app saber:</div>
+  <pre>curl -X POST http://127.0.0.1:8000/network/dns/resolve ^
+  -H "Content-Type: application/json" ^
+  -d "{\"name\":\"SERVIDOR1\",\"dns_server\":\"10.10.0.1\",\"domain\":\"dominio-a.local\"}"</pre>
+  <div class="expect">✅ <strong>Esperado:</strong> retorna o IP que está no <strong>DNS do Domínio A</strong>, não o do sistema.</div>
+  <div class="step">Repetir trocando o <code>dns_server</code> para o do Domínio B:</div>
+  <div class="expect">✅ <strong>Esperado:</strong> agora retorna o IP do <strong>Domínio B</strong>. IPs diferentes confirmam que o resolver está consultando o servidor certo.</div>
+</div>
+
+<div class="test high">
+  <div class="row"><span class="id">T3.6</span><span class="title">Discovery (Scanner) respeita source_ip por aba</span><span class="badge badge-new">novo</span></div>
+  <div class="step">Em <strong>Ferramentas → Scanner de Rede</strong>: criar 2 abas. Em cada uma, escolher uma rede diferente no dropdown "Rede automática".</div>
+  <div class="expect">✅ <strong>Esperado:</strong> ao escolher uma rede, o CIDR auto-preenche (se estiver vazio).</div>
+  <div class="step">Iniciar varredura nas duas abas em paralelo (com Wireshark observando).</div>
+  <div class="expect">✅ <strong>Esperado:</strong> pacotes ICMP de cada aba saem pela NIC correta. Resultados não se misturam.</div>
+</div>
+
+<div class="test med">
+  <div class="row"><span class="id">T3.7</span><span class="title">Badge de rede no Dashboard</span><span class="badge badge-new">novo</span></div>
+  <div class="step">Voltar ao <strong>Painel</strong> com hosts cadastrados.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> hosts cujo IP cai dentro de uma rede cadastrada mostram um <strong>badge azul</strong> com o nome da rede ao lado do IP. Hosts que não batem em nenhuma não mostram badge.</div>
+</div>
+
+<div class="test med">
+  <div class="row"><span class="id">T3.8</span><span class="title">Filtro por rede no Dashboard</span><span class="badge badge-new">novo</span></div>
+  <div class="step">No <strong>Painel</strong>, conferir que apareceu uma 2ª linha de filtros com <code>Rede:</code> e botões "Todas", "Sem rede", e um por rede cadastrada.</div>
+  <div class="step">Clicar em uma rede.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> só aparecem hosts daquela rede.</div>
+  <div class="step">Clicar em "Sem rede".</div>
+  <div class="expect">✅ <strong>Esperado:</strong> só aparecem hosts cujo IP não está em nenhuma rede cadastrada (ex: hosts WAN tipo <code>8.8.8.8</code>).</div>
+</div>
+
+<hr>
+<h2 id="sec-stab">4. Estabilidade (DB, polling, race conditions)</h2>
+
+<div class="test high">
+  <div class="row"><span class="id">T4.1</span><span class="title">SQLite sob carga (simular o cenário real)</span><span class="badge badge-high">alto</span></div>
+  <div class="step">Cadastrar 50+ hosts (importe um CSV se já tiver, ou faça discovery em uma /24).</div>
+  <div class="step">Habilitar monitoramento de todos.</div>
+  <div class="step">Em paralelo, abrir o Scanner de Rede e iniciar uma nova varredura. Mexer no Painel (mudar grupos, filtros).</div>
+  <div class="expect">✅ <strong>Esperado:</strong> sem mensagens de <code>database is locked</code> nos logs. Status atualiza normalmente.</div>
+  <div class="fail">❌ Se aparecer locks: verificar logs do backend — o decorator <code>@_retry_on_locked</code> deveria absorver a maioria.</div>
+</div>
+
+<div class="test med">
+  <div class="row"><span class="id">T4.2</span><span class="title">Polling com backoff quando backend cai</span><span class="badge badge-new">novo</span></div>
+  <div class="step">Com o app aberto, matar o processo do backend Python:</div>
+  <pre>Get-NetTCPConnection -LocalPort 8000 -State Listen | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }</pre>
+  <div class="step">No DevTools → Network, observar as chamadas <code>/hosts</code> e <code>/network/monitor</code>.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> intervalos entre chamadas <strong>aumentam</strong> exponencialmente (2s → 4s → 8s → ... até 30s). Toast: <em>"Servidor não responde. Tentando reconectar..."</em></div>
+  <div class="step">Subir o backend de novo.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> dentro de no máximo 30s aparece toast verde <em>"Conexão com o servidor restaurada."</em> e os pings voltam a ser de 2s em 2s.</div>
+</div>
+
+<div class="test low">
+  <div class="row"><span class="id">T4.3</span><span class="title">Polling do cofre menos agressivo</span><span class="badge badge-low">baixo</span></div>
+  <div class="step">DevTools → Network. Filtrar por <code>security/status</code>. Aguardar 1 minuto.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> aproximadamente 2 chamadas/min (era ~12/min antes).</div>
+</div>
+
+<div class="test low">
+  <div class="row"><span class="id">T4.4</span><span class="title">Memória estável após 30 minutos</span><span class="badge badge-low">baixo</span></div>
+  <div class="step">Deixar o app rodando 30 minutos com monitoramento ativo. Anotar uso de memória do processo Electron no início e no fim (Task Manager).</div>
+  <div class="expect">✅ <strong>Esperado:</strong> crescimento &lt; 50MB. Sem leak agressivo.</div>
+</div>
+
+<hr>
+<h2 id="sec-winrm">5. Acesso remoto (WinRM)</h2>
+
+<div class="test high">
+  <div class="row"><span class="id">T5.1</span><span class="title">Mensagens de erro classificadas</span><span class="badge badge-new">novo</span></div>
+  <p>Para cada cenário abaixo, a tentativa de conectar via WinRM deve retornar mensagem específica (não mais "Falha em todos os métodos"):</p>
+  <table>
+    <tr><th>Cenário</th><th>Mensagem esperada (resumo)</th><th>Code</th></tr>
+    <tr><td>Senha errada</td><td>"Credenciais recusadas por &lt;ip&gt; (usuário: ...)"</td><td><code>AUTH_FAILED</code></td></tr>
+    <tr><td>Usuário sem domínio em ambiente cross-domain</td><td>"Em multi-domínio, informe DOMINIO\usuario ou usuario@dominio"</td><td><code>AUTH_FAILED</code></td></tr>
+    <tr><td>Host com WinRM desabilitado</td><td>"Porta WinRM (5985) recusada... rode <code>Enable-PSRemoting -Force</code> no destino"</td><td><code>WINRM_DISABLED</code></td></tr>
+    <tr><td>Host inalcançável</td><td>"Sem rota até &lt;ip&gt;. Cheque a NIC e a tabela de rotas"</td><td><code>NETWORK_UNREACHABLE</code></td></tr>
+    <tr><td>Falha Kerberos cross-domain</td><td>"Falha Kerberos... Provável domínio diferente sem relação de confiança"</td><td><code>CROSS_DOMAIN_AUTH</code></td></tr>
+    <tr><td>IP não está em TrustedHosts</td><td>"&lt;ip&gt; não está em TrustedHosts."</td><td><code>TRUSTED_HOSTS_REQUIRED</code></td></tr>
+  </table>
+  <div class="expect">✅ <strong>Esperado:</strong> os toasts/diálogos da UI exibem essas mensagens (não mais um stack trace genérico).</div>
+</div>
+
+<div class="test med">
+  <div class="row"><span class="id">T5.2</span><span class="title">Comportamento cross-domain</span><span class="badge badge-med">médio</span></div>
+  <div class="step">Estando logado em DOMINIO_A, tentar conectar em uma máquina de DOMINIO_B sem informar o domínio (só o usuário).</div>
+  <div class="expect">✅ <strong>Esperado:</strong> erro com a dica "informe DOMINIO\usuario ou usuario@dominio".</div>
+  <div class="step">Repetir informando <code>DOMINIO_B\usuario</code>.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> conecta (se as credenciais forem válidas em DOMINIO_B).</div>
+</div>
+
+<hr>
+<h2 id="sec-ux">6. UX e regressões funcionais</h2>
+
+<p>Estes testes são para garantir que <strong>nada quebrou</strong> com tantas mudanças. Para cada feature antiga, abrir e usar 1 minuto:</p>
+
+<div class="test low">
+  <div class="row"><span class="id">T6.1</span><span class="title">Adicionar / remover / editar host (CRUD)</span><span class="badge badge-low">regressão</span></div>
+  <div class="expect">✅ Cadastrar um host novo, mudar o grupo, deletar pela lixeira. Sem erro.</div>
+</div>
+
+<div class="test low">
+  <div class="row"><span class="id">T6.2</span><span class="title">Refresh de host (hostname/domínio)</span><span class="badge badge-low">regressão</span></div>
+  <div class="step">No card do host, clicar no ícone "atualizar".</div>
+  <div class="expect">✅ Hostname e domínio são re-resolvidos. Recordar: corrigi a duplicação de <code>refresh_host</code> — a versão completa (com <code>resolve_via_ping_a</code>) é a que ficou.</div>
+</div>
+
+<div class="test low">
+  <div class="row"><span class="id">T6.3</span><span class="title">Cofre de credenciais</span><span class="badge badge-low">regressão</span></div>
+  <div class="expect">✅ Criar/desbloquear/bloquear cofre. Adicionar credencial. Usar credencial em ação remota.</div>
+</div>
+
+<div class="test low">
+  <div class="row"><span class="id">T6.4</span><span class="title">Backup / restore de configurações</span><span class="badge badge-low">regressão</span></div>
+  <div class="step">Em Configurações → Dados, gerar backup. Conferir que aparece na lista.</div>
+  <div class="expect">✅ Pode restaurar sem erro.</div>
+</div>
+
+<div class="test low">
+  <div class="row"><span class="id">T6.5</span><span class="title">Terminal interativo (xterm WebSocket)</span><span class="badge badge-low">regressão</span></div>
+  <div class="step">Em <strong>Terminal Remoto</strong>, conectar em um host e rodar <code>hostname</code>.</div>
+  <div class="expect">✅ Saída aparece no terminal.</div>
+</div>
+
+<hr>
+<h2 id="troubleshoot">7. Troubleshooting</h2>
+
+<details>
+  <summary>Backend não sobe / API offline</summary>
+  <ol>
+    <li>Verificar log: <code>%TEMP%\network_tools_debug.log</code></li>
+    <li>Verificar porta presa: <code>netstat -ano | findstr :8000</code></li>
+    <li>Subir backend isolado pra ver o erro real: <code>cd python &amp;&amp; python -m api.server</code></li>
+  </ol>
+</details>
+
+<details>
+  <summary>"ModuleNotFoundError: No module named 'dns'"</summary>
+  <p>Falta rodar <code>pip install -r python/requirements.txt</code> (T0.1). O <code>dns_resolver.py</code> tem fallback para <code>socket</code>, mas só se o import falhar com <code>ImportError</code>. Outros erros (ex: WMI no Windows) também caem no fallback.</p>
+</details>
+
+<details>
+  <summary>Aba "Redes / VLANs" não aparece em Configurações</summary>
+  <p>Você está rodando uma build antiga. Certifique-se de que <code>electron/dist/</code> foi regerado (<code>npx vite build</code>) e que está abrindo o app a partir do diretório principal (<code>C:\Users\raphael.rego\Desktop\ferramentasderede\</code>), não de qualquer outro lugar.</p>
+</details>
+
+<details>
+  <summary>Ping/traceroute "saem" sempre pela mesma NIC</summary>
+  <ol>
+    <li>Confirmar que a rede tem <code>source_ip</code> preenchido em Configurações → Redes.</li>
+    <li>Conferir no Wireshark <em>antes</em> de mexer (controle): qual é a NIC default.</li>
+    <li>Rodar manualmente: <code>ping -S &lt;source_ip&gt; 8.8.8.8</code> direto no cmd. Se isso também falhar, é problema de roteamento no Windows, não da app.</li>
+  </ol>
+</details>
+
+<details>
+  <summary>Erro CORS no DevTools</summary>
+  <p>O CORS agora só permite <code>http://127.0.0.1:5173</code> e <code>http://localhost:5173</code>. Se você abriu a UI por outra origem (ex: <code>http://192.168.1.10:5173</code>), defina antes de subir o backend:</p>
+  <pre>set NT_CORS_ORIGINS=http://192.168.1.10:5173
+python python\main.py</pre>
+</details>
+
+<details>
+  <summary>Erros TypeScript depois de mexer no código</summary>
+  <p>Rode <code>cd electron &amp;&amp; npx tsc --noEmit</code> e leia a primeira linha do erro. Os tipos críticos vivem em <code>electron/src/types.d.ts</code> e <code>electron/src/pages/Settings.tsx</code> (NetworkConfig).</p>
+</details>
+
+<hr>
+
+<h2>Referência rápida — variáveis de ambiente</h2>
+<table>
+  <tr><th>Variável</th><th>Default</th><th>Uso</th></tr>
+  <tr><td><code>NT_API_HOST</code></td><td><code>127.0.0.1</code></td><td>Bind do uvicorn. Use <code>0.0.0.0</code> só quando precisar expor (raro).</td></tr>
+  <tr><td><code>NT_API_PORT</code></td><td><code>8000</code></td><td>Porta do backend.</td></tr>
+  <tr><td><code>NT_CORS_ORIGINS</code></td><td>(localhost:5173)</td><td>Lista separada por vírgula de origens permitidas.</td></tr>
+  <tr><td><code>VITE_API_HOST</code> / <code>VITE_API_PORT</code></td><td><code>127.0.0.1</code> / <code>8000</code></td><td>Onde o frontend procura o backend (build time).</td></tr>
+</table>
+
+<h2>Referência rápida — endpoints novos</h2>
+<table>
+  <tr><th>Método</th><th>Path</th><th>Descrição</th></tr>
+  <tr><td>GET</td><td><code>/network/interfaces</code></td><td>Lista NICs IPv4 ativas via psutil</td></tr>
+  <tr><td>POST</td><td><code>/network/dns/resolve</code></td><td>Forward (<code>name</code>) ou reverse (<code>ip</code>) com <code>dns_server</code> opcional</td></tr>
+  <tr><td>POST</td><td><code>/tools/ping</code></td><td>Body aceita <code>source_ip</code> opcional</td></tr>
+  <tr><td>POST</td><td><code>/tools/traceroute</code></td><td>Body aceita <code>source_ip</code> opcional</td></tr>
+  <tr><td>POST</td><td><code>/network/discovery</code></td><td>Body aceita <code>source_ip</code> opcional</td></tr>
+</table>
+
+<p style="text-align:center; color: var(--muted); margin-top: 48px; font-size: 12px;">
+Plano gerado em 2026-05-06 — Ferramentas de Rede multi-domínio<br>
+Para imprimir: Ctrl+P, modo Retrato, ative "imagens de fundo" se quiser preservar cores.
+</p>
+
+</div>
+</body>
+</html>
