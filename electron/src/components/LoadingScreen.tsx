@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Terminal, Cpu, Shield, Wifi, HardDrive, Battery, Zap, CheckCircle2 } from 'lucide-react';
+import { APP_VERSION } from '../data/changelog';
 
 interface LoadingScreenProps {
     onComplete: () => void;
@@ -129,7 +130,7 @@ export const LoadingScreen: React.FC<LoadingScreenProps> = ({ onComplete }) => {
                     <span>Conexão Segura</span>
 
                     {/* Version Display (Centered) */}
-                    <span className="opacity-50">v1.2.1</span>
+                    <span className="opacity-50">v{APP_VERSION}</span>
 
                     <span className="flex items-center gap-2">
                         <span className={`w-1.5 h-1.5 rounded-full shadow-[0_0_5px_currentColor] ${progress === 100 ? 'bg-emerald-500 text-emerald-500' : 'bg-amber-500 text-amber-500 animate-pulse'}`} />

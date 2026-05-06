@@ -1,5 +1,8 @@
-import { X, Globe, Send } from 'lucide-react';
+import { X, Globe, Send, Sparkles } from 'lucide-react';
+import { useState } from 'react';
 import { createPortal } from 'react-dom';
+import { APP_VERSION } from '../../data/changelog';
+import { ChangelogModal } from './ChangelogModal';
 
 interface AboutModalProps {
     isOpen: boolean;
@@ -7,9 +10,12 @@ interface AboutModalProps {
 }
 
 export function AboutModal({ isOpen, onClose }: AboutModalProps) {
+    const [isChangelogOpen, setIsChangelogOpen] = useState(false);
     if (!isOpen) return null;
 
     return createPortal(
+        <>
+        <ChangelogModal isOpen={isChangelogOpen} onClose={() => setIsChangelogOpen(false)} />
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999] p-4 animate-in fade-in duration-200" onClick={onClose}>
             <div className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden scale-100 animate-in zoom-in-95 duration-200 relative" onClick={(e) => e.stopPropagation()}>
 
@@ -30,7 +36,14 @@ export function AboutModal({ isOpen, onClose }: AboutModalProps) {
                     </div>
 
                     <h2 className="text-2xl font-bold text-white mb-2">Ferramentas de Rede</h2>
-                    <p className="text-zinc-400 mb-8">Versão 1.2.1</p>
+                    <button
+                        onClick={() => setIsChangelogOpen(true)}
+                        title="Ver últimas melhorias e alterações"
+                        className="group inline-flex items-center gap-2 mb-8 px-3 py-1 rounded-full text-zinc-400 hover:text-blue-300 hover:bg-blue-500/5 border border-transparent hover:border-blue-500/20 transition-colors"
+                    >
+                        <span>Versão {APP_VERSION}</span>
+                        <Sparkles size={14} className="opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all" />
+                    </button>
 
                     <div className="space-y-4 mb-8">
                         <div className="p-4 bg-zinc-950/50 rounded-xl border border-zinc-800/50">
@@ -84,7 +97,8 @@ export function AboutModal({ isOpen, onClose }: AboutModalProps) {
                     </p>
                 </div>
             </div>
-        </div>,
+        </div>
+        </>,
         document.body
     );
 }
