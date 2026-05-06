@@ -194,121 +194,133 @@ class HostMonitor:
             
             stop_event.wait(sleep_time)
 
+    def _resolve_one_host(self, ip):
+        """Resolve reverse DNS, forward DNS (if input was a hostname) and MAC
+        for a single host. Persists updates and fires the on_update callback.
+
+        Designed to run from a thread pool — locks are scoped tightly so N
+        resolutions overlap rather than serializing 2s/host of DNS lookup.
+        """
+        try:
+            # --- Reverse DNS (IP -> hostname/domain) ---
+            with self._lock:
+                if ip not in self._hosts:
+                    return
+                current_hostname = self._hosts[ip].get('hostname')
+                current_domain = self._hosts[ip].get('domain')
+
+            needs_resolution = (
+                (not current_hostname or current_hostname == ip or current_hostname == "Não detectado")
+                or (not current_domain or current_domain == "Não detectado")
+            )
+
+            if needs_resolution:
+                try:
+                    fqdn = self._tools.resolve_ip_and_hostname(ip)
+                    if fqdn:
+                        parts = fqdn.split('.', 1)
+                        new_hostname = parts[0]
+                        new_domain = parts[1] if len(parts) > 1 else None
+
+                        with self._lock:
+                            if ip in self._hosts:
+                                self._hosts[ip]['hostname'] = new_hostname
+                                self._hosts[ip]['domain'] = new_domain
+                                logging.info(f"Reverse DNS Update: {ip} -> {new_hostname} ({new_domain})")
+                                callback = self._on_update_callback
+                            else:
+                                callback = None
+
+                        if callback:
+                            try:
+                                callback(ip, {'hostname': new_hostname, 'domain': new_domain})
+                            except Exception:
+                                logging.exception(f"on_update_callback raised for {ip}")
+
+                        self._host_manager.update_host_details(ip, hostname=new_hostname, domain=new_domain)
+                except Exception:
+                    logging.exception(f"reverse DNS failed for {ip}")
+
+            # --- Forward DNS (hostname input -> IP), if applicable ---
+            try:
+                ipaddress.ip_address(ip)
+                is_hostname_input = False
+            except ValueError:
+                is_hostname_input = True
+
+            if is_hostname_input:
+                try:
+                    resolved_ip = socket.gethostbyname(ip)
+                    with self._lock:
+                        if ip in self._hosts:
+                            current_resolved = self._hosts[ip].get('ip')
+                            if resolved_ip != current_resolved:
+                                self._hosts[ip]['ip'] = resolved_ip
+                                logging.info(f"DNS Update: {ip} -> {resolved_ip}")
+                                callback = self._on_update_callback
+                            else:
+                                callback = None
+                        else:
+                            callback = None
+                    if callback:
+                        try:
+                            callback(ip, {'ip': resolved_ip})
+                        except Exception:
+                            logging.exception(f"on_update_callback raised for {ip}")
+                except Exception:
+                    pass
+
+            # --- MAC Address Resolution (every ~5 min while online) ---
+            needs_mac = False
+            with self._lock:
+                if ip in self._hosts:
+                    current_mac = self._hosts[ip].get('mac')
+                    is_online = self._hosts[ip].get('online', False)
+                    last_mac_attempt = self._hosts[ip].get('last_mac_attempt', 0)
+                    if not current_mac and is_online and (time.time() - last_mac_attempt > 300):
+                        needs_mac = True
+                        self._hosts[ip]['last_mac_attempt'] = time.time()
+
+            if needs_mac:
+                try:
+                    mac_address = mac_utils.resolve_mac_address(ip)
+                    if mac_address:
+                        with self._lock:
+                            if ip in self._hosts:
+                                self._hosts[ip]['mac'] = mac_address
+                        self._host_manager.update_host_details(ip, mac=mac_address)
+                except Exception:
+                    logging.exception(f"MAC resolution failed for {ip}")
+        except Exception:
+            logging.exception(f"_resolve_one_host failed for {ip}")
+
     def _dns_loop(self):
-        """Loop dedicado para resolução de DNS em background."""
+        """Loop dedicado para resolução de DNS / MAC em background.
+
+        Anteriormente serial (~2s/host × N hosts era impraticável em rede
+        ampla). Agora despacha as resoluções em paralelo via ThreadPoolExecutor
+        — limitado a 16 workers para não exaurir file descriptors nem detonar
+        o DNS server.
+        """
+        from concurrent.futures import ThreadPoolExecutor
         while self._running:
             try:
-                # Snapshot para não bloquear
                 with self._lock:
                     hosts_to_resolve = list(self._hosts.keys())
-                
-                for ip in hosts_to_resolve:
-                    if not self._running: break
-                    
-                    try:
-                        # Verificar se precisamos resolver hostname (IP -> Hostname)
-                        # Se não tiver hostname ou se for igual ao IP, tentar resolver
-                        current_hostname = None
-                        current_domain = None
-                        with self._lock:
-                            if ip in self._hosts:
-                                current_hostname = self._hosts[ip].get('hostname')
-                                current_domain = self._hosts[ip].get('domain')
-                        
-                        needs_resolution = (not current_hostname or current_hostname == ip or current_hostname == "Não detectado") or \
-                                           (not current_domain or current_domain == "Não detectado")
-                        
-                        if needs_resolution:
+
+                if hosts_to_resolve:
+                    workers = min(16, max(1, len(hosts_to_resolve)))
+                    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="dns-resolve") as pool:
+                        futures = [pool.submit(self._resolve_one_host, ip) for ip in hosts_to_resolve]
+                        for f in futures:
+                            if not self._running:
+                                break
                             try:
-                                # Usar NetworkTools para resolver (ping -a, DNS, NetBIOS)
-                                fqdn = self._tools.resolve_ip_and_hostname(ip)
-                                
-                                if fqdn:
-                                    # Separar Hostname e Domínio
-                                    parts = fqdn.split('.', 1)
-                                    new_hostname = parts[0]
-                                    new_domain = parts[1] if len(parts) > 1 else None
-                                    
-                                    with self._lock:
-                                        if ip in self._hosts:
-                                            self._hosts[ip]['hostname'] = new_hostname
-                                            self._hosts[ip]['domain'] = new_domain
-                                            logging.info(f"Reverse DNS Update: {ip} -> {new_hostname} ({new_domain})")
-                                            
-                                            if self._on_update_callback:
-                                                try:
-                                                    # Enviar update parcial
-                                                    self._on_update_callback(ip, {
-                                                        'hostname': new_hostname,
-                                                        'domain': new_domain
-                                                    })
-                                                except:
-                                                    pass
-                                    
-                                    # Persistir no banco de dados (fora do lock)
-                                    self._host_manager.update_host_details(ip, hostname=new_hostname, domain=new_domain)
-                            except Exception as e:
-                                # logging.error(f"Error resolving {ip}: {e}")
+                                f.result(timeout=15)
+                            except Exception:
                                 pass
 
-                        # Verificar se é hostname (Hostname -> IP) - Lógica original mantida mas otimizada
-                        is_hostname_input = False
-                        try:
-                            ipaddress.ip_address(ip)
-                        except ValueError:
-                            is_hostname_input = True
-                        
-                        if is_hostname_input:
-                            try:
-                                resolved_ip = socket.gethostbyname(ip)
-                                with self._lock:
-                                    if ip in self._hosts:
-                                        current_resolved = self._hosts[ip].get('ip')
-                                        if resolved_ip != current_resolved:
-                                            self._hosts[ip]['ip'] = resolved_ip
-                                            logging.info(f"DNS Update: {ip} -> {resolved_ip}")
-                                            
-                                            if self._on_update_callback:
-                                                try:
-                                                    self._on_update_callback(ip, {'ip': resolved_ip})
-                                                except:
-                                                    pass
-                            except:
-                                pass
-                        
-                        # --- MAC Address Resolution (Background) ---
-                        # Moved from _process_host to avoid blocking the 1s ping loop
-                        needs_mac = False
-                        current_mac = None
-                        is_online = False
-                        with self._lock:
-                            if ip in self._hosts:
-                                current_mac = self._hosts[ip].get('mac')
-                                is_online = self._hosts[ip].get('online', False)
-                                last_mac_attempt = self._hosts[ip].get('last_mac_attempt', 0)
-                                if not current_mac and is_online and (time.time() - last_mac_attempt > 300): # Retry every 5 mins
-                                    needs_mac = True
-                                    self._hosts[ip]['last_mac_attempt'] = time.time()
-                        
-                        if needs_mac:
-                            try:
-                                mac_address = mac_utils.resolve_mac_address(ip)
-                                if mac_address:
-                                    with self._lock:
-                                        if ip in self._hosts:
-                                            self._hosts[ip]['mac'] = mac_address
-                                    # Persist
-                                    self._host_manager.update_host_details(ip, mac=mac_address)
-                            except:
-                                pass
-
-                    except:
-                        pass
-                    
-                    # Pequena pausa entre resoluções para não saturar CPU/Rede
-                    time.sleep(0.1) 
-                
-                # Aguardar 5 segundos antes da próxima rodada completa de DNS/MAC
+                # Sleep antes da próxima rodada completa.
                 time.sleep(5)
             except Exception as e:
                 logging.error(f"Error in DNS loop: {e}")
