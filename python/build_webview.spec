@@ -1,52 +1,157 @@
 # -*- mode: python ; coding: utf-8 -*-
+#
+# PyInstaller spec — Ferramentas de Rede portable executable.
+#
+# Single-file portable build that bundles:
+#   - main_webview.py entry point (FastAPI + pywebview)
+#   - electron/dist/   → 'gui' folder (frontend build)
+#   - src/system/scripts/*.ps1 → PowerShell scripts used by WinRM handler
+#   - assets/*         → icons, logos
+#   - mac-vendor-lookup OUI database
+#   - dnspython (Windows + WMI optional helper handled by graceful fallback in
+#     src/network/dns_resolver.py — but we still ship its modules)
+#
+# To bump version: change `APP_VERSION` below AND in
+# python/src/config/settings.py + electron/package.json + electron/src/data/changelog.ts.
 
 block_cipher = None
+APP_VERSION = '1.2.2'
 
-# Frontend assets path (relative to python/ directory)
 frontend_dist = '../electron/dist'
 
 added_files = [
     ('assets/*.*', 'assets'),
     ('data', 'data'),
-    (frontend_dist, 'gui'), # Bundle frontend build into 'gui' folder
-    ('src/system/scripts/*.ps1', 'src/system/scripts'), # Bundle PowerShell scripts
+    (frontend_dist, 'gui'),
+    ('src/system/scripts/*.ps1', 'src/system/scripts'),
 ]
 
-from PyInstaller.utils.hooks import collect_submodules, collect_all
+from PyInstaller.utils.hooks import collect_submodules, collect_all, collect_data_files
 import sys
 import os
 
-# Ensure we can find 'src'
 sys.path.append(os.path.abspath('.'))
 
-# Collect everything from src
+# --- Collect transitively from packages with non-trivial data files ---
 src_datas, src_binaries, src_hiddenimports = collect_all('src')
 
-hidden_imports = collect_submodules('src') + src_hiddenimports
+# pywebview ships native .NET DLLs and edge binaries on Windows — collect_all is
+# the only reliable way to get them all.
+webview_datas, webview_binaries, webview_hiddenimports = collect_all('webview')
+
+# mac-vendor-lookup ships the OUI vendors text file as package data; without
+# this the offline vendor lookup degrades to the embedded fallback only.
+try:
+    mvl_datas = collect_data_files('mac_vendor_lookup', include_py_files=False)
+except Exception:
+    mvl_datas = []
+
+# dnspython has many submodules and Windows-only helpers (dns.win32util pulls
+# in `wmi` which can fail at import — our resolver swallows that — but we
+# still include the package so resolve_ip / resolve_hostname have what they
+# need at runtime).
+dns_hiddenimports = collect_submodules('dns')
+
+# pypsrp + cryptography + cffi: large native deps for WinRM. collect_submodules
+# catches lazily-loaded modules that the static analyzer misses.
+pypsrp_hiddenimports = collect_submodules('pypsrp')
+crypto_hiddenimports = collect_submodules('cryptography')
+
+# setuptools >= 80 unbundled jaraco.* / more_itertools / importlib_* —
+# pkg_resources now imports them as real top-level packages at runtime via
+# the pyi_rth_pkgres hook, and PyInstaller's static analyzer misses them.
+# Use collect_all (datas + binaries + hidden imports) so each package is
+# fully bundled, not just statically referenced.
+pkg_resources_extras_datas = []
+pkg_resources_extras_binaries = []
+pkg_resources_extras_hiddenimports = []
+for _pkg in ('jaraco', 'jaraco.text', 'jaraco.functools', 'jaraco.context',
+             'jaraco.collections', 'more_itertools', 'importlib_resources',
+             'importlib_metadata', 'zipp', 'platformdirs',
+             'pkg_resources'):
+    try:
+        _d, _b, _h = collect_all(_pkg)
+        pkg_resources_extras_datas += _d
+        pkg_resources_extras_binaries += _b
+        pkg_resources_extras_hiddenimports += _h
+    except Exception:
+        pass
+
+hidden_imports = list(set(
+    collect_submodules('src')
+    + src_hiddenimports
+    + webview_hiddenimports
+    + dns_hiddenimports
+    + pypsrp_hiddenimports
+    + crypto_hiddenimports
+    + pkg_resources_extras_hiddenimports
+))
 
 a = Analysis(
     ['main_webview.py'],
     pathex=['.', 'src'],
-    binaries=src_binaries,
-    datas=added_files + src_datas,
+    binaries=src_binaries + webview_binaries + pkg_resources_extras_binaries,
+    datas=added_files + src_datas + webview_datas + mvl_datas + pkg_resources_extras_datas,
     hiddenimports=[
+        # FastAPI / uvicorn stack
         'uvicorn',
+        'uvicorn.logging',
+        'uvicorn.loops',
+        'uvicorn.loops.auto',
+        'uvicorn.protocols',
+        'uvicorn.protocols.http',
+        'uvicorn.protocols.http.auto',
+        'uvicorn.protocols.websockets',
+        'uvicorn.protocols.websockets.auto',
+        'uvicorn.lifespan',
+        'uvicorn.lifespan.on',
         'fastapi',
+        'fastapi.responses',
+        'starlette',
+        'starlette.responses',
+        'pydantic',
+        # GUI
         'webview',
         'clr_loader',
         'pythonnet',
-        'PIL._tkinter_finder',
-        'tkinter',
-        'tkinter.ttk',
-        'customtkinter',
+        # Multi-VLAN / multi-domain networking deps (1.2.2)
+        'dns',
+        'dns.resolver',
+        'dns.reversename',
+        'dns.exception',
+        'mac_vendor_lookup',
+        'icmplib',
+        'psutil',
+        # WinRM / remote
         'pypsrp',
         'pypsrp.host',
         'pypsrp.powershell',
+        'pypsrp.wsman',
+        'pypsrp.exceptions',
         'winrm',
         'cryptography',
+        'cryptography.hazmat',
+        'cryptography.hazmat.bindings',
         'spnego',
         'requests',
         'requests_ntlm',
+        # Networking utilities
+        'wakeonlan',
+        'socket',
+        'socketserver',
+        'http.server',
+        'webbrowser',
+        # pkg_resources runtime dependencies (setuptools >= 80 unbundled these)
+        'jaraco.text',
+        'jaraco.functools',
+        'jaraco.context',
+        'jaraco.collections',
+        'more_itertools',
+        'importlib_resources',
+        'importlib_metadata',
+        'zipp',
+        'platformdirs',
+        # stdlib that PyInstaller sometimes misses when imported lazily
         'concurrent.futures',
         'queue',
         'threading',
@@ -57,21 +162,44 @@ a = Analysis(
         'secrets',
         'logging',
         'logging.handlers',
+        'ipaddress',
+        'subprocess',
+        # Internal modules — explicit so static analysis doesn't drop them
         'src.system.core.winrm_handler',
         'src.system.core.remote_commands',
         'src.system.core.local_commands',
         'src.system.core.local_handler',
+        'src.network.interfaces',
+        'src.network.dns_resolver',
+        'src.network.ping',
+        'src.network.traceroute',
+        'src.network.scanner',
+        'src.network.monitor',
+        'src.network.tools',
+        'src.network.mac_utils',
+        'src.network.vendor_utils',
+        'api.routes.network',
+        'api.routes.security',
+        'api.routes.settings',
+        'api.routes.system',
     ] + hidden_imports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
+        # Heavy scientific / data libs — not used, slim the bundle
         'matplotlib',
         'numpy',
         'pandas',
         'scipy',
+        # Test / build tooling
         'pytest',
         'setuptools',
+        # Legacy GUI stack — replaced by webview, no need to bundle
+        'tkinter',
+        'tkinter.ttk',
+        'customtkinter',
+        'PIL._tkinter_finder',
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
@@ -88,14 +216,14 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='Ferramentas de Rede v1.2.0',
+    name='Ferramentas.de.Rede.v' + APP_VERSION,
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=False,
+    upx=False,  # UPX corrupts Tcl/Tk DLLs ("ordinal 380") — keep disabled.
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=False, # GUI mode (no console window)
+    console=False,  # GUI mode (no console window)
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
