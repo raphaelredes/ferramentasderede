@@ -6,26 +6,33 @@ import logging
 
 import socket
 
-def check_host_status(ip_address, cache=None, cache_timeout=30, timeout=None):
-    """Verifica se um host está online com cache para melhor performance."""
+def check_host_status(ip_address, cache=None, cache_timeout=30, timeout=None, source_ip=None):
+    """Verifica se um host está online com cache para melhor performance.
+
+    `source_ip` força a NIC de saída — necessário em ambientes multi-VLAN.
+    """
     try:
-        # Verificar cache primeiro
+        # Verificar cache primeiro. A chave inclui source_ip pois um mesmo IP
+        # pode estar online por uma NIC e offline por outra.
         current_time = time.time()
-        if cache and ip_address in cache:
-            cached_time, cached_status = cache[ip_address]
+        cache_key = (ip_address, source_ip) if source_ip else ip_address
+        if cache and cache_key in cache:
+            cached_time, cached_status = cache[cache_key]
             if current_time - cached_time < cache_timeout:
                 return cached_status
-        
+
         param_count = '-n' if os.name == 'nt' else '-c'
         param_timeout = '-w' if os.name == 'nt' else '-W'
-        
-        # Timeout otimizado: Se timeout for fornecido (em segundos), converter para ms no Windows ou usar s no Linux
+
         if timeout:
             timeout_val = str(int(timeout * 1000)) if os.name == 'nt' else str(timeout)
         else:
             timeout_val = str(300) if os.name == 'nt' else str(0.3)
-            
-        command = ["ping", "-4", param_count, "1", param_timeout, timeout_val, ip_address]
+
+        command = ["ping", "-4", param_count, "1", param_timeout, timeout_val]
+        if source_ip:
+            command += (["-S", source_ip] if os.name == 'nt' else ["-I", source_ip])
+        command.append(ip_address)
         # Adicionar timeout ao subprocess.run para evitar travamentos
         try:
             result = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0, timeout=float(timeout_val) + 1)
@@ -48,8 +55,8 @@ def check_host_status(ip_address, cache=None, cache_timeout=30, timeout=None):
 
         # Armazenar no cache
         if cache is not None:
-            cache[ip_address] = (current_time, status)
-        
+            cache[cache_key] = (current_time, status)
+
         return status
     except Exception:
         return False
@@ -365,14 +372,24 @@ def check_arp_table(ip_address):
     except:
         return False
 
-def continuous_ping(target, packet_size=32):
-    """Executa um ping contínuo e gera a saída linha por linha."""
-    # ALTERAÇÃO: Forçar IPv4 para evitar uso automático de IPv6
+def continuous_ping(target, packet_size=32, source_ip=None):
+    """Executa um ping contínuo e gera a saída linha por linha.
+
+    `source_ip` força a interface de saída — essencial em máquinas com NICs em
+    múltiplas VLANs/domínios onde a rota default pode mandar o pacote pela
+    interface errada.
+    """
     if os.name == 'nt':
-        command = ["ping", "-4", "-t", "-l", str(packet_size), target]  # -4 força IPv4
+        command = ["ping", "-4", "-t", "-l", str(packet_size)]
+        if source_ip:
+            command += ["-S", source_ip]
+        command.append(target)
     else:
-        command = ["ping", "-4", target, "-s", str(packet_size)]  # -4 força IPv4
-    
+        command = ["ping", "-4"]
+        if source_ip:
+            command += ["-I", source_ip]
+        command += [target, "-s", str(packet_size)]
+
     encoding = 'cp850' if os.name == 'nt' else 'utf-8'
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding=encoding, errors='replace', creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
     

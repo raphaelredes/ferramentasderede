@@ -5,19 +5,26 @@ import time
 import select
 import re
 
-def traceroute(target_ip, current_process_holder=None):
-    """Executa traceroute simples e robusto com timeout adequado."""
-    logging.info(f"TRACEROUTE: Iniciando para {target_ip}")
-    
+def traceroute(target_ip, current_process_holder=None, source_ip=None):
+    """Executa traceroute simples e robusto com timeout adequado.
+
+    `source_ip` força a interface de saída (Windows: -S, Linux: -s).
+    """
+    logging.info(f"TRACEROUTE: Iniciando para {target_ip} (src={source_ip or 'auto'})")
+
     process = None
     try:
-        # Comando traceroute para Windows e Linux
         if os.name == 'nt':
-            # No Windows: tracert com máximo de saltos limitado para hosts locais
-            command = ["tracert", "-h", "15", "-w", "3000", target_ip]
+            command = ["tracert", "-h", "15", "-w", "3000"]
+            if source_ip:
+                command += ["-S", source_ip]
+            command.append(target_ip)
             encoding = 'cp850'
         else:
-            command = ["traceroute", "-m", "15", "-w", "3", target_ip]
+            command = ["traceroute", "-m", "15", "-w", "3"]
+            if source_ip:
+                command += ["-s", source_ip]
+            command.append(target_ip)
             encoding = 'utf-8'
         
         # Executar comando com timeout

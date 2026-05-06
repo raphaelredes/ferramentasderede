@@ -43,11 +43,24 @@ class GeneralSettings(BaseModel):
     appearance_mode: str = "System"
     ask_initial_info: bool = True
 
+class NetworkConfig(BaseModel):
+    """A configured network (subnet/VLAN). Used for multi-domain environments
+    where the analyst's machine sits on more than one network and discovery /
+    ping / DNS need to be steered through a specific NIC and DNS server."""
+    id: str
+    name: str
+    cidr: str
+    source_ip: Optional[str] = None     # NIC address to use as ping/traceroute source
+    dns_server: Optional[str] = None    # DNS server to query for hosts in this network
+    domain: Optional[str] = None        # AD domain associated with this network
+    enabled: bool = True
+
 class Settings(BaseModel):
     general: GeneralSettings = GeneralSettings()
     scanner: ScannerSettings = ScannerSettings()
     remote: RemoteSettings = RemoteSettings()
     dashboard: DashboardSettings = DashboardSettings()
+    networks: List[NetworkConfig] = []
 
 # --- Helpers ---
 def load_settings() -> Settings:

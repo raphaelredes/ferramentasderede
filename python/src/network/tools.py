@@ -39,9 +39,15 @@ class NetworkTools:
         # Executor dedicado para resoluções DNS para evitar bloqueio
         self._resolver_executor = concurrent.futures.ThreadPoolExecutor(max_workers=10)
 
-    def check_host_status(self, ip_address, timeout=None):
-        """Verifica se um host está online com cache para melhor performance."""
-        return ping.check_host_status(ip_address, self._status_cache, self._cache_timeout, timeout=timeout)
+    def check_host_status(self, ip_address, timeout=None, source_ip=None):
+        """Verifica se um host está online com cache para melhor performance.
+
+        `source_ip` força a NIC de saída — útil em multi-VLAN.
+        """
+        return ping.check_host_status(
+            ip_address, self._status_cache, self._cache_timeout,
+            timeout=timeout, source_ip=source_ip,
+        )
 
     def check_port(self, ip_address, port, timeout=1):
         """Verifica se uma porta TCP específica está aberta."""
@@ -135,11 +141,12 @@ class NetworkTools:
         except Exception as e:
             return f"Erro ao executar traceroute: {e}"
 
-    def continuous_ping(self, target, task_id, packet_size=32):
-        """Executa um ping contínuo e gera a saída linha por linha."""
-        
-        # Obter o gerador do módulo ping
-        generator = ping.continuous_ping(target, packet_size)
+    def continuous_ping(self, target, task_id, packet_size=32, source_ip=None):
+        """Executa um ping contínuo e gera a saída linha por linha.
+
+        `source_ip` força a NIC de saída — útil em ambientes multi-VLAN.
+        """
+        generator = ping.continuous_ping(target, packet_size, source_ip=source_ip)
         
         try:
             # O primeiro yield é (linha_vazia, processo)
@@ -219,22 +226,25 @@ class NetworkTools:
         """Escaneia todas as portas TCP (1-65535) usando threads paralelas para máxima velocidade."""
         return scanner.scan_all_ports(target_ip)
 
-    def traceroute(self, target_ip, task_id):
-        """Executa traceroute simples e robusto com timeout adequado."""
+    def traceroute(self, target_ip, task_id, source_ip=None):
+        """Executa traceroute simples e robusto com timeout adequado.
+
+        `source_ip` força a NIC de saída — útil em ambientes multi-VLAN.
+        """
         class ProcessHolder:
             def __init__(self, tools_instance, task_id):
                 self.tools = tools_instance
                 self.task_id = task_id
-            
+
             def __setitem__(self, key, value):
                 if key == '_current_process':
                     with self.tools._tasks_lock:
                         self.tools._active_tasks[self.task_id] = value
 
         holder = ProcessHolder(self, task_id)
-        
+
         try:
-            generator = traceroute_module.traceroute(target_ip, holder)
+            generator = traceroute_module.traceroute(target_ip, holder, source_ip=source_ip)
             for item in generator:
                 yield item
         finally:
@@ -476,9 +486,10 @@ class NetworkTools:
         
         return found_host
 
-    def discover_hosts(self, network, task_id, timeout=200, max_workers=50):
+    def discover_hosts(self, network, task_id, timeout=200, max_workers=50, source_ip=None):
         """
         Realiza a descoberta de hosts na rede especificada.
+        `source_ip` força a NIC de saída para todos os pings da varredura.
         Yields status updates and found hosts.
         """
         import ipaddress
@@ -514,8 +525,8 @@ class NetworkTools:
             # Usar o timeout configurado (convertendo ms para s)
             timeout_sec = timeout / 1000.0
             
-            # 1. Check Status (Ping)
-            is_online = self.check_host_status(ip_str, timeout=timeout_sec)
+            # 1. Check Status (Ping) — pelo source_ip da rede, se informado
+            is_online = self.check_host_status(ip_str, timeout=timeout_sec, source_ip=source_ip)
             
             if not is_online:
                 return None # Skip offline hosts to save processing

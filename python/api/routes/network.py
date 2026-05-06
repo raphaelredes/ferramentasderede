@@ -61,6 +61,9 @@ class Host(BaseModel):
     teamviewer_id: Optional[str | int | float] = None
     ports: Optional[List[int]] = []
     current_user: Optional[str] = None
+    # Inferred from settings.networks at read time — not persisted.
+    network_id: Optional[str] = None
+    network_name: Optional[str] = None
 
     @classmethod
     def model_validate(cls, obj, *args, **kwargs):
@@ -159,12 +162,14 @@ def update_host(address: str, update: HostUpdate):
 class ToolRequest(BaseModel):
     target: str
     task_id: Optional[str] = None
+    source_ip: Optional[str] = None  # NIC source for ping/traceroute (multi-VLAN)
 
 class DiscoveryRequest(BaseModel):
     cidr: str
     task_id: Optional[str] = None
     timeout: Optional[int] = 200
     max_workers: Optional[int] = 50
+    source_ip: Optional[str] = None  # NIC source for the discovery scan
 
 class StopRequest(BaseModel):
     task_id: str
@@ -178,28 +183,81 @@ from src.core.host_manager import HostManager
 # Singleton instance of HostManager
 host_manager_instance = HostManager()
 
+
+def _load_configured_networks():
+    """Load `networks` from settings, parsed and ready for IP→network matching.
+
+    Returns a list of (id, name, ip_network) tuples. Bad CIDRs are skipped.
+    Loaded fresh on each call so changes in Settings take effect immediately
+    without restarting the API.
+    """
+    import ipaddress
+    try:
+        from api.routes.settings import load_settings
+        settings = load_settings()
+    except Exception:
+        return []
+
+    parsed = []
+    for net in (settings.networks or []):
+        if not net.enabled:
+            continue
+        try:
+            parsed.append((net.id, net.name, ipaddress.ip_network(net.cidr, strict=False)))
+        except (ValueError, TypeError):
+            continue
+    return parsed
+
+
+def _match_network(ip_str: str, configured):
+    """Return (network_id, network_name) for an IP, or (None, None)."""
+    if not ip_str or not configured:
+        return None, None
+    import ipaddress
+    try:
+        ip_obj = ipaddress.ip_address(ip_str)
+    except (ValueError, TypeError):
+        return None, None
+    for net_id, net_name, net in configured:
+        try:
+            if ip_obj in net:
+                return net_id, net_name
+        except (TypeError, ValueError):
+            continue
+    return None, None
+
+
 def get_hosts_list():
-    """Helper to get hosts as Host objects using HostManager."""
+    """Helper to get hosts as Host objects using HostManager.
+
+    Each host gets `network_id` / `network_name` inferred from its IP against
+    the user-configured networks (Settings → Redes / VLANs). This is computed
+    here rather than persisted so it stays in sync with Settings changes.
+    """
     raw_hosts = host_manager_instance.get_all_hosts()
+    configured = _load_configured_networks()
     hosts = []
     for item in raw_hosts:
-        # Map HostManager dict to Host model
+        ip = item.get("ip")
+        net_id, net_name = _match_network(ip, configured)
         hosts.append(Host(
-            name=item.get("name", "Unknown"), 
-            address=item.get("ip"), # HostManager uses 'ip' for address
-            type=item.get("type", "generic"), 
+            name=item.get("name", "Unknown"),
+            address=ip,
+            type=item.get("type", "generic"),
             mac=item.get("mac"),
             vendor=item.get("vendor"),
-            hostname=item.get("name"), # HostManager maps hostname to name
+            hostname=item.get("name"),
             domain=item.get("domain"),
-            ip=item.get("ip"),
+            ip=ip,
             last_status=item.get("last_status"),
             last_checked=item.get("last_checked"),
             group=item.get("group"),
             monitoring=item.get("monitoring", True),
             teamviewer_id=item.get("teamviewer_id"),
             ports=item.get("ports", []),
-            current_user=item.get("current_user")
+            current_user=item.get("current_user"),
+            network_id=net_id,
+            network_name=net_name,
         ))
     return hosts
 
@@ -259,66 +317,18 @@ def add_host(host: Host):
     except HTTPException as he: raise he
     except Exception as e: raise HTTPException(status_code=500, detail=f"Erro ao salvar host: {str(e)}")
 
-@router.post("/hosts/{address}/refresh")
-def refresh_host(address: str):
-    try:
-        current_hosts = get_hosts_list()
-        target_host = next((h for h in current_hosts if h.address == address), None)
-        
-        if not target_host:
-            raise HTTPException(status_code=404, detail="Host não encontrado.")
-            
-        fqdn = net_tools.resolve_ip_and_hostname(address)
-        ip = address
-        
-        if fqdn and fqdn not in ["N/A", "Inválido", "Erro"]:
-            parts = fqdn.split('.', 1)
-            target_host.hostname = parts[0]
-            if len(parts) > 1: target_host.domain = parts[1]
-        
-        if ip and ip != "N/A":
-            target_host.ip = ip
-                
-        save_hosts_list(current_hosts)
-        return {"status": "success", "message": "Informações atualizadas.", "host": target_host}
-    except HTTPException as he: raise he
-    except Exception as e: raise HTTPException(status_code=500, detail=f"Erro ao atualizar host: {str(e)}")
-
 @router.delete("/hosts/{address}")
 def delete_host(address: str):
     try:
         # Use HostManager directly
         host_manager_instance.remove_hosts([{'ip': address}])
-        
+
         # Update monitor
         current_hosts = get_hosts_list()
         host_monitor.update_hosts([h.dict() for h in current_hosts])
-        
+
         return {"status": "success", "message": "Host removido com sucesso."}
     except Exception as e: raise HTTPException(status_code=500, detail=f"Erro ao remover host: {str(e)}")
-
-@router.patch("/hosts/{address}")
-def update_host(address: str, update: HostUpdate):
-    try:
-        current_hosts = get_hosts_list()
-        target_host = next((h for h in current_hosts if h.address == address), None)
-        
-        if not target_host:
-            raise HTTPException(status_code=404, detail="Host não encontrado.")
-            
-        if update.name is not None: target_host.name = update.name
-        if update.group is not None: target_host.group = update.group
-        if update.mac is not None: target_host.mac = update.mac
-        if update.monitoring is not None: target_host.monitoring = update.monitoring
-        if update.teamviewer_id is not None: target_host.teamviewer_id = update.teamviewer_id
-        if update.ports is not None: target_host.ports = update.ports
-        if update.reset_stats: host_monitor.reset_host_stats(target_host.address)
-            
-        save_hosts_list(current_hosts)
-        host_monitor.update_hosts([h.dict() for h in current_hosts])
-        return {"status": "success", "message": "Host atualizado com sucesso.", "host": target_host}
-    except HTTPException as he: raise he
-    except Exception as e: raise HTTPException(status_code=500, detail=f"Erro ao atualizar host: {str(e)}")
 
 # --- Network Tools ---
 @router.get("/network/monitor")
@@ -342,13 +352,46 @@ async def websocket_monitor(websocket: WebSocket):
 def get_local_network():
     return net_tools.get_local_network_info()
 
+@router.get("/network/interfaces")
+def get_network_interfaces():
+    """List local IPv4 interfaces (NICs). Used to auto-populate the
+    `networks` list in Settings when the analyst is on a multi-VLAN /
+    multi-domain machine."""
+    from src.network.interfaces import list_local_interfaces
+    return list_local_interfaces()
+
+
+class DnsResolveRequest(BaseModel):
+    name: Optional[str] = None       # hostname or FQDN to forward-resolve
+    ip: Optional[str] = None         # IP for reverse PTR
+    dns_server: Optional[str] = None
+    domain: Optional[str] = None
+
+
+@router.post("/network/dns/resolve")
+def resolve_via_specific_dns(req: DnsResolveRequest):
+    """Forward or reverse DNS lookup against a chosen DNS server.
+
+    Useful when the same hostname exists in multiple AD domains and the
+    system resolver picks the wrong one.
+    """
+    from src.network import dns_resolver
+    if req.name:
+        ip = dns_resolver.resolve_hostname(req.name, req.dns_server, req.domain)
+        return {"name": req.name, "ip": ip, "dns_server": req.dns_server, "domain": req.domain}
+    if req.ip:
+        fqdn = dns_resolver.resolve_ip(req.ip, req.dns_server)
+        return {"ip": req.ip, "fqdn": fqdn, "dns_server": req.dns_server}
+    raise HTTPException(status_code=400, detail="Informe `name` ou `ip`.")
+
 @router.post("/network/discovery")
 def discover_network(request: DiscoveryRequest):
     cidr = request.cidr
     task_id = request.task_id or f"scanner_{time.time()}"
     timeout = request.timeout or 200
     max_workers = request.max_workers or 50
-    
+    source_ip = request.source_ip
+
     def event_generator():
         try:
             import ipaddress
@@ -358,8 +401,11 @@ def discover_network(request: DiscoveryRequest):
                 yield json.dumps({"error": "CIDR inválido."}).encode('utf-8') + b"\n"
                 return
 
-            # Note: scan_mode removed from signature in tools.py
-            iterator = net_tools.discover_hosts(network, task_id, timeout=timeout, max_workers=max_workers)
+            iterator = net_tools.discover_hosts(
+                network, task_id,
+                timeout=timeout, max_workers=max_workers,
+                source_ip=source_ip,
+            )
             for host in iterator:
                 yield json.dumps(host).encode('utf-8') + b"\n"
                 time.sleep(0.01)
@@ -372,10 +418,11 @@ def discover_network(request: DiscoveryRequest):
 def run_ping(request: ToolRequest):
     target = request.target
     task_id = request.task_id or f"ping_{time.time()}"
-    
+    source_ip = request.source_ip
+
     def event_generator():
         try:
-            iterator = net_tools.continuous_ping(target, task_id)
+            iterator = net_tools.continuous_ping(target, task_id, source_ip=source_ip)
             for item in iterator:
                 line = item[0] if isinstance(item, tuple) else str(item)
                 if line:
@@ -389,10 +436,11 @@ def run_ping(request: ToolRequest):
 def run_traceroute(request: ToolRequest):
     target = request.target
     task_id = request.task_id or f"traceroute_{time.time()}"
-    
+    source_ip = request.source_ip
+
     def event_generator():
         try:
-            iterator = net_tools.traceroute(target, task_id)
+            iterator = net_tools.traceroute(target, task_id, source_ip=source_ip)
             for item in iterator:
                 line = item[0] if isinstance(item, tuple) else str(item)
                 if line:
@@ -418,47 +466,88 @@ class ExternalTerminalRequest(BaseModel):
     username: str
     password: str
 
+
+# Static PowerShell launcher script.
+# IP / username / password come in via env vars so they are never interpolated
+# into the script text — eliminates shell-injection and keeps the password out
+# of the process command line and PowerShell history.
+_EXTERNAL_TERMINAL_SCRIPT = r"""
+$ErrorActionPreference = 'Stop'
+$ip   = $env:NT_REMOTE_IP
+$user = $env:NT_REMOTE_USER
+$pass = $env:NT_REMOTE_PASS
+# Wipe env vars from this child process so they do not leak via Get-ChildItem env:
+Remove-Item Env:\NT_REMOTE_IP, Env:\NT_REMOTE_USER, Env:\NT_REMOTE_PASS -ErrorAction SilentlyContinue
+
+if (-not $ip -or -not $user -or -not $pass) {
+    Write-Error 'Credenciais ausentes.'
+    exit 1
+}
+
+$sec  = ConvertTo-SecureString $pass -AsPlainText -Force
+$cred = New-Object System.Management.Automation.PSCredential($user, $sec)
+Remove-Variable pass
+
+try {
+    $trusted = (Get-Item WSMan:\localhost\Client\TrustedHosts).Value
+    if ($trusted -ne '*' -and $trusted -notlike "*$ip*") {
+        Write-Host "Configurando TrustedHosts para $ip..." -ForegroundColor Yellow
+        try {
+            $newTrusted = if ($trusted) { "$trusted, $ip" } else { $ip }
+            Set-Item WSMan:\localhost\Client\TrustedHosts -Value $newTrusted -Force -ErrorAction Stop
+            Write-Host 'IP adicionado aos TrustedHosts com sucesso.' -ForegroundColor Green
+        } catch {
+            Write-Warning 'Nao foi possivel adicionar aos TrustedHosts (Requer Admin). A conexao pode falhar.'
+            Write-Warning "Erro: $_"
+        }
+    }
+} catch {
+    Write-Warning "Erro ao consultar TrustedHosts: $_"
+}
+
+Write-Host "Conectando a $ip..." -ForegroundColor Cyan
+Enter-PSSession -ComputerName $ip -Credential $cred
+""".strip()
+
+
+def _is_safe_remote_target(value: str) -> bool:
+    """Conservative validator for an IP or hostname before launching PowerShell."""
+    import re
+    if not value or len(value) > 253:
+        return False
+    # IPv4
+    if re.fullmatch(r"(?:\d{1,3}\.){3}\d{1,3}", value):
+        try:
+            return all(0 <= int(o) <= 255 for o in value.split("."))
+        except ValueError:
+            return False
+    # Hostname: letters, digits, hyphen, dot. No spaces, no quotes, no PS metachars.
+    return bool(re.fullmatch(r"[A-Za-z0-9._-]+", value))
+
+
 @router.post("/tools/terminal/external")
 def open_external_terminal(request: ExternalTerminalRequest):
+    if not _is_safe_remote_target(request.ip):
+        raise HTTPException(status_code=400, detail="Endereço de destino inválido.")
+    if not request.username or "\x00" in request.username or "\x00" in request.password:
+        raise HTTPException(status_code=400, detail="Credenciais inválidas.")
+
     try:
-        # Escape characters for PowerShell
-        safe_pass = request.password.replace("'", "''")
-        safe_user = request.username.replace("'", "''")
-        
-        # Construct the PowerShell command
-        # We use Start-Process to open a new window
-        # We also attempt to add the host to TrustedHosts if not present
-        ps_command = (
-            f"$ip = '{request.ip}'; "
-            f"$user = '{safe_user}'; "
-            f"$pass = '{safe_pass}'; "
-            f"$sec = ConvertTo-SecureString $pass -AsPlainText -Force; "
-            f"$cred = New-Object System.Management.Automation.PSCredential($user, $sec); "
-            f"$trusted = (Get-Item WSMan:\\localhost\\Client\\TrustedHosts).Value; "
-            f"if ($trusted -ne '*' -and $trusted -notlike \"*$ip*\") {{ "
-            f"    Write-Host 'Configurando TrustedHosts para $ip...' -ForegroundColor Yellow; "
-            f"    try {{ "
-            f"        $newTrusted = if ($trusted) {{ \"$trusted, $ip\" }} else {{ $ip }}; "
-            f"        Set-Item WSMan:\\localhost\\Client\\TrustedHosts -Value $newTrusted -Force -ErrorAction Stop; "
-            f"        Write-Host 'IP adicionado aos TrustedHosts com sucesso.' -ForegroundColor Green; "
-            f"    }} catch {{ "
-            f"        Write-Warning 'Não foi possível adicionar aos TrustedHosts (Requer Admin). A conexão pode falhar.'; "
-            f"        Write-Warning 'Erro: $_'; "
-            f"    }} "
-            f"}} "
-            f"Write-Host 'Conectando a $ip...' -ForegroundColor Cyan; "
-            f"Enter-PSSession -ComputerName $ip -Credential $cred"
-        )
-        
-        # Encode command for -EncodedCommand to avoid complex escaping issues in Popen
-        encoded_cmd = base64.b64encode(ps_command.encode('utf-16le')).decode('utf-8')
-        
-        # Launch PowerShell in a new window using CREATE_NEW_CONSOLE
+        encoded_cmd = base64.b64encode(_EXTERNAL_TERMINAL_SCRIPT.encode("utf-16le")).decode("utf-8")
+
+        # Pass IP/user/pass via env vars instead of command line so they don't
+        # appear in `Get-Process` / wmic / Process Explorer.
+        env = os.environ.copy()
+        env["NT_REMOTE_IP"] = request.ip
+        env["NT_REMOTE_USER"] = request.username
+        env["NT_REMOTE_PASS"] = request.password
+
         subprocess.Popen(
-            ["powershell", "-NoExit", "-EncodedCommand", encoded_cmd],
-            creationflags=subprocess.CREATE_NEW_CONSOLE
+            ["powershell", "-NoProfile", "-NoExit", "-EncodedCommand", encoded_cmd],
+            creationflags=subprocess.CREATE_NEW_CONSOLE,
+            env=env,
         )
-        
+
         return {"status": "success", "message": "Terminal externo iniciado."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro ao iniciar terminal: {str(e)}")
