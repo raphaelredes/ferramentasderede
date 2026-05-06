@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from 'react';
+import { API_BASE } from '../../config/api';
 import {
     Search,
     Play,
@@ -19,6 +20,7 @@ import {
 } from 'lucide-react';
 import { Host } from '../../types';
 import { useTools } from '../../contexts/ToolsContext';
+import { useNetworks } from '../../hooks/useNetworks';
 
 interface NetworkScannerProps {
     onAddHost: (host: Host) => void;
@@ -38,6 +40,8 @@ export const NetworkScanner: React.FC<NetworkScannerProps> = ({ onAddHost, exist
         runScanSession
     } = useTools();
 
+    const { networks } = useNetworks();
+
     const hasInitialized = useRef(false);
 
     // Initialize with a default session if empty
@@ -50,13 +54,13 @@ export const NetworkScanner: React.FC<NetworkScannerProps> = ({ onAddHost, exist
                 let defaultCidr = '';
                 try {
                     // Try settings first
-                    const settingsRes = await fetch('http://localhost:8000/settings');
+                    const settingsRes = await fetch(`${API_BASE}/settings`);
                     const settingsData = await settingsRes.json();
                     if (settingsData.scanner?.default_cidr) {
                         defaultCidr = settingsData.scanner.default_cidr;
                     } else {
                         // Fallback to local network
-                        const localRes = await fetch('http://localhost:8000/network/local');
+                        const localRes = await fetch(`${API_BASE}/network/local`);
                         const localData = await localRes.json();
                         if (localData.network) {
                             defaultCidr = localData.network;
@@ -261,6 +265,30 @@ export const NetworkScanner: React.FC<NetworkScannerProps> = ({ onAddHost, exist
                                 onKeyDown={(e) => e.key === 'Enter' && startScan(activeSession.id)}
                             />
                         </div>
+
+                        <select
+                            value={activeSession.sourceIp ?? ''}
+                            onChange={(e) => {
+                                const sel = e.target.value;
+                                const net = networks.find(n => n.source_ip === sel);
+                                updateScanSession(activeSession.id, {
+                                    sourceIp: sel || undefined,
+                                    // Auto-preencher o CIDR se a rede tiver um e o campo estiver vazio ou inalterado
+                                    cidr: net?.cidr && !activeSession.cidr ? net.cidr : activeSession.cidr,
+                                });
+                            }}
+                            disabled={activeSession.isRunning}
+                            title="Sair pela rede (NIC source) — útil em multi-VLAN"
+                            className="bg-zinc-900/50 border border-zinc-800 text-zinc-300 px-3 py-2 rounded-lg text-sm focus:outline-none focus:border-blue-500/50 hover:bg-zinc-800/50 transition-colors disabled:opacity-60 max-w-[220px]"
+                        >
+                            <option value="">Rede automática</option>
+                            {networks.map(net => (
+                                <option key={net.id} value={net.source_ip ?? ''} disabled={!net.source_ip}>
+                                    {net.name || net.cidr}
+                                    {net.source_ip ? ` — ${net.source_ip}` : ' (sem source IP)'}
+                                </option>
+                            ))}
+                        </select>
 
                         {viewMode === 'results' && (
                             <div className="flex items-center gap-2">

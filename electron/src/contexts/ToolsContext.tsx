@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useRef, useCallback, useEffect } from 'react';
 import { useToast } from './ToastContext';
+import { API_BASE } from '../config/api';
 
 interface ScannedHost {
     ip: string;
@@ -26,6 +27,7 @@ interface ScanSession {
     availableRanges?: string[];
     availableCount?: number;
     mode?: 'quick' | 'full';
+    sourceIp?: string;  // NIC source for the discovery scan (multi-VLAN)
 }
 
 interface ToolsContextType {
@@ -48,8 +50,8 @@ interface ToolsContextType {
     updateScanSession: (id: string, updates: Partial<ScanSession>) => void;
     setActiveSessionId: (id: string | null) => void;
 
-    runPing: (target: string) => Promise<void>;
-    runTraceroute: (target: string) => Promise<void>;
+    runPing: (target: string, sourceIp?: string) => Promise<void>;
+    runTraceroute: (target: string, sourceIp?: string) => Promise<void>;
     runScanSession: (sessionId: string) => Promise<void>;
 
     stopTool: (tool: 'ping' | 'traceroute' | 'scanner', sessionId?: string) => void;
@@ -181,7 +183,7 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         }
 
         // Call backend to stop command
-        fetch('http://127.0.0.1:8000/tools/stop', {
+        fetch(`${API_BASE}/tools/stop`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ task_id: key })
@@ -222,7 +224,7 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         if (tool === 'traceroute') setTraceState(prev => ({ ...prev, output: [] }));
     }, []);
 
-    const runPing = useCallback(async (target: string) => {
+    const runPing = useCallback(async (target: string, sourceIp?: string) => {
         if (pingState.isRunning) return;
 
         setPingState(prev => ({ ...prev, isRunning: true, output: [], target, isOffline: false }));
@@ -230,10 +232,10 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         abortControllers.current['ping'] = new AbortController();
 
         try {
-            const response = await fetch('http://127.0.0.1:8000/tools/ping', {
+            const response = await fetch(`${API_BASE}/tools/ping`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ target, task_id: 'ping' }),
+                body: JSON.stringify({ target, task_id: 'ping', source_ip: sourceIp }),
                 signal: abortControllers.current['ping'].signal
             });
 
@@ -341,17 +343,17 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         }
     }, [pingState.isRunning, showToast]);
 
-    const runTraceroute = useCallback(async (target: string) => {
+    const runTraceroute = useCallback(async (target: string, sourceIp?: string) => {
         if (traceState.isRunning) return;
 
         setTraceState(prev => ({ ...prev, isRunning: true, output: [], target }));
         abortControllers.current['traceroute'] = new AbortController();
 
         try {
-            const response = await fetch('http://127.0.0.1:8000/tools/traceroute', {
+            const response = await fetch(`${API_BASE}/tools/traceroute`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ target, task_id: 'traceroute' }),
+                body: JSON.stringify({ target, task_id: 'traceroute', source_ip: sourceIp }),
                 signal: abortControllers.current['traceroute'].signal
             });
 
@@ -411,7 +413,7 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             let timeout = 200;
             let concurrency = 50;
             try {
-                const settingsRes = await fetch('http://localhost:8000/settings');
+                const settingsRes = await fetch(`${API_BASE}/settings`);
                 const settingsData = await settingsRes.json();
                 if (settingsData.scanner) {
                     timeout = settingsData.scanner.ping_timeout || 200;
@@ -419,14 +421,15 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 }
             } catch (e) { console.warn("Settings fetch failed", e); }
 
-            const response = await fetch('http://localhost:8000/network/discovery', {
+            const response = await fetch(`${API_BASE}/network/discovery`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     cidr: session.cidr,
                     task_id: `scanner_${sessionId}`,
                     timeout,
-                    max_workers: concurrency
+                    max_workers: concurrency,
+                    source_ip: session.sourceIp,
                 }),
                 signal: abortController.signal
             });

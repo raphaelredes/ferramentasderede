@@ -66,6 +66,9 @@ export interface Host {
     ports?: number[];
     stats?: HostStatistics;
     current_user?: string;
+    // Inferred by backend from settings.networks (multi-VLAN/multi-domain)
+    network_id?: string;
+    network_name?: string;
 }
 
 export interface HostUpdate extends Partial<Host> {

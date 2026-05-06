@@ -4,6 +4,9 @@ import { clsx } from 'clsx';
 import { NetworkScanner } from '../components/Tools/NetworkScanner';
 import { Host } from '../types';
 import { useTools } from '../contexts/ToolsContext';
+import { useNetworks } from '../hooks/useNetworks';
+import { API_BASE } from '../config/api';
+import type { NetworkConfig } from './Settings';
 
 export function Tools() {
     const [activeTab, setActiveTab] = useState<'ping' | 'traceroute' | 'scanner'>('ping');
@@ -24,6 +27,10 @@ export function Tools() {
 
     const [localPingTarget, setLocalPingTarget] = useState('8.8.8.8');
     const [localTraceTarget, setLocalTraceTarget] = useState('8.8.8.8');
+    const [pingSourceIp, setPingSourceIp] = useState<string>('');     // '' = auto (rota default)
+    const [traceSourceIp, setTraceSourceIp] = useState<string>('');
+
+    const { networks } = useNetworks();
 
     const outputEndRef = useRef<HTMLDivElement>(null);
     const [existingHosts, setExistingHosts] = useState<Host[]>([]);
@@ -58,7 +65,7 @@ export function Tools() {
     }, [pendingAction, setPendingAction, processedActionIds, markActionAsProcessed]);
 
     useEffect(() => {
-        fetch('http://127.0.0.1:8000/hosts')
+        fetch(`${API_BASE}/hosts`)
             .then(res => res.json())
             .then(setExistingHosts)
             .catch(console.error);
@@ -66,7 +73,7 @@ export function Tools() {
 
     const handleAddHost = async (host: Host) => {
         try {
-            const res = await fetch('http://127.0.0.1:8000/hosts', {
+            const res = await fetch(`${API_BASE}/hosts`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(host),
@@ -78,7 +85,7 @@ export function Tools() {
             }
 
             // Refresh existing hosts
-            const hostsRes = await fetch('http://127.0.0.1:8000/hosts');
+            const hostsRes = await fetch(`${API_BASE}/hosts`);
             const hostsData = await hostsRes.json();
             setExistingHosts(hostsData);
 
@@ -93,12 +100,15 @@ export function Tools() {
         state: { isRunning: boolean; output: string[] },
         target: string,
         setTarget: (t: string) => void,
-        run: (t: string) => void,
+        run: (t: string, sourceIp?: string) => void,
         stop: () => void,
         clear: () => void,
         _icon: React.ReactNode,
         colorClass: string,
-        borderColorClass: string
+        borderColorClass: string,
+        sourceIp: string,
+        setSourceIp: (v: string) => void,
+        availableNetworks: NetworkConfig[],
     ) => (
         <div className="flex-1 flex flex-col space-y-4 min-h-0">
             <div className="flex gap-4 items-end bg-zinc-900 p-4 rounded-xl border border-zinc-800">
@@ -112,14 +122,32 @@ export function Tools() {
                         placeholder="8.8.8.8"
                         className={`w-full bg-zinc-950 border border-zinc-700 rounded-lg px-4 py-2 focus:outline-none focus:border-blue-500 transition-colors font-mono placeholder:text-zinc-500 ${target === '8.8.8.8' ? 'text-zinc-500' : 'text-white'}`}
                         onKeyDown={(e) => {
-                            if (e.key === 'Enter' && !state.isRunning) run(target || '8.8.8.8');
+                            if (e.key === 'Enter' && !state.isRunning) run(target || '8.8.8.8', sourceIp || undefined);
                         }}
                     />
                 </div>
 
+                <div className="space-y-2 w-64">
+                    <label className="text-sm font-medium text-zinc-400">Sair pela rede</label>
+                    <select
+                        value={sourceIp}
+                        onChange={(e) => setSourceIp(e.target.value)}
+                        disabled={state.isRunning}
+                        className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors disabled:opacity-60"
+                    >
+                        <option value="">Automático (rota padrão)</option>
+                        {availableNetworks.map(net => (
+                            <option key={net.id} value={net.source_ip ?? ''} disabled={!net.source_ip}>
+                                {net.name || net.cidr}
+                                {net.source_ip ? ` — ${net.source_ip}` : ' (sem source IP)'}
+                            </option>
+                        ))}
+                    </select>
+                </div>
+
                 <div className="flex gap-2">
                     <button
-                        onClick={() => run(target || '8.8.8.8')}
+                        onClick={() => run(target || '8.8.8.8', sourceIp || undefined)}
                         disabled={state.isRunning}
                         className={clsx(
                             "flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors border",
@@ -218,7 +246,10 @@ export function Tools() {
                     () => clearToolOutput('ping'),
                     <Activity size={18} />,
                     'text-blue-400',
-                    'border-blue-900/30 hover:border-blue-500/50'
+                    'border-blue-900/30 hover:border-blue-500/50',
+                    pingSourceIp,
+                    setPingSourceIp,
+                    networks,
                 )}
 
                 {activeTab === 'traceroute' && renderDiagnosticTool(
@@ -231,7 +262,10 @@ export function Tools() {
                     () => clearToolOutput('traceroute'),
                     <NetworkIcon size={18} />,
                     'text-purple-400',
-                    'border-purple-900/30 hover:border-purple-500/50'
+                    'border-purple-900/30 hover:border-purple-500/50',
+                    traceSourceIp,
+                    setTraceSourceIp,
+                    networks,
                 )}
 
                 {activeTab === 'scanner' && (

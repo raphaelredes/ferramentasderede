@@ -266,6 +266,14 @@ export const HostCard = memo(function HostCard({
                             </div>
                             <div className="flex items-center gap-2 group/ip">
                                 <p className="text-xs text-zinc-500 font-mono">{stats.ip || host.ip || (/\d+\.\d+\.\d+\.\d+/.test(host.address) ? host.address : 'Resolvendo...')}</p>
+                                {host.network_name && (
+                                    <span
+                                        className="px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 text-[10px] font-medium border border-blue-500/20 truncate max-w-[120px]"
+                                        title={`Rede: ${host.network_name}`}
+                                    >
+                                        {host.network_name}
+                                    </span>
+                                )}
                                 <button
                                     onClick={(e) => {
                                         e.stopPropagation();

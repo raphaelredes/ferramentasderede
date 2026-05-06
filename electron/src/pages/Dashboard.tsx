@@ -11,8 +11,7 @@ import {
     DragEndEvent,
     DragOverlay,
     CollisionDetection,
-    pointerWithin,
-    rectIntersection
+    pointerWithin
 } from '@dnd-kit/core';
 
 
@@ -42,6 +41,8 @@ import { useToast } from '../contexts/ToastContext';
 import { useTools } from '../contexts/ToolsContext';
 import { HelpButton } from '../components/HelpButton';
 import { HostListSkeleton } from '../components/Dashboard/HostListSkeleton';
+import { API_BASE } from '../config/api';
+import { useNetworks } from '../hooks/useNetworks';
 
 export default function Dashboard() {
     const {
@@ -111,6 +112,9 @@ export default function Dashboard() {
     });
 
     const [activeGroupTab, setActiveGroupTab] = useState('all');
+    const [activeNetworkTab, setActiveNetworkTab] = useState('all'); // 'all' | 'unassigned' | network.id
+
+    const { networks } = useNetworks();
 
     // Handlers
     const onAddHost = async (name: string, address: string, mac: string, ports: number[], group: string) => {
@@ -159,7 +163,7 @@ export default function Dashboard() {
         e.stopPropagation();
         const newStatus = host.monitoring === false;
 
-        fetch(`http://127.0.0.1:8000/hosts/${host.address}`, {
+        fetch(`${API_BASE}/hosts/${host.address}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ monitoring: newStatus })
@@ -241,7 +245,7 @@ export default function Dashboard() {
                 force: true
             };
 
-            const res = await fetch('http://127.0.0.1:8000/system/power', {
+            const res = await fetch(`${API_BASE}/system/power`, {
                 method: 'POST',
                 headers: headers,
                 body: JSON.stringify(body)
@@ -360,7 +364,12 @@ export default function Dashboard() {
                 activeGroupTab === 'ungrouped' ? !host.group :
                     host.group === activeGroupTab;
 
-        return matchesSearch && matchesStatus && matchesGroup;
+        const matchesNetwork =
+            activeNetworkTab === 'all' ? true :
+                activeNetworkTab === 'unassigned' ? !host.network_id :
+                    host.network_id === activeNetworkTab;
+
+        return matchesSearch && matchesStatus && matchesGroup && matchesNetwork;
     }).sort((a, b) => {
         if (sortBy === 'manual') {
             const indexA = hostOrder.indexOf(a.address);
@@ -464,6 +473,37 @@ export default function Dashboard() {
                     <HelpButton title="Grupos e Filtros" description="Use as abas para filtrar hosts por grupo. 'Sem Grupo' mostra hosts que ainda não foram categorizados." />
                 </div>
             </div>
+
+            {networks.length > 0 && (
+                <div className="flex gap-2 border-b border-zinc-800 mb-4 overflow-x-auto custom-scrollbar pb-2">
+                    <span className="px-2 py-2 text-xs font-medium text-zinc-500 whitespace-nowrap">Rede:</span>
+                    <button
+                        onClick={() => setActiveNetworkTab('all')}
+                        className={`px-3 py-1.5 text-xs font-medium rounded transition-colors whitespace-nowrap ${activeNetworkTab === 'all' ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' : 'text-zinc-400 hover:text-white border border-transparent'}`}
+                    >
+                        Todas
+                    </button>
+                    <button
+                        onClick={() => setActiveNetworkTab('unassigned')}
+                        className={`px-3 py-1.5 text-xs font-medium rounded transition-colors whitespace-nowrap ${activeNetworkTab === 'unassigned' ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' : 'text-zinc-400 hover:text-white border border-transparent'}`}
+                    >
+                        Sem rede
+                    </button>
+                    {networks.map(net => (
+                        <button
+                            key={net.id}
+                            onClick={() => setActiveNetworkTab(net.id)}
+                            title={net.cidr}
+                            className={`px-3 py-1.5 text-xs font-medium rounded transition-colors whitespace-nowrap ${activeNetworkTab === net.id ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' : 'text-zinc-400 hover:text-white border border-transparent'}`}
+                        >
+                            {net.name || net.cidr}
+                        </button>
+                    ))}
+                    <div className="ml-auto flex items-center">
+                        <HelpButton title="Filtro por Rede / VLAN" description="Filtra hosts pela rede cadastrada em Configurações. 'Sem rede' mostra hosts cujo IP não está em nenhuma rede cadastrada." />
+                    </div>
+                </div>
+            )}
 
             <FilterBar
                 searchTerm={searchTerm}

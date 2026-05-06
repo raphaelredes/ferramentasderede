@@ -5,6 +5,8 @@ import { useToast } from '../contexts/ToastContext';
 import { HelpButton } from '../components/HelpButton';
 import { ConfirmationModal } from '../components/ConfirmationModal';
 import { RemoteSettings } from '../components/Settings/RemoteSettings';
+import { NetworksSettings } from '../components/Settings/NetworksSettings';
+import { API_BASE } from '../config/api';
 
 interface ScannerSettings {
     default_cidr: string;
@@ -30,11 +32,22 @@ interface GeneralSettings {
     ask_initial_info: boolean;
 }
 
+export interface NetworkConfig {
+    id: string;
+    name: string;
+    cidr: string;
+    source_ip?: string;
+    dns_server?: string;
+    domain?: string;
+    enabled: boolean;
+}
+
 interface SettingsData {
     general: GeneralSettings;
     scanner: ScannerSettings;
     remote: RemoteSettingsData;
     dashboard: DashboardSettings;
+    networks: NetworkConfig[];
 }
 
 interface Backup {
@@ -48,14 +61,15 @@ const DEFAULT_SETTINGS: SettingsData = {
     general: { appearance_mode: 'System', ask_initial_info: true },
     scanner: { default_cidr: '', ping_timeout: 200, concurrency: 50 },
     remote: { auto_add_trusted_hosts: false, default_credential_id: undefined, auto_login: false },
-    dashboard: { status_update_interval: 60, ping_monitor_interval: 5, notify_offline: false, notify_online: false }
+    dashboard: { status_update_interval: 60, ping_monitor_interval: 5, notify_offline: false, notify_online: false },
+    networks: []
 };
 
 export function Settings() {
     const [settings, setSettings] = useState<SettingsData>(DEFAULT_SETTINGS);
     const [initialSettings, setInitialSettings] = useState<SettingsData | null>(null);
     const [status, setStatus] = useState('');
-    const [activeTab, setActiveTab] = useState<'scanner' | 'remote' | 'dashboard' | 'data'>('scanner');
+    const [activeTab, setActiveTab] = useState<'scanner' | 'remote' | 'dashboard' | 'networks' | 'data'>('scanner');
 
     // Backups State
     const [backups, setBackups] = useState<Backup[]>([]);
@@ -93,7 +107,7 @@ export function Settings() {
         }
 
         try {
-            const res = await fetch('http://127.0.0.1:8000/security/unlock', {
+            const res = await fetch(`${API_BASE}/security/unlock`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -126,7 +140,7 @@ export function Settings() {
     }, [activeTab]);
 
     const fetchSettings = () => {
-        fetch('http://127.0.0.1:8000/settings')
+        fetch(`${API_BASE}/settings`)
             .then(res => res.json())
             .then(data => {
                 const merged = {
@@ -134,6 +148,7 @@ export function Settings() {
                     scanner: { ...DEFAULT_SETTINGS.scanner, ...data.scanner },
                     remote: { ...DEFAULT_SETTINGS.remote, ...data.remote },
                     dashboard: { ...DEFAULT_SETTINGS.dashboard, ...data.dashboard },
+                    networks: Array.isArray(data.networks) ? data.networks : [],
                 };
                 setSettings(merged);
                 setInitialSettings(merged);
@@ -143,7 +158,7 @@ export function Settings() {
 
     // --- Backup Functions ---
     const fetchBackups = () => {
-        fetch('http://127.0.0.1:8000/settings/backups')
+        fetch(`${API_BASE}/settings/backups`)
             .then(res => res.json())
             .then(data => setBackups(data))
             .catch(err => console.error("Failed to fetch backups", err));
@@ -152,7 +167,7 @@ export function Settings() {
     const handleCreateBackup = async () => {
         setBackupStatus('Criando backup...');
         try {
-            const res = await fetch('http://127.0.0.1:8000/settings/backups/create', { method: 'POST' });
+            const res = await fetch(`${API_BASE}/settings/backups/create`, { method: 'POST' });
             if (res.ok) {
                 fetchBackups();
                 setBackupStatus('Backup criado com sucesso!');
@@ -181,7 +196,7 @@ export function Settings() {
             onConfirm: async () => {
                 setBackupStatus('Restaurando...');
                 try {
-                    const res = await fetch(`http://127.0.0.1:8000/settings/backups/${filename}/restore`, { method: 'POST' });
+                    const res = await fetch(`${API_BASE}/settings/backups/${filename}/restore`, { method: 'POST' });
                     if (res.ok) {
                         setConfirmationModal({
                             isOpen: true,
@@ -213,7 +228,7 @@ export function Settings() {
             cancelText: 'Cancelar',
             onConfirm: async () => {
                 try {
-                    const response = await fetch(`http://127.0.0.1:8000/settings/backups/${filename}`, {
+                    const response = await fetch(`${API_BASE}/settings/backups/${filename}`, {
                         method: 'DELETE'
                     });
                     const data = await response.json();
@@ -246,7 +261,7 @@ export function Settings() {
     const handleSave = async () => {
         setStatus('Salvando...');
         try {
-            const res = await fetch('http://127.0.0.1:8000/settings', {
+            const res = await fetch(`${API_BASE}/settings`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(settings)
@@ -266,7 +281,7 @@ export function Settings() {
 
     const handleExport = async () => {
         try {
-            const response = await fetch('http://127.0.0.1:8000/settings/export');
+            const response = await fetch(`${API_BASE}/settings/export`);
             if (!response.ok) throw new Error('Falha no download');
 
             const blob = await response.blob();
@@ -306,7 +321,7 @@ export function Settings() {
         formData.append('file', file);
 
         try {
-            const res = await fetch('http://127.0.0.1:8000/settings/import', {
+            const res = await fetch(`${API_BASE}/settings/import`, {
                 method: 'POST',
                 body: formData
             });
@@ -330,7 +345,7 @@ export function Settings() {
     const confirmFactoryReset = async () => {
         setShowResetModal(false);
         try {
-            const res = await fetch('http://127.0.0.1:8000/settings/reset', { method: 'POST' });
+            const res = await fetch(`${API_BASE}/settings/reset`, { method: 'POST' });
             if (res.ok) {
                 setConfirmationModal({
                     isOpen: true,
@@ -409,6 +424,9 @@ export function Settings() {
                 <button onClick={() => setActiveTab('scanner')} className={clsx("pb-2 px-2 text-sm font-medium transition-colors flex items-center gap-2", activeTab === 'scanner' ? "text-blue-400 border-b-2 border-blue-400" : "text-zinc-400 hover:text-zinc-200")}>
                     <Network size={16} /> Scanner de Rede
                 </button>
+                <button onClick={() => setActiveTab('networks')} className={clsx("pb-2 px-2 text-sm font-medium transition-colors flex items-center gap-2", activeTab === 'networks' ? "text-blue-400 border-b-2 border-blue-400" : "text-zinc-400 hover:text-zinc-200")}>
+                    <Network size={16} /> Redes / VLANs
+                </button>
                 <button onClick={() => setActiveTab('remote')} className={clsx("pb-2 px-2 text-sm font-medium transition-colors flex items-center gap-2", activeTab === 'remote' ? "text-blue-400 border-b-2 border-blue-400" : "text-zinc-400 hover:text-zinc-200")}>
                     <Shield size={16} /> Acesso Remoto
                 </button>
@@ -458,6 +476,13 @@ export function Settings() {
                         </div>
 
                     </div>
+                )}
+
+                {activeTab === 'networks' && (
+                    <NetworksSettings
+                        networks={settings.networks}
+                        onChange={(newNetworks) => setSettings({ ...settings, networks: newNetworks })}
+                    />
                 )}
 
                 {activeTab === 'remote' && (
