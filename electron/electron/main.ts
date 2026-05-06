@@ -172,6 +172,42 @@ app.on('before-quit', () => {
   killPythonBackend()
 })
 
+// Validation helpers — refuse any input the user could weaponize before
+// passing it to spawn / shell.openExternal / shell.showItemInFolder.
+function isSafeHost(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 253) return false
+  // IPv4 (strict octets)
+  if (/^(?:\d{1,3}\.){3}\d{1,3}$/.test(value)) {
+    return value.split('.').every(o => {
+      const n = Number(o)
+      return Number.isInteger(n) && n >= 0 && n <= 255
+    })
+  }
+  // Hostname: alphanumerics, dot, hyphen, underscore. No spaces, no quotes, no shell metas.
+  return /^[A-Za-z0-9._-]+$/.test(value)
+}
+
+function isSafeTeamViewerId(value: unknown): value is string {
+  return typeof value === 'string' && /^[0-9 ]{1,32}$/.test(value)
+}
+
+function isSafeExternalUrl(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length > 2048) return false
+  try {
+    const u = new URL(value)
+    return ['http:', 'https:', 'mailto:'].includes(u.protocol)
+  } catch {
+    return false
+  }
+}
+
+function isSafeShowItemPath(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 1024) return false
+  // Reject NUL and any path-traversal attempt. Caller passes absolute paths only.
+  if (value.includes('\0') || value.includes('..')) return false
+  return true
+}
+
 app.whenReady().then(() => {
   logToFile('app.whenReady fired');
   startPythonBackend()
@@ -180,46 +216,55 @@ app.whenReady().then(() => {
   // IPC Handlers para ferramentas nativas
   const { ipcMain } = require('electron')
 
-  ipcMain.handle('launch-rdp', async (_: any, ip: string) => {
+  ipcMain.handle('launch-rdp', async (_event: unknown, ip: unknown) => {
+    if (!isSafeHost(ip)) throw new Error('Invalid host')
     spawn('mstsc', ['/v:' + ip])
     return true
   })
 
-  ipcMain.handle('launch-msra', async (_: any, ip: string, askCredentials?: boolean) => {
+  ipcMain.handle('launch-msra', async (_event: unknown, ip: unknown, askCredentials?: unknown) => {
+    if (!isSafeHost(ip)) throw new Error('Invalid host')
     if (askCredentials) {
-      // Use PowerShell to prompt for credentials and launch MSRA
-      // Using a more robust command structure
-      const command = `
+      // Static PowerShell script — IP comes via env var so it cannot be
+      // interpolated into the command text.
+      const script = `
+        $ErrorActionPreference = 'Stop'
+        $target = $env:NT_MSRA_TARGET
+        Remove-Item Env:\\NT_MSRA_TARGET -ErrorAction SilentlyContinue
         $cred = Get-Credential
         if ($cred) {
-            try {
-                Start-Process "$env:windir\\system32\\msra.exe" -ArgumentList "/offerRA ${ip}" -Credential $cred -LoadUserProfile -WorkingDirectory "C:\\" -ErrorAction Stop
-            } catch {
-                $err = $_.Exception.Message
-                Set-Content -Path "$env:TEMP\\msra_debug.txt" -Value "Error launching MSRA: $err"
-            }
+          try {
+            Start-Process "$env:windir\\system32\\msra.exe" -ArgumentList "/offerRA $target" -Credential $cred -LoadUserProfile -WorkingDirectory "C:\\" -ErrorAction Stop
+          } catch {
+            Set-Content -Path "$env:TEMP\\msra_debug.txt" -Value "Error launching MSRA: $($_.Exception.Message)"
+          }
         }
       `
-      spawn('powershell', ['-Command', command])
+      spawn('powershell', ['-NoProfile', '-Command', script], {
+        env: { ...process.env, NT_MSRA_TARGET: ip }
+      })
     } else {
       spawn('msra', ['/offerRA', ip])
     }
     return true
   })
 
-  ipcMain.handle('open-external', async (_: any, url: string) => {
+  ipcMain.handle('open-external', async (_event: unknown, url: unknown) => {
+    if (!isSafeExternalUrl(url)) throw new Error('Invalid URL')
     const { shell } = require('electron')
     await shell.openExternal(url)
     return true
   })
 
-  ipcMain.handle('show-item-in-folder', async (_: any, path: string) => {
+  ipcMain.handle('show-item-in-folder', async (_event: unknown, p: unknown) => {
+    if (!isSafeShowItemPath(p)) throw new Error('Invalid path')
     const { shell } = require('electron')
-    shell.showItemInFolder(path)
+    shell.showItemInFolder(p)
     return true
   })
 
-  ipcMain.handle('launch-teamviewer', async (_: any, id?: string) => {
+  ipcMain.handle('launch-teamviewer', async (_event: unknown, id?: unknown) => {
+    if (id !== undefined && !isSafeTeamViewerId(id)) throw new Error('Invalid TeamViewer id')
     const paths = [
       'C:\\Program Files\\TeamViewer\\TeamViewer.exe',
       'C:\\Program Files (x86)\\TeamViewer\\TeamViewer.exe'
@@ -229,7 +274,7 @@ app.whenReady().then(() => {
       try {
         const fs = require('fs')
         if (fs.existsSync(p)) {
-          const args = id ? ['-i', id] : []
+          const args = id ? ['-i', id as string] : []
           spawn(p, args)
           return true
         }
@@ -244,7 +289,13 @@ app.whenReady().then(() => {
     return process.env.USERDNSDOMAIN || process.env.USERDOMAIN || ''
   })
 
-  ipcMain.handle('save-file-as', async (_: any, filename: string, content: string) => {
+  ipcMain.handle('save-file-as', async (_event: unknown, filename: unknown, content: unknown) => {
+    if (typeof filename !== 'string' || typeof content !== 'string') {
+      throw new Error('Invalid arguments')
+    }
+    if (filename.includes('\0') || filename.includes('/') || filename.includes('\\')) {
+      throw new Error('Invalid filename')
+    }
     const { dialog } = require('electron')
     const fs = require('fs')
 

@@ -70,10 +70,19 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Network Tools API", lifespan=lifespan)
 
-# Configurar CORS
+# CORS — locked to local origins by default. The Electron renderer uses
+# file:// (no Origin header) and the Vite dev server uses 127.0.0.1:5173.
+# Override by setting NT_CORS_ORIGINS to a comma-separated list.
+_default_origins = [
+    "http://127.0.0.1:5173",
+    "http://localhost:5173",
+]
+_cors_env = os.environ.get("NT_CORS_ORIGINS", "").strip()
+_allowed_origins = [o.strip() for o in _cors_env.split(",") if o.strip()] if _cors_env else _default_origins
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -106,4 +115,8 @@ class EndpointFilter(logging.Filter):
 
 if __name__ == "__main__":
     # logging.getLogger("uvicorn.access").addFilter(EndpointFilter())
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # Bind locally by default so the API is not exposed to the LAN.
+    # Override with NT_API_HOST=0.0.0.0 (and matching NT_CORS_ORIGINS) when needed.
+    host = os.environ.get("NT_API_HOST", "127.0.0.1")
+    port = int(os.environ.get("NT_API_PORT", "8000"))
+    uvicorn.run(app, host=host, port=port)
