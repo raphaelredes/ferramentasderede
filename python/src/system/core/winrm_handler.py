@@ -2,6 +2,7 @@
 # Lida com a conexão e execução de comandos via WinRM, com sessão e objeto PowerShell persistentes.
 
 import time
+import os
 import json
 import base64
 import logging
@@ -10,6 +11,27 @@ from pypsrp.wsman import WSMan
 from pypsrp.powershell import PowerShell, RunspacePool, PSInvocationState
 from pypsrp.exceptions import WinRMError
 from requests.exceptions import ConnectionError, ConnectTimeout
+
+# Log files used to live in the CWD (wherever the app happened to be launched
+# from), which made them invisible in production builds and littered the user's
+# Desktop in dev. Now they live next to the app's data so a user / support
+# person knows exactly where to look.
+try:
+    from src.config.settings import APP_DATA_DIR as _APP_DATA_DIR
+except Exception:
+    _APP_DATA_DIR = os.path.expanduser("~")
+
+_ERRORS_LOG = os.path.join(_APP_DATA_DIR, "errors.log")
+_TERMINAL_LOG = os.path.join(_APP_DATA_DIR, "terminal_debug.log")
+
+
+def _append_log(path, text):
+    """Best-effort log append. Never raises — if it can't write, it's gone."""
+    try:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(text)
+    except Exception:
+        pass
 
 class WinRMHandler:
     def __init__(self, target_ip, username, password):
@@ -288,12 +310,7 @@ class WinRMHandler:
             else:
                 error_msg = "Erro desconhecido no script PowerShell."
             
-            # Escreve o erro no arquivo Errors.txt
-            try:
-                with open("Errors.txt", "a", encoding="utf-8") as f:
-                    f.write(f"--- ERRO POWERSHELL ---\n{error_msg}\n-----------------------\n")
-            except Exception as log_e:
-                print(f"Falha ao escrever no Errors.txt: {log_e}")
+            _append_log(_ERRORS_LOG, f"--- ERRO POWERSHELL ---\n{error_msg}\n-----------------------\n")
 
             return {"error": f"Erro no Script Remoto: {error_msg}"}
         
@@ -316,54 +333,36 @@ class WinRMHandler:
         
         self.ps.begin_invoke()
 
-        # Debug log
-        try:
-            with open("terminal_debug.log", "a", encoding="utf-8") as f:
-                f.write(f"\n--- CMD: {command} ---\n")
-        except: pass
+        _append_log(_TERMINAL_LOG, f"\n--- CMD: {command} ---\n")
 
         while self.ps.state == PSInvocationState.RUNNING:
             if self.ps.output:
                 for line in self.ps.output:
                     s_line = str(line)
-                    # Debug log
-                    try:
-                        with open("terminal_debug.log", "a", encoding="utf-8") as f:
-                            f.write(f"OUT: {s_line}\n")
-                    except: pass
+                    _append_log(_TERMINAL_LOG, f"OUT: {s_line}\n")
                     yield s_line + "\n"
                 self.ps.output.clear()
-            
+
             if self.ps.streams.error:
                 for error in self.ps.streams.error:
                     s_err = str(error)
-                    try:
-                        with open("terminal_debug.log", "a", encoding="utf-8") as f:
-                            f.write(f"ERR: {s_err}\n")
-                    except: pass
+                    _append_log(_TERMINAL_LOG, f"ERR: {s_err}\n")
                     yield f"ERRO: {s_err}\n"
                 self.ps.streams.error.clear()
-            
+
             time.sleep(0.1)
 
-        # Pega qualquer saída restante
         if self.ps.output:
             for line in self.ps.output:
                 s_line = str(line)
-                try:
-                    with open("terminal_debug.log", "a", encoding="utf-8") as f:
-                        f.write(f"OUT (FINAL): {s_line}\n")
-                except: pass
+                _append_log(_TERMINAL_LOG, f"OUT (FINAL): {s_line}\n")
                 yield s_line + "\n"
             self.ps.output.clear()
 
         if self.ps.had_errors and self.ps.streams.error:
             for error in self.ps.streams.error:
                 s_err = str(error)
-                try:
-                    with open("terminal_debug.log", "a", encoding="utf-8") as f:
-                        f.write(f"ERR (FINAL): {s_err}\n")
-                except: pass
+                _append_log(_TERMINAL_LOG, f"ERR (FINAL): {s_err}\n")
                 yield f"ERRO FINAL: {s_err}\n"
             self.ps.streams.error.clear()
 

@@ -39,16 +39,18 @@ class UserSessionManager:
             result = self.handler.execute_script(script)
             output_lines = result.get("output", [])
             
-            # DEBUG: Write raw output to file
+            # DEBUG: Write raw output to file (in APP_DATA_DIR, not the user's Desktop).
             try:
-                debug_path = Path.home() / "Desktop/ferramentasderede/debug_sessions.txt"
+                from src.config.settings import APP_DATA_DIR
+                import os as _os
+                debug_path = _os.path.join(APP_DATA_DIR, "debug_sessions.txt")
                 with open(debug_path, "w", encoding="utf-8") as f:
                     f.write("=== SCRIPT OUTPUT ===\n")
                     for line in output_lines:
                         f.write(line + "\n")
                     f.write("=== END OUTPUT ===\n")
             except Exception as e:
-                logging.error(f"Failed to write debug file: {e}")
+                logging.debug(f"Failed to write debug_sessions.txt: {e}")
 
             parsed_users = []
             json_start = False
