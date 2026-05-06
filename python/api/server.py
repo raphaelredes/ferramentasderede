@@ -70,12 +70,19 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Network Tools API", lifespan=lifespan)
 
-# CORS — locked to local origins by default. The Electron renderer uses
-# file:// (no Origin header) and the Vite dev server uses 127.0.0.1:5173.
+# CORS — locked to local origins by default. There are two renderers:
+#  * Electron dev: Vite serves the UI on http://127.0.0.1:5173.
+#  * Pywebview portable build (main_webview.py): a small static HTTP
+#    server hosts the UI on a fixed loopback port (default 5174 — see
+#    NT_WEBVIEW_PORT). Both ends agree on that port so we keep CORS
+#    pinned to a closed set of origins.
 # Override by setting NT_CORS_ORIGINS to a comma-separated list.
+_webview_port = os.environ.get("NT_WEBVIEW_PORT", "5174").strip() or "5174"
 _default_origins = [
     "http://127.0.0.1:5173",
     "http://localhost:5173",
+    f"http://127.0.0.1:{_webview_port}",
+    f"http://localhost:{_webview_port}",
 ]
 _cors_env = os.environ.get("NT_CORS_ORIGINS", "").strip()
 _allowed_origins = [o.strip() for o in _cors_env.split(",") if o.strip()] if _cors_env else _default_origins

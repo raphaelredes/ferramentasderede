@@ -89,31 +89,44 @@ def main():
     # Verify if the GUI file exists
     if not os.path.exists(gui_path):
         # Fallback to localhost if static files are not found (e.g. dev server)
-        url = "http://localhost:5173" 
+        url = "http://localhost:5173"
     else:
-        # Serve static files via a simple HTTP server in a thread
-        # This avoids CORS issues with file:// protocol
+        # Serve static files via a simple HTTP server in a thread.
+        # We pin a fixed loopback port (default 5174) so the backend's CORS
+        # whitelist can include it. If the user runs multiple instances and
+        # the port is taken, the SO_REUSEADDR + kill_port_process handshake
+        # below makes the new instance reclaim it.
         import http.server
         import socketserver
-        
+
+        webview_port = int(os.environ.get("NT_WEBVIEW_PORT", "5174") or "5174")
+        kill_port_process(webview_port)
+
         class Handler(http.server.SimpleHTTPRequestHandler):
             def __init__(self, *args, **kwargs):
                 super().__init__(*args, directory=os.path.dirname(gui_path), **kwargs)
-        
+
+            # Quiet the request log
+            def log_message(self, format, *args):
+                pass
+
+        class _ReusableTCPServer(socketserver.TCPServer):
+            allow_reuse_address = True
+
         def start_static_server():
-            with socketserver.TCPServer(("127.0.0.1", 0), Handler) as httpd:
+            with _ReusableTCPServer(("127.0.0.1", webview_port), Handler) as httpd:
                 global static_port
                 static_port = httpd.server_address[1]
                 httpd.serve_forever()
 
         static_thread = threading.Thread(target=start_static_server, daemon=True)
         static_thread.start()
-        
+
         # Wait for port to be assigned
         import time
         while 'static_port' not in globals():
             time.sleep(0.1)
-            
+
         url = f"http://127.0.0.1:{static_port}/index.html"
 
     # API to expose to frontend
