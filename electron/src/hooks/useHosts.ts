@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
 import { Host, HostStatistics } from '../types';
+import { API_BASE } from '../config/api';
 
 export function useHosts() {
     const [hosts, setHosts] = useState<Host[]>([]);
@@ -12,7 +13,7 @@ export function useHosts() {
         setLoading(true);
         setBackendError(null);
         try {
-            const response = await fetch('http://localhost:8000/hosts');
+            const response = await fetch(`${API_BASE}/hosts`);
             if (!response.ok) throw new Error('Falha ao carregar hosts');
             const data = await response.json();
 
@@ -38,7 +39,7 @@ export function useHosts() {
     }, []);
     const updateStatuses = useCallback(async () => {
         try {
-            const response = await fetch('http://localhost:8000/network/monitor');
+            const response = await fetch(`${API_BASE}/network/monitor`);
             if (response.ok) {
                 const data = await response.json() as Record<string, HostStatistics>;
                 const newStatus: Record<string, boolean> = {};

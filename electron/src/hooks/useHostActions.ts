@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Host } from '../types';
+import { API_BASE } from '../config/api';
 
 export function useHostActions() {
     const [isAuthenticating, setIsAuthenticating] = useState(false);
@@ -45,7 +46,7 @@ export function useHostActions() {
                 headers['X-Temp-Auth'] = 'true';
             }
 
-            const response = await fetch(`http://localhost:8000${endpoint}`, {
+            const response = await fetch(`${API_BASE}${endpoint}`, {
                 method: 'POST',
                 headers: headers,
                 body: JSON.stringify(body)
@@ -96,7 +97,7 @@ export function useHostActions() {
     const addHost = async (name: string, address: string, mac: string, ports: number[], group: string) => {
         setIsAddingHost(true);
         try {
-            const response = await fetch('http://localhost:8000/hosts', {
+            const response = await fetch(`${API_BASE}/hosts`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -125,7 +126,7 @@ export function useHostActions() {
     const deleteHost = async (address: string) => {
         setIsDeleting(true);
         try {
-            const response = await fetch(`http://localhost:8000/hosts/${address}`, {
+            const response = await fetch(`${API_BASE}/hosts/${address}`, {
                 method: 'DELETE'
             });
             return response.ok;
@@ -139,7 +140,7 @@ export function useHostActions() {
 
     const updateHost = async (address: string, updates: Partial<Host> & { reset_stats?: boolean }) => {
         try {
-            const response = await fetch(`http://localhost:8000/hosts/${address}`, {
+            const response = await fetch(`${API_BASE}/hosts/${address}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(updates)
@@ -153,7 +154,7 @@ export function useHostActions() {
 
     const fetchSystemInfo = async (host: Host, username: string, password: string) => {
         try {
-            const response = await fetch('http://localhost:8000/system/info', {
+            const response = await fetch(`${API_BASE}/system/info`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({

@@ -1,9 +1,10 @@
 
-import { useState, useEffect } from 'react';
-import { Shield, Trash2 } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Trash2 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useToast } from '../../contexts/ToastContext';
 import { HelpButton } from '../HelpButton';
+import { API_BASE } from '../../config/api';
 
 // Interfaces (duplicated for self-containment, or could be shared)
 interface RemoteSettingsData {
@@ -23,8 +24,8 @@ interface RemoteSettingsProps {
     settings: RemoteSettingsData;
     onUpdateSettings: (newSettings: RemoteSettingsData) => void;
     isChanged: (key: string, val: any) => boolean;
-    setConfirmationModal: (modal: any) => void;
-    setCreateVaultModal: (modal: any) => void;
+    setConfirmationModal: React.Dispatch<React.SetStateAction<any>>;
+    setCreateVaultModal: React.Dispatch<React.SetStateAction<any>>;
 }
 
 export function RemoteSettings({ settings, onUpdateSettings, isChanged, setConfirmationModal, setCreateVaultModal }: RemoteSettingsProps) {
@@ -56,7 +57,7 @@ export function RemoteSettings({ settings, onUpdateSettings, isChanged, setConfi
     // --- Trusted Hosts Logic ---
 
     const fetchTrustedHosts = () => {
-        fetch('http://127.0.0.1:8000/settings/trusted-hosts')
+        fetch(`${API_BASE}/settings/trusted-hosts`)
             .then(res => res.json())
             .then(data => setTrustedHosts(data))
             .catch(err => console.error("Failed to fetch trusted hosts", err));
@@ -68,7 +69,7 @@ export function RemoteSettings({ settings, onUpdateSettings, isChanged, setConfi
 
         setTrustedHostStatus('Adicionando...');
         try {
-            const res = await fetch(`http://127.0.0.1:8000/settings/trusted-hosts?host=${encodeURIComponent(host)}`, {
+            const res = await fetch(`${API_BASE}/settings/trusted-hosts?host=${encodeURIComponent(host)}`, {
                 method: 'POST'
             });
             if (res.ok) {
@@ -93,7 +94,7 @@ export function RemoteSettings({ settings, onUpdateSettings, isChanged, setConfi
             type: 'danger',
             onConfirm: async () => {
                 try {
-                    const res = await fetch(`http://127.0.0.1:8000/settings/trusted-hosts?host=${encodeURIComponent(host)}`, { method: 'DELETE' });
+                    const res = await fetch(`${API_BASE}/settings/trusted-hosts?host=${encodeURIComponent(host)}`, { method: 'DELETE' });
                     if (res.ok) {
                         fetchTrustedHosts();
                         showToast('Host removido.', 'success');
@@ -104,7 +105,7 @@ export function RemoteSettings({ settings, onUpdateSettings, isChanged, setConfi
                     console.error(e);
                     showToast('Erro ao remover host.', 'error');
                 }
-                setConfirmationModal(prev => ({ ...prev, isOpen: false }));
+                setConfirmationModal((prev: any) => ({ ...prev, isOpen: false }));
             }
         });
     };
@@ -118,7 +119,7 @@ export function RemoteSettings({ settings, onUpdateSettings, isChanged, setConfi
             type: 'warning',
             onConfirm: async () => {
                 try {
-                    const res = await fetch('http://127.0.0.1:8000/settings/trusted-hosts', { method: 'DELETE' });
+                    const res = await fetch(`${API_BASE}/settings/trusted-hosts`, { method: 'DELETE' });
                     if (res.ok) {
                         fetchTrustedHosts();
                         showToast('Hosts confiáveis limpos.', 'success');
@@ -127,7 +128,7 @@ export function RemoteSettings({ settings, onUpdateSettings, isChanged, setConfi
                     console.error(e);
                     showToast('Erro ao limpar hosts.', 'error');
                 }
-                setConfirmationModal(prev => ({ ...prev, isOpen: false }));
+                setConfirmationModal((prev: any) => ({ ...prev, isOpen: false }));
             }
         });
     };
@@ -135,14 +136,14 @@ export function RemoteSettings({ settings, onUpdateSettings, isChanged, setConfi
     // --- Vault & Credentials Logic ---
 
     const fetchVaultStatus = () => {
-        fetch('http://127.0.0.1:8000/security/status')
+        fetch(`${API_BASE}/security/status`)
             .then(res => res.json())
             .then(data => setVaultStatus(data))
             .catch(err => console.error("Failed to fetch vault status", err));
     };
 
     const fetchCredentials = () => {
-        fetch('http://127.0.0.1:8000/security/credentials')
+        fetch(`${API_BASE}/security/credentials`)
             .then(res => res.json())
             .then(data => setCredentials(data))
             .catch(err => console.error("Failed to fetch credentials", err));
@@ -150,7 +151,7 @@ export function RemoteSettings({ settings, onUpdateSettings, isChanged, setConfi
 
     const handleUnlockVault = async () => {
         try {
-            const res = await fetch('http://127.0.0.1:8000/security/unlock', {
+            const res = await fetch(`${API_BASE}/security/unlock`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ password: vaultPassword })
@@ -169,7 +170,7 @@ export function RemoteSettings({ settings, onUpdateSettings, isChanged, setConfi
 
     const handleAddCredential = async () => {
         try {
-            const res = await fetch('http://127.0.0.1:8000/security/credentials', {
+            const res = await fetch(`${API_BASE}/security/credentials`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(newCred)
@@ -193,7 +194,7 @@ export function RemoteSettings({ settings, onUpdateSettings, isChanged, setConfi
             type: 'danger',
             onConfirm: async () => {
                 try {
-                    const res = await fetch(`http://127.0.0.1:8000/security/credentials/${id}`, { method: 'DELETE' });
+                    const res = await fetch(`${API_BASE}/security/credentials/${id}`, { method: 'DELETE' });
                     if (res.ok) {
                         fetchCredentials();
                         if (settings.default_credential_id === id) {
@@ -205,7 +206,7 @@ export function RemoteSettings({ settings, onUpdateSettings, isChanged, setConfi
                     console.error(e);
                     showToast('Erro ao remover credencial.', 'error');
                 }
-                setConfirmationModal(prev => ({ ...prev, isOpen: false }));
+                setConfirmationModal((prev: any) => ({ ...prev, isOpen: false }));
             }
         });
     };

@@ -14,6 +14,7 @@ import { useHostData } from '../hooks/useHostData';
 import { useToast } from '../contexts/ToastContext';
 import { Host } from '../types';
 import { HelpButton } from '../components/HelpButton';
+import { API_BASE } from '../config/api';
 
 interface Session {
     UserName: string;
@@ -88,7 +89,7 @@ export const HostDetails: React.FC = () => {
             setCurrentHost(location.state.host);
         } else {
             // Fallback: fetch hosts and find the current one
-            fetch('http://127.0.0.1:8000/hosts')
+            fetch(`${API_BASE}/hosts`)
                 .then(res => res.json())
                 .then(hosts => {
                     const found = hosts.find((h: Host) => h.address === ip);
@@ -205,7 +206,7 @@ export const HostDetails: React.FC = () => {
                 body.startup_type = startupType;
             }
 
-            const res = await fetch('http://127.0.0.1:8000/system/services/manage', {
+            const res = await fetch(`${API_BASE}/system/services/manage`, {
                 method: 'POST',
                 headers: headers,
                 body: JSON.stringify(body)
@@ -282,7 +283,7 @@ export const HostDetails: React.FC = () => {
         }
 
         try {
-            const res = await fetch('http://127.0.0.1:8000/system/spooler/manage', {
+            const res = await fetch(`${API_BASE}/system/spooler/manage`, {
                 method: 'POST',
                 headers: headers,
                 body: JSON.stringify({
@@ -367,7 +368,7 @@ export const HostDetails: React.FC = () => {
         }
 
         try {
-            const res = await fetch('http://127.0.0.1:8000/system/disconnect', {
+            const res = await fetch(`${API_BASE}/system/disconnect`, {
                 method: 'POST',
                 headers: headers,
                 body: JSON.stringify({

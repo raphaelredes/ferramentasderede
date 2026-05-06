@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { X, Lock, User, Key, Loader2, AlertCircle, Shield, Unlock, ChevronDown, Save, Plus, HelpCircle, RefreshCw } from 'lucide-react';
 import { useVault } from '../contexts/VaultContext';
 import { ConfirmationModal } from './ConfirmationModal';
+import { API_BASE } from '../config/api';
 
 interface CredentialModalProps {
     isOpen: boolean;
@@ -95,7 +96,7 @@ export function CredentialModal({
     const handleSelectCredential = async (credId: string) => {
         if (!credId) return;
         try {
-            const res = await fetch('http://127.0.0.1:8000/security/credentials/decrypt', {
+            const res = await fetch(`${API_BASE}/security/credentials/decrypt`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ id: credId })
@@ -126,7 +127,7 @@ export function CredentialModal({
 
     const saveCredentialToVault = async (finalUsername: string) => {
         try {
-            await fetch('http://127.0.0.1:8000/security/credentials', {
+            await fetch(`${API_BASE}/security/credentials`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -144,7 +145,7 @@ export function CredentialModal({
 
     const handleForgotPassword = async () => {
         try {
-            const res = await fetch('http://127.0.0.1:8000/security/hint');
+            const res = await fetch(`${API_BASE}/security/hint`);
             if (res.ok) {
                 const data = await res.json();
                 setRetrievedHint(data.hint || 'Nenhuma dica cadastrada.');
@@ -159,7 +160,7 @@ export function CredentialModal({
     const confirmResetVault = async () => {
         setIsResetting(true);
         try {
-            const res = await fetch('http://127.0.0.1:8000/security/reset', { method: 'POST' });
+            const res = await fetch(`${API_BASE}/security/reset`, { method: 'POST' });
             if (res.ok) {
                 alert('Cofre resetado com sucesso. Você pode criar uma nova senha agora.');
                 window.location.reload(); // Reload to refresh vault state completely

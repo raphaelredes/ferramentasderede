@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { X, Terminal, CheckCircle, AlertCircle, Loader2 } from 'lucide-react';
+import { API_BASE } from '../../config/api';
 
 interface TestConnectionModalProps {
     isOpen: boolean;
@@ -31,7 +32,7 @@ export const TestConnectionModal: React.FC<TestConnectionModalProps> = ({ isOpen
         setLogs('Iniciando teste de conexão...\n');
 
         try {
-            const res = await fetch('http://127.0.0.1:8000/system/test-connection', {
+            const res = await fetch(`${API_BASE}/system/test-connection`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'

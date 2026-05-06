@@ -4,6 +4,7 @@ import { FitAddon } from 'xterm-addon-fit';
 import 'xterm/css/xterm.css';
 import { Terminal as TerminalIcon, Power, PowerOff } from 'lucide-react';
 import { clsx } from 'clsx';
+import { API_BASE } from '../config/api';
 
 export function Terminal() {
     const terminalRef = useRef<HTMLDivElement>(null);
@@ -27,13 +28,13 @@ export function Terminal() {
 
     useEffect(() => {
         // Fetch settings
-        fetch('http://127.0.0.1:8000/settings')
+        fetch(`${API_BASE}/settings`)
             .then(res => res.json())
             .then(data => {
                 setSettings(data);
                 if (data.remote?.auto_login && data.remote?.default_credential_id) {
                     // Try to fetch credentials (requires vault unlocked)
-                    fetch('http://127.0.0.1:8000/security/credentials')
+                    fetch(`${API_BASE}/security/credentials`)
                         .then(res => res.json())
                         .then(creds => {
                             const cred = creds.find((c: any) => c.id === data.remote.default_credential_id);
@@ -151,7 +152,7 @@ export function Terminal() {
 
         // However, for the sake of this task (switching to external), let's implement the call.
 
-        fetch('http://127.0.0.1:8000/tools/terminal/external', {
+        fetch(`${API_BASE}/tools/terminal/external`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)

@@ -3,6 +3,7 @@ import { Monitor, X, AlertCircle, Globe, Hash, Info, Clock, RefreshCw, Server, P
 import { useNavigate } from 'react-router-dom';
 import { Host } from '../../types';
 import { RemoteAccessModal } from './RemoteAccessModal';
+import { API_BASE } from '../../config/api';
 
 interface HostDetailsModalProps {
     isOpen: boolean;
@@ -216,7 +217,7 @@ export function HostDetailsModal({
                                                     const controller = new AbortController();
                                                     const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout
                                                     try {
-                                                        const res = await fetch(`http://127.0.0.1:8000/hosts/${host.address}/refresh`, {
+                                                        const res = await fetch(`${API_BASE}/hosts/${host.address}/refresh`, {
                                                             method: 'POST',
                                                             signal: controller.signal
                                                         });

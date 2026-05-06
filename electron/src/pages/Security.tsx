@@ -3,6 +3,7 @@ import { Lock, Unlock, Eye, EyeOff, Trash2, Plus, Copy, Check, Shield, Key, Sett
 import { useVault } from '../contexts/VaultContext';
 import { useToast } from '../contexts/ToastContext';
 import { ConfirmationModal } from '../components/ConfirmationModal';
+import { API_BASE } from '../config/api';
 
 export function Security() {
     const {
@@ -61,7 +62,7 @@ export function Security() {
 
     const handleForgotPassword = async () => {
         try {
-            const res = await fetch('http://127.0.0.1:8000/security/hint');
+            const res = await fetch(`${API_BASE}/security/hint`);
             if (res.ok) {
                 const data = await res.json();
                 setRetrievedHint(data.hint || 'Nenhuma dica cadastrada.');
@@ -76,7 +77,7 @@ export function Security() {
     const confirmResetVault = async () => {
         setIsResetting(true);
         try {
-            const res = await fetch('http://127.0.0.1:8000/security/reset', { method: 'POST' });
+            const res = await fetch(`${API_BASE}/security/reset`, { method: 'POST' });
             if (res.ok) {
                 showToast('Cofre resetado com sucesso.', 'success');
                 window.location.reload(); // Reload to refresh vault state completely
@@ -104,7 +105,7 @@ export function Security() {
                 payload.id = editingCredential;
             }
 
-            const res = await fetch('http://127.0.0.1:8000/security/credentials', {
+            const res = await fetch(`${API_BASE}/security/credentials`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
@@ -134,7 +135,7 @@ export function Security() {
 
         // Fetch password
         try {
-            const res = await fetch('http://127.0.0.1:8000/security/credentials/decrypt', {
+            const res = await fetch(`${API_BASE}/security/credentials/decrypt`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ id: cred.id })
@@ -167,7 +168,7 @@ export function Security() {
     const confirmDeleteCredential = async () => {
         if (!credentialToDelete) return;
         try {
-            const res = await fetch(`http://127.0.0.1:8000/security/credentials/${credentialToDelete}`, {
+            const res = await fetch(`${API_BASE}/security/credentials/${credentialToDelete}`, {
                 method: 'DELETE'
             });
             if (res.ok) {
@@ -189,7 +190,7 @@ export function Security() {
         }
 
         try {
-            const res = await fetch('http://127.0.0.1:8000/security/credentials/decrypt', {
+            const res = await fetch(`${API_BASE}/security/credentials/decrypt`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ id })

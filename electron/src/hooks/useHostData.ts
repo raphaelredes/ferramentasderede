@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
 import { SystemInfo, Service, LogEntry, Session } from '../types';
+import { API_BASE } from '../config/api';
 
 export function useHostData(ip: string | undefined) {
     const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
@@ -71,7 +72,7 @@ export function useHostData(ip: string | undefined) {
 
         try {
             if (tabs.includes('info')) {
-                const resInfo = await fetch('http://127.0.0.1:8000/system/info', {
+                const resInfo = await fetch(`${API_BASE}/system/info`, {
                     method: 'POST',
                     headers: headers,
                     body: JSON.stringify({ target_ip: ip, username: user, password: pass })
@@ -90,7 +91,7 @@ export function useHostData(ip: string | undefined) {
                 saveToCache({ systemInfo: dataInfo });
 
                 // Fetch TeamViewer ID (streamed)
-                const resTv = await fetch('http://127.0.0.1:8000/system/teamviewer', {
+                const resTv = await fetch(`${API_BASE}/system/teamviewer`, {
                     method: 'POST',
                     headers: headers,
                     body: JSON.stringify({ target_ip: ip, username: user, password: pass })
@@ -109,7 +110,7 @@ export function useHostData(ip: string | undefined) {
                             if (json.data) {
                                 setTeamViewerId(json.data);
                                 saveToCache({ teamViewerId: json.data });
-                                fetch(`http://127.0.0.1:8000/hosts/${ip}`, {
+                                fetch(`${API_BASE}/hosts/${ip}`, {
                                     method: 'PATCH',
                                     headers: { 'Content-Type': 'application/json' },
                                     body: JSON.stringify({ teamviewer_id: json.data })
@@ -123,7 +124,7 @@ export function useHostData(ip: string | undefined) {
             }
 
             if (tabs.includes('services')) {
-                const res = await fetch('http://127.0.0.1:8000/system/services', {
+                const res = await fetch(`${API_BASE}/system/services`, {
                     method: 'POST',
                     headers: headers,
                     body: JSON.stringify({ target_ip: ip, username: user, password: pass })
@@ -142,7 +143,7 @@ export function useHostData(ip: string | undefined) {
             }
 
             if (tabs.includes('sessions')) {
-                const res = await fetch('http://127.0.0.1:8000/system/sessions', {
+                const res = await fetch(`${API_BASE}/system/sessions`, {
                     method: 'POST',
                     headers: headers,
                     body: JSON.stringify({ target_ip: ip, username: user, password: pass })
@@ -189,7 +190,7 @@ export function useHostData(ip: string | undefined) {
             }
 
             if (tabs.includes('logs')) {
-                const res = await fetch('http://127.0.0.1:8000/system/logs', {
+                const res = await fetch(`${API_BASE}/system/logs`, {
                     method: 'POST',
                     headers: headers,
                     body: JSON.stringify({ target_ip: ip, username: user, password: pass, log_name: 'System', level: 'Error', count: 20 })
