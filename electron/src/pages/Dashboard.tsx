@@ -351,7 +351,7 @@ export default function Dashboard() {
     const filteredHosts = hosts.filter(host => {
         const matchesSearch =
             (host.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-            host.address.includes(searchTerm) ||
+            (host.address || '').includes(searchTerm) ||
             (host.hostname && host.hostname.toLowerCase().includes(searchTerm.toLowerCase()));
 
         const matchesStatus =
@@ -371,9 +371,16 @@ export default function Dashboard() {
 
         return matchesSearch && matchesStatus && matchesGroup && matchesNetwork;
     }).sort((a, b) => {
+        // Defensive: hosts seeded by discovery / older versions may have
+        // a null name or address. Treat them as empty string for sort.
+        const aName = a.name ?? a.hostname ?? a.address ?? '';
+        const bName = b.name ?? b.hostname ?? b.address ?? '';
+        const aAddr = a.address ?? '';
+        const bAddr = b.address ?? '';
+
         if (sortBy === 'manual') {
-            const indexA = hostOrder.indexOf(a.address);
-            const indexB = hostOrder.indexOf(b.address);
+            const indexA = hostOrder.indexOf(aAddr);
+            const indexB = hostOrder.indexOf(bAddr);
 
             // Both present: sort by order
             if (indexA !== -1 && indexB !== -1) return indexA - indexB;
@@ -383,13 +390,13 @@ export default function Dashboard() {
             if (indexB !== -1) return 1;
 
             // Both missing: sort by name (stable fallback)
-            return a.name.localeCompare(b.name);
+            return aName.localeCompare(bName);
         }
 
-        if (sortBy === 'name') return a.name.localeCompare(b.name);
+        if (sortBy === 'name') return aName.localeCompare(bName);
         if (sortBy === 'ip') {
-            const ipA = a.address.split('.').map(Number);
-            const ipB = b.address.split('.').map(Number);
+            const ipA = aAddr.split('.').map(Number);
+            const ipB = bAddr.split('.').map(Number);
             for (let i = 0; i < 4; i++) {
                 if (ipA[i] < ipB[i]) return -1;
                 if (ipA[i] > ipB[i]) return 1;
