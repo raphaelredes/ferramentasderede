@@ -2,7 +2,7 @@
 // AboutModal renders the version as a clickable element that opens a popup
 // with this list. LoadingScreen also reads APP_VERSION from here.
 
-export const APP_VERSION = '1.2.2';
+export const APP_VERSION = '1.2.3';
 
 export type ChangeKind = 'feat' | 'fix' | 'perf' | 'security' | 'ui' | 'refactor' | 'docs';
 
@@ -14,6 +14,19 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+    {
+        version: '1.2.3',
+        date: '2026-05-06',
+        title: 'Build portátil + fluxo de TrustedHosts mais inteligente',
+        changes: [
+            { kind: 'fix', text: 'Reiniciar/Desligar/Logoff/Mensagem em hosts cross-domain agora abre a modal de TrustedHosts em vez de mostrar um toast vermelho críptico. O backend perdia o code estruturado ao transmitir o erro pelo streaming NDJSON; consertado em _stream_winrm_command.' },
+            { kind: 'feat', text: 'Modal de TrustedHosts agora detecta automaticamente quando o alvo está em um domínio diferente do seu (USERDNSDOMAIN vs networks[].domain) e sugere o formato usuario@dominio para evitar o gate.' },
+            { kind: 'feat', text: 'Checkbox "Não perguntar de novo nesta sessão" na modal — aprovação fica em memória do app e expira ao fechar. TrustedHosts continua sendo adicionado e removido a cada operação no servidor.' },
+            { kind: 'feat', text: 'Endpoint /system/diagnose-target retorna o domínio do alvo (via Settings) e o domínio local do operador para alimentar a modal contextual.' },
+            { kind: 'fix', text: 'Build portátil v1.2.2 quebrava no boot por três deps que setuptools 80 desbundled (jaraco.text, platformdirs) e por um import legado (customtkinter). Spec PyInstaller agora coleta jaraco.*/platformdirs/importlib_*/pkg_resources via collect_all e src.system.AdvancedPerformanceOptimizer virou lazy import.' },
+            { kind: 'fix', text: 'Frontend portátil falhava ao carregar configurações/interfaces porque o WebView servia a UI numa porta aleatória fora da whitelist de CORS. Agora a porta é fixa (NT_WEBVIEW_PORT, default 5174) e está na whitelist por padrão.' },
+        ],
+    },
     {
         version: '1.2.2',
         date: '2026-05-06',

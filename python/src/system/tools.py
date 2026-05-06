@@ -146,25 +146,36 @@ class SystemTools:
         cmd = None
         try:
             cmd = RemoteCommands(target_ip, username, password)
-            
+
             if target_ip in ["127.0.0.1", "localhost"]:
                 logging.info(f"Using LocalHandler for streaming target {target_ip}")
                 cmd.handler = LocalHandler(cmd.target_ip, cmd.username, cmd.password)
             else:
                 cmd.handler = WinRMHandler(cmd.target_ip, cmd.username, cmd.password)
-            
+
             connection_result = cmd.handler.connect()
             if "error" in connection_result:
-                yield {"status": "error", "message": connection_result["error"]}
+                # Propagate the structured error code (TRUSTED_HOSTS_REQUIRED,
+                # AUTH_FAILED, CROSS_DOMAIN_AUTH, etc.) so the frontend can act
+                # on it (e.g. open the TrustedHosts modal). Without this, the
+                # streaming layer used to forward only `message`, which made
+                # the UI fall back to a generic red toast even though the
+                # diagnostic code was right there in the connection result.
+                err_payload = {"status": "error", "message": connection_result["error"]}
+                if connection_result.get("code"):
+                    err_payload["code"] = connection_result["code"]
+                if connection_result.get("details"):
+                    err_payload["details"] = connection_result["details"]
+                yield err_payload
                 return
 
             # Executa a função que retorna um generator
             iterator = command_func(cmd)
-            
+
             # Itera sobre o resultado e repassa
             for item in iterator:
                 yield item
-                
+
         except (WinRMError, ConnectionError, ConnectTimeout) as e:
             yield {"status": "error", "message": f"Erro de conexão WinRM: {str(e)}"}
         except Exception as e:

@@ -2,7 +2,7 @@
   "name": "network-tools",
   "productName": "Ferramentas de Rede",
   "private": true,
-  "version": "1.2.2",
+  "version": "1.2.3",
   "description": "Ferramentas de Rede Integradas",
   "author": "Raphael Rego",
   "scripts": {

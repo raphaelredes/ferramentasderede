@@ -39,6 +39,7 @@ import { useMonitoring } from '../contexts/MonitoringContext';
 import { useHostActions } from '../hooks/useHostActions';
 import { useToast } from '../contexts/ToastContext';
 import { useTools } from '../contexts/ToolsContext';
+import { useTrustedHostsSession } from '../contexts/TrustedHostsSessionContext';
 import { HostListSkeleton } from '../components/Dashboard/HostListSkeleton';
 import { GroupNetworkTabs } from '../components/Dashboard/GroupNetworkTabs';
 import { API_BASE } from '../config/api';
@@ -64,6 +65,7 @@ export default function Dashboard() {
     } = useHostActions();
 
     const { setPendingAction } = useTools();
+    const { isApproved: isTrustedSessionApproved } = useTrustedHostsSession();
 
     const navigate = useNavigate();
 
@@ -228,10 +230,15 @@ export default function Dashboard() {
         pass: string,
         tempAuth: boolean = false
     ) => {
+        // Auto-elevate when this host was approved earlier in the same session.
+        // The actual TrustedHosts mutation still happens server-side, scoped to
+        // this single request via the X-Temp-Auth header.
+        const effectiveTempAuth = tempAuth || isTrustedSessionApproved(host.address);
+
         const headers: HeadersInit = {
             'Content-Type': 'application/json'
         };
-        if (tempAuth) {
+        if (effectiveTempAuth) {
             headers['X-Temp-Auth'] = 'true';
         }
 
@@ -624,6 +631,7 @@ export default function Dashboard() {
                 isOpen={isTrustedHostsModalOpen}
                 onClose={() => setIsTrustedHostsModalOpen(false)}
                 onConfirm={handleConfirmTrustedHosts}
+                targetIp={pendingPowerAction?.host.address}
             />
 
         </div>

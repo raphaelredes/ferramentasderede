@@ -15,6 +15,7 @@ import { ToastProvider } from './contexts/ToastContext';
 import { ToolsProvider } from './contexts/ToolsContext';
 import { LoadingProvider } from './contexts/LoadingContext';
 import { MonitoringProvider } from './contexts/MonitoringContext';
+import { TrustedHostsSessionProvider } from './contexts/TrustedHostsSessionContext';
 
 function App() {
   const [isLoaded, setIsLoaded] = useState(false);
@@ -35,22 +36,24 @@ function App() {
         <ToastProvider>
           <ToolsProvider>
             <MonitoringProvider>
-              <Router>
-                <div className="flex h-screen bg-zinc-950 text-zinc-100 font-sans overflow-hidden">
-                  <Sidebar />
-                  <main className="flex-1 overflow-auto">
-                    <Routes>
-                      <Route path="/" element={<Dashboard />} />
-                      <Route path="/dashboard" element={<Dashboard />} />
-                      <Route path="/host/:ip" element={<HostDetails />} />
-                      <Route path="/tools" element={<Tools />} />
-                      <Route path="/terminal" element={<Terminal />} />
-                      <Route path="/settings" element={<Settings />} />
-                      <Route path="/security" element={<Security />} />
-                    </Routes>
-                  </main>
-                </div>
-              </Router>
+              <TrustedHostsSessionProvider>
+                <Router>
+                  <div className="flex h-screen bg-zinc-950 text-zinc-100 font-sans overflow-hidden">
+                    <Sidebar />
+                    <main className="flex-1 overflow-auto">
+                      <Routes>
+                        <Route path="/" element={<Dashboard />} />
+                        <Route path="/dashboard" element={<Dashboard />} />
+                        <Route path="/host/:ip" element={<HostDetails />} />
+                        <Route path="/tools" element={<Tools />} />
+                        <Route path="/terminal" element={<Terminal />} />
+                        <Route path="/settings" element={<Settings />} />
+                        <Route path="/security" element={<Security />} />
+                      </Routes>
+                    </main>
+                  </div>
+                </Router>
+              </TrustedHostsSessionProvider>
             </MonitoringProvider>
           </ToolsProvider>
         </ToastProvider>

@@ -15,7 +15,7 @@
 # python/src/config/settings.py + electron/package.json + electron/src/data/changelog.ts.
 
 block_cipher = None
-APP_VERSION = '1.2.2'
+APP_VERSION = '1.2.3'
 
 frontend_dist = '../electron/dist'
 

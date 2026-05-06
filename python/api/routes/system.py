@@ -77,6 +77,79 @@ def get_trusted_hosts_context(ip: str, auth_header: str):
         return TemporaryTrustedHosts(ip)
     return contextlib.nullcontext()
 
+
+def _is_trusted_hosts_error(result):
+    """True if a WinRM connect/exec result represents the TrustedHosts gate.
+
+    The handler used to set ``error`` to the literal string
+    "TRUSTED_HOSTS_REQUIRED", but it now puts a friendly message in ``error``
+    and the machine-readable identifier in ``code``. This helper accepts both
+    shapes so we keep working with mixed callers.
+    """
+    if not isinstance(result, dict):
+        return False
+    if result.get("code") == "TRUSTED_HOSTS_REQUIRED":
+        return True
+    err = result.get("error")
+    if isinstance(err, str) and "TRUSTED_HOSTS_REQUIRED" in err:
+        return True
+    return False
+
+
+class DiagnoseRequest(BaseModel):
+    target_ip: str
+
+
+@router.post("/diagnose-target")
+def diagnose_target(request: DiagnoseRequest):
+    """Return diagnostic info about a remote target so the frontend can render
+    a useful TrustedHosts modal — specifically, whether the target sits in a
+    different AD domain than the local machine, which is the most common
+    reason WinRM falls back to NTLM and trips the TrustedHosts gate.
+
+    All fields are best-effort. None of them are required to render the modal,
+    they just make the modal smarter when present.
+    """
+    target_domain = None
+    network_name = None
+    try:
+        from api.routes.settings import load_settings
+        import ipaddress
+        settings = load_settings()
+        ip_obj = ipaddress.ip_address(request.target_ip)
+        for net in (settings.networks or []):
+            if not net.enabled:
+                continue
+            try:
+                if ip_obj in ipaddress.ip_network(net.cidr, strict=False):
+                    network_name = net.name
+                    if net.domain:
+                        target_domain = net.domain
+                    break
+            except (ValueError, TypeError):
+                continue
+    except Exception as e:
+        logging.debug(f"diagnose_target: settings lookup failed: {e}")
+
+    local_domain = None
+    try:
+        # USERDNSDOMAIN is set on domain-joined Windows machines.
+        local_domain = os.environ.get("USERDNSDOMAIN") or None
+    except Exception:
+        pass
+
+    cross_domain = None
+    if target_domain and local_domain:
+        cross_domain = target_domain.lower() != local_domain.lower()
+
+    return {
+        "target_ip": request.target_ip,
+        "target_domain": target_domain,
+        "local_domain": local_domain,
+        "network_name": network_name,
+        "cross_domain": cross_domain,
+    }
+
 @router.post("/info")
 def system_info(request: SystemInfoRequest, x_temp_auth: str = Header(default=None)):
     """Obtém informações detalhadas do sistema (OS, Hardware) via WMI."""
@@ -90,7 +163,7 @@ def system_info(request: SystemInfoRequest, x_temp_auth: str = Header(default=No
             
         if "error" in result:
             # Se for erro de TrustedHosts, retorna 403 com código específico
-            if result.get("error") == "TRUSTED_HOSTS_REQUIRED":
+            if _is_trusted_hosts_error(result):
                 raise HTTPException(status_code=403, detail="TRUSTED_HOSTS_REQUIRED")
             raise HTTPException(status_code=500, detail=result["error"])
         # return result removed to allow update logic below
@@ -148,7 +221,7 @@ def list_services(request: ServicesRequest, x_temp_auth: str = Header(default=No
             )
 
         if isinstance(result, dict) and "error" in result:
-            if result.get("error") == "TRUSTED_HOSTS_REQUIRED":
+            if _is_trusted_hosts_error(result):
                 raise HTTPException(status_code=403, detail="TRUSTED_HOSTS_REQUIRED")
             raise HTTPException(status_code=500, detail=result["error"])
         return result

@@ -12,6 +12,7 @@ import TrustedHostsModal from '../components/TrustedHostsModal';
 import { TestConnectionModal } from '../components/HostDetails/TestConnectionModal';
 import { useHostData } from '../hooks/useHostData';
 import { useToast } from '../contexts/ToastContext';
+import { useTrustedHostsSession } from '../contexts/TrustedHostsSessionContext';
 import { Host } from '../types';
 import { HelpButton } from '../components/HelpButton';
 import { API_BASE } from '../config/api';
@@ -28,6 +29,7 @@ export const HostDetails: React.FC = () => {
     const navigate = useNavigate();
     const location = useLocation();
     const { showToast } = useToast();
+    const { isApproved: isTrustedSessionApproved } = useTrustedHostsSession();
 
     const [activeTab, setActiveTab] = useState('info');
     const [credentials, setCredentials] = useState<{ username: string, password: string } | null>(null);
@@ -142,8 +144,11 @@ export const HostDetails: React.FC = () => {
     };
 
     const handleFetchData = async (user: string, pass: string, tempAuth: boolean = false, targetTab: string | string[] = activeTab) => {
+        // Auto-elevate when this host was already approved earlier in the same
+        // app session (operator ticked "remember for this session" in the modal).
+        const effectiveTempAuth = tempAuth || (ip ? isTrustedSessionApproved(ip) : false);
         try {
-            await fetchData(targetTab, user, pass, tempAuth);
+            await fetchData(targetTab, user, pass, effectiveTempAuth);
         } catch (err: unknown) {
             if (err instanceof Error && err.message === "TRUSTED_HOSTS_REQUIRED") {
                 setPendingAction(() => async () => handleFetchData(user, pass, true, targetTab));
@@ -186,10 +191,11 @@ export const HostDetails: React.FC = () => {
 
         if (!user || !pass || !ip) return;
 
+        const effectiveTempAuth = tempAuth || isTrustedSessionApproved(ip);
         const headers: HeadersInit = {
             'Content-Type': 'application/json'
         };
-        if (tempAuth) {
+        if (effectiveTempAuth) {
             headers['X-Temp-Auth'] = 'true';
         }
 
@@ -275,10 +281,11 @@ export const HostDetails: React.FC = () => {
 
         setIsSpoolerLoading(true);
 
+        const effectiveTempAuth = tempAuth || isTrustedSessionApproved(ip);
         const headers: HeadersInit = {
             'Content-Type': 'application/json'
         };
-        if (tempAuth) {
+        if (effectiveTempAuth) {
             headers['X-Temp-Auth'] = 'true';
         }
 
@@ -360,10 +367,11 @@ export const HostDetails: React.FC = () => {
 
         setIsDisconnecting(true);
 
+        const effectiveTempAuth = tempAuth || isTrustedSessionApproved(ip);
         const headers: HeadersInit = {
             'Content-Type': 'application/json'
         };
-        if (tempAuth) {
+        if (effectiveTempAuth) {
             headers['X-Temp-Auth'] = 'true';
         }
 
@@ -563,6 +571,7 @@ export const HostDetails: React.FC = () => {
                 isOpen={isTrustedHostsModalOpen}
                 onClose={() => setIsTrustedHostsModalOpen(false)}
                 onConfirm={handleConfirmTrustedHosts}
+                targetIp={ip}
             />
 
             <TestConnectionModal
