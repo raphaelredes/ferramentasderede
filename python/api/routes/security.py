@@ -50,7 +50,7 @@ def add_credential(entry: CredentialEntry):
     if not vault.is_unlocked:
         raise HTTPException(status_code=403, detail="Cofre bloqueado.")
     
-    saved_entry = vault.add_credential(entry.dict())
+    saved_entry = vault.add_credential(entry.model_dump())
     return saved_entry
 
 @router.delete("/security/credentials/{entry_id}")

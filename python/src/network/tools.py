@@ -389,10 +389,10 @@ class NetworkTools:
                     return hostname
             except concurrent.futures.TimeoutError:
                 pass # Timeout, mas o thread continua rodando em background até terminar
-            except Exception:
-                pass
-        except:
-            pass
+            except Exception as e:
+                logging.debug(f"DNS strategy failed: {e}")
+        except Exception as e:
+            logging.debug(f"DNS resolution outer block failed: {e}")
             
         # Estratégia 3: NetBIOS (nbtstat) - Fallback final para Windows
         if os.name == 'nt' and not hostname:

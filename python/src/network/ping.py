@@ -354,7 +354,8 @@ def check_powershell_ping(ip_address):
             return True, 0
             
         return False, None
-    except:
+    except Exception as e:
+        logging.debug(f"Test-Connection fallback failed for {ip_address}: {e}")
         return False, None
 
 def check_arp_table(ip_address):
@@ -369,7 +370,8 @@ def check_arp_table(ip_address):
             # Ex: " 192.168.1.1 "
             return f" {ip_address} " in result.stdout
         return False
-    except:
+    except Exception as e:
+        logging.debug(f"ARP table check failed for {ip_address}: {e}")
         return False
 
 def continuous_ping(target, packet_size=32, source_ip=None):
