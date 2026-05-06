@@ -6,6 +6,7 @@ import { HelpButton } from '../components/HelpButton';
 import { ConfirmationModal } from '../components/ConfirmationModal';
 import { RemoteSettings } from '../components/Settings/RemoteSettings';
 import { NetworksSettings } from '../components/Settings/NetworksSettings';
+import { useVault } from '../contexts/VaultContext';
 import { API_BASE } from '../config/api';
 
 interface ScannerSettings {
@@ -95,6 +96,7 @@ export function Settings() {
     });
 
     const { showToast } = useToast();
+    const { refreshStatus: refreshVaultStatus } = useVault();
 
     const handleCreateVault = async () => {
         if (createVaultModal.password !== createVaultModal.confirmPassword) {
@@ -119,8 +121,9 @@ export function Settings() {
             if (res.ok) {
                 showToast('Cofre criado com sucesso!', 'success');
                 setCreateVaultModal({ isOpen: false, password: '', confirmPassword: '', hint: '' });
-                // Refresh logic if needed
-                window.location.reload();
+                // Refresh vault state — was a full page reload, which lost
+                // the open settings tab and any unsaved changes elsewhere.
+                await refreshVaultStatus();
             } else {
                 showToast('Erro ao criar cofre.', 'error');
             }

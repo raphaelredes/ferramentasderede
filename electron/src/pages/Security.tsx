@@ -14,6 +14,7 @@ export function Security() {
         unlock,
         lock,
         refreshCredentials,
+        refreshStatus,
         autoLockTimeout,
         setAutoLockTimeout
     } = useVault();
@@ -80,7 +81,9 @@ export function Security() {
             const res = await fetch(`${API_BASE}/security/reset`, { method: 'POST' });
             if (res.ok) {
                 showToast('Cofre resetado com sucesso.', 'success');
-                window.location.reload(); // Reload to refresh vault state completely
+                // Refresh vault state in place — keeps user on the Security page
+                // instead of jolting them through a full app reload.
+                await refreshStatus();
             } else {
                 showToast('Erro ao resetar cofre.', 'error');
             }

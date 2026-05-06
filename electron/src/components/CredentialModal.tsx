@@ -37,7 +37,8 @@ export function CredentialModal({
         isUnlocked,
         vaultCredentials,
         unlock,
-        refreshCredentials
+        refreshCredentials,
+        refreshStatus
     } = useVault();
 
     const [masterPassword, setMasterPassword] = useState('');
@@ -163,7 +164,10 @@ export function CredentialModal({
             const res = await fetch(`${API_BASE}/security/reset`, { method: 'POST' });
             if (res.ok) {
                 alert('Cofre resetado com sucesso. Você pode criar uma nova senha agora.');
-                window.location.reload(); // Reload to refresh vault state completely
+                // Refresh vault state instead of reloading the whole app —
+                // preserves which page the user was on, scroll position,
+                // any unrelated unsaved state, etc.
+                await refreshStatus();
             } else {
                 alert('Erro ao resetar cofre.');
             }
