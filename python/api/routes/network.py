@@ -3,6 +3,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import json
 import asyncio
+import logging
 import time
 import sys
 import os
@@ -37,8 +38,10 @@ class ConnectionManager:
         for connection in self.active_connections:
             try:
                 await connection.send_json(message)
-            except:
-                pass
+            except Exception as e:
+                # Client disconnected mid-broadcast — log and move on. Bare
+                # except would also catch KeyboardInterrupt which we don't want.
+                logging.debug(f"WebSocket broadcast skipped (peer dropped): {e}")
 
 manager = ConnectionManager()
 
@@ -78,52 +81,93 @@ class Host(BaseModel):
                     try:
                         from datetime import datetime
                         obj['last_checked'] = datetime.fromtimestamp(val).isoformat()
-                    except:
+                    except (ValueError, OSError, OverflowError):
                         obj['last_checked'] = str(val)
                         
         return super().model_validate(obj, *args, **kwargs)
 
 # ... (omitted lines)
 
+def _resolve_fqdn_for_host(ip_address: str):
+    """Resolve hostname/domain for an IP, preferring the DNS server of the
+    host's configured network when available.
+
+    Order of attempts:
+      1. PTR via the network's dns_server (multi-domain correctness)
+      2. ping -a (Windows fallback, picks up NetBIOS/local resolver)
+      3. socket.gethostbyaddr (system resolver)
+
+    Returns (hostname, domain) or (None, None).
+    """
+    from src.network import dns_resolver
+    configured = _load_configured_networks()
+    net_id, _ = _match_network(ip_address, configured)
+    dns_server = None
+    if net_id:
+        try:
+            from api.routes.settings import load_settings
+            settings = load_settings()
+            for net in (settings.networks or []):
+                if net.id == net_id:
+                    dns_server = net.dns_server
+                    break
+        except Exception:
+            pass
+
+    # 1. Try the network's DNS first
+    if dns_server:
+        fqdn = dns_resolver.resolve_ip(ip_address, dns_server=dns_server)
+        if fqdn:
+            return dns_resolver.split_fqdn(fqdn)
+
+    # 2. Windows ping -a fallback
+    try:
+        fqdn = net_tools.resolve_via_ping_a(ip_address)
+        if fqdn and fqdn not in ("N/A", "Inválido", "Erro"):
+            return dns_resolver.split_fqdn(fqdn)
+    except Exception:
+        pass
+
+    # 3. System resolver fallback
+    fqdn = dns_resolver.resolve_ip(ip_address)
+    if fqdn:
+        return dns_resolver.split_fqdn(fqdn)
+
+    # 4. Last resort: legacy resolver in tools.py
+    try:
+        fqdn = net_tools.resolve_ip_and_hostname(ip_address)
+        if fqdn and fqdn not in ("N/A", "Inválido", "Erro"):
+            return dns_resolver.split_fqdn(fqdn)
+    except Exception:
+        pass
+
+    return None, None
+
+
 @router.post("/hosts/{address}/refresh")
 def refresh_host(address: str):
     try:
         current_hosts = get_hosts_list()
         target_host = next((h for h in current_hosts if h.address == address), None)
-        
+
         if not target_host:
             raise HTTPException(status_code=404, detail="Host não encontrado.")
-            
-        # Tentar resolver via ping -a explicitamente (prioridade) ou fallback padrão
-        fqdn = net_tools.resolve_via_ping_a(address)
-        if not fqdn:
-            fqdn = net_tools.resolve_ip_and_hostname(address)
-            
-        ip = address # Assumindo que address é o IP
-        
-        hostname = None
-        domain = None
-        
-        if fqdn and fqdn not in ["N/A", "Inválido", "Erro"]:
-            parts = fqdn.split('.', 1)
-            hostname = parts[0]
-            if len(parts) > 1: domain = parts[1]
-            
+
+        hostname, domain = _resolve_fqdn_for_host(address)
+        if hostname:
             target_host.hostname = hostname
             target_host.domain = domain
-        
-        if ip and ip != "N/A":
-            target_host.ip = ip
 
-        # Persistir usando update_host_details para eficiência e segurança
+        if address and address != "N/A":
+            target_host.ip = address
+
         host_manager_instance.update_host_details(address, hostname=hostname, domain=domain)
-        
-        # Também salvar a lista completa para garantir outros campos se necessário (embora update_host_details seja suficiente para nomes)
-        # save_hosts_list(current_hosts) # Desnecessário se usarmos update_host_details para o que importa
-        
+
         return {"status": "success", "message": "Informações atualizadas.", "host": target_host}
-    except HTTPException as he: raise he
-    except Exception as e: raise HTTPException(status_code=500, detail=f"Erro ao atualizar host: {str(e)}")
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao atualizar host: {str(e)}")
 
 class HostUpdate(BaseModel):
     name: Optional[str] = None
@@ -154,7 +198,7 @@ def update_host(address: str, update: HostUpdate):
         if update.reset_stats: host_monitor.reset_host_stats(target_host.address)
             
         save_hosts_list(current_hosts)
-        host_monitor.update_hosts([h.dict() for h in current_hosts])
+        host_monitor.update_hosts([h.model_dump() for h in current_hosts])
         return {"status": "success", "message": "Host atualizado com sucesso.", "host": target_host}
     except HTTPException as he: raise he
     except Exception as e: raise HTTPException(status_code=500, detail=f"Erro ao atualizar host: {str(e)}")
@@ -311,7 +355,7 @@ def add_host(host: Host):
         
         # Update monitor
         current_hosts = get_hosts_list()
-        host_monitor.update_hosts([h.dict() for h in current_hosts])
+        host_monitor.update_hosts([h.model_dump() for h in current_hosts])
             
         return {"status": "success", "message": f"Host {host.name} adicionado."}
     except HTTPException as he: raise he
@@ -325,7 +369,7 @@ def delete_host(address: str):
 
         # Update monitor
         current_hosts = get_hosts_list()
-        host_monitor.update_hosts([h.dict() for h in current_hosts])
+        host_monitor.update_hosts([h.model_dump() for h in current_hosts])
 
         return {"status": "success", "message": "Host removido com sucesso."}
     except Exception as e: raise HTTPException(status_code=500, detail=f"Erro ao remover host: {str(e)}")
