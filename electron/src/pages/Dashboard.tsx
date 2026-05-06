@@ -39,10 +39,11 @@ import { useMonitoring } from '../contexts/MonitoringContext';
 import { useHostActions } from '../hooks/useHostActions';
 import { useToast } from '../contexts/ToastContext';
 import { useTools } from '../contexts/ToolsContext';
-import { HelpButton } from '../components/HelpButton';
 import { HostListSkeleton } from '../components/Dashboard/HostListSkeleton';
+import { GroupNetworkTabs } from '../components/Dashboard/GroupNetworkTabs';
 import { API_BASE } from '../config/api';
 import { useNetworks } from '../hooks/useNetworks';
+import { useFilteredHosts } from '../hooks/useFilteredHosts';
 
 export default function Dashboard() {
     const {
@@ -347,71 +348,14 @@ export default function Dashboard() {
 
     const [activeId, setActiveId] = useState<string | null>(null);
 
-    // Filter and Sort Logic
-    const filteredHosts = hosts.filter(host => {
-        const matchesSearch =
-            (host.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-            (host.address || '').includes(searchTerm) ||
-            (host.hostname && host.hostname.toLowerCase().includes(searchTerm.toLowerCase()));
-
-        const matchesStatus =
-            filterStatus === 'all' ? true :
-                filterStatus === 'monitored' ? host.monitoring :
-                    !host.monitoring;
-
-        const matchesGroup =
-            activeGroupTab === 'all' ? true :
-                activeGroupTab === 'ungrouped' ? !host.group :
-                    host.group === activeGroupTab;
-
-        const matchesNetwork =
-            activeNetworkTab === 'all' ? true :
-                activeNetworkTab === 'unassigned' ? !host.network_id :
-                    host.network_id === activeNetworkTab;
-
-        return matchesSearch && matchesStatus && matchesGroup && matchesNetwork;
-    }).sort((a, b) => {
-        // Defensive: hosts seeded by discovery / older versions may have
-        // a null name or address. Treat them as empty string for sort.
-        const aName = a.name ?? a.hostname ?? a.address ?? '';
-        const bName = b.name ?? b.hostname ?? b.address ?? '';
-        const aAddr = a.address ?? '';
-        const bAddr = b.address ?? '';
-
-        if (sortBy === 'manual') {
-            const indexA = hostOrder.indexOf(aAddr);
-            const indexB = hostOrder.indexOf(bAddr);
-
-            // Both present: sort by order
-            if (indexA !== -1 && indexB !== -1) return indexA - indexB;
-
-            // One present: present comes first
-            if (indexA !== -1) return -1;
-            if (indexB !== -1) return 1;
-
-            // Both missing: sort by name (stable fallback)
-            return aName.localeCompare(bName);
-        }
-
-        if (sortBy === 'name') return aName.localeCompare(bName);
-        if (sortBy === 'ip') {
-            const ipA = aAddr.split('.').map(Number);
-            const ipB = bAddr.split('.').map(Number);
-            for (let i = 0; i < 4; i++) {
-                if (ipA[i] < ipB[i]) return -1;
-                if (ipA[i] > ipB[i]) return 1;
-            }
-            return 0;
-        }
-        if (sortBy === 'status') {
-            // Online first
-            const isOnlineA = a.stats?.online ?? a.last_status ?? false;
-            const isOnlineB = b.stats?.online ?? b.last_status ?? false;
-            if (isOnlineA && !isOnlineB) return -1;
-            if (!isOnlineA && isOnlineB) return 1;
-            return 0;
-        }
-        return 0;
+    const filteredHosts = useFilteredHosts({
+        hosts,
+        searchTerm,
+        filterStatus,
+        activeGroupTab,
+        activeNetworkTab,
+        sortBy,
+        hostOrder,
     });
 
     const handleDragEndDnd = (event: DragEndEvent) => {
@@ -454,63 +398,14 @@ export default function Dashboard() {
                 onlineHosts={globalStats.online}
             />
 
-            <div className="flex gap-2 border-b border-zinc-800 mb-4 overflow-x-auto custom-scrollbar pb-2">
-                <button
-                    onClick={() => setActiveGroupTab('all')}
-                    className={`px-4 py-2 text-sm font-medium transition-colors whitespace-nowrap ${activeGroupTab === 'all' ? 'text-blue-400 border-b-2 border-blue-400' : 'text-zinc-400 hover:text-white'}`}
-                >
-                    Todos
-                </button>
-                <button
-                    onClick={() => setActiveGroupTab('ungrouped')}
-                    className={`px-4 py-2 text-sm font-medium transition-colors whitespace-nowrap ${activeGroupTab === 'ungrouped' ? 'text-blue-400 border-b-2 border-blue-400' : 'text-zinc-400 hover:text-white'}`}
-                >
-                    Sem Grupo
-                </button>
-                {uniqueGroups.map(group => (
-                    <button
-                        key={group}
-                        onClick={() => setActiveGroupTab(group)}
-                        className={`px-4 py-2 text-sm font-medium transition-colors whitespace-nowrap ${activeGroupTab === group ? 'text-blue-400 border-b-2 border-blue-400' : 'text-zinc-400 hover:text-white'}`}
-                    >
-                        {group}
-                    </button>
-                ))}
-                <div className="ml-auto flex items-center">
-                    <HelpButton title="Grupos e Filtros" description="Use as abas para filtrar hosts por grupo. 'Sem Grupo' mostra hosts que ainda não foram categorizados." />
-                </div>
-            </div>
-
-            {networks.length > 0 && (
-                <div className="flex gap-2 border-b border-zinc-800 mb-4 overflow-x-auto custom-scrollbar pb-2">
-                    <span className="px-2 py-2 text-xs font-medium text-zinc-500 whitespace-nowrap">Rede:</span>
-                    <button
-                        onClick={() => setActiveNetworkTab('all')}
-                        className={`px-3 py-1.5 text-xs font-medium rounded transition-colors whitespace-nowrap ${activeNetworkTab === 'all' ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' : 'text-zinc-400 hover:text-white border border-transparent'}`}
-                    >
-                        Todas
-                    </button>
-                    <button
-                        onClick={() => setActiveNetworkTab('unassigned')}
-                        className={`px-3 py-1.5 text-xs font-medium rounded transition-colors whitespace-nowrap ${activeNetworkTab === 'unassigned' ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' : 'text-zinc-400 hover:text-white border border-transparent'}`}
-                    >
-                        Sem rede
-                    </button>
-                    {networks.map(net => (
-                        <button
-                            key={net.id}
-                            onClick={() => setActiveNetworkTab(net.id)}
-                            title={net.cidr}
-                            className={`px-3 py-1.5 text-xs font-medium rounded transition-colors whitespace-nowrap ${activeNetworkTab === net.id ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' : 'text-zinc-400 hover:text-white border border-transparent'}`}
-                        >
-                            {net.name || net.cidr}
-                        </button>
-                    ))}
-                    <div className="ml-auto flex items-center">
-                        <HelpButton title="Filtro por Rede / VLAN" description="Filtra hosts pela rede cadastrada em Configurações. 'Sem rede' mostra hosts cujo IP não está em nenhuma rede cadastrada." />
-                    </div>
-                </div>
-            )}
+            <GroupNetworkTabs
+                uniqueGroups={uniqueGroups}
+                activeGroupTab={activeGroupTab}
+                onGroupTabChange={setActiveGroupTab}
+                networks={networks}
+                activeNetworkTab={activeNetworkTab}
+                onNetworkTabChange={setActiveNetworkTab}
+            />
 
             <FilterBar
                 searchTerm={searchTerm}
