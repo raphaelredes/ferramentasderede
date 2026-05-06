@@ -291,6 +291,7 @@ network_test_results.json
 
 # Claude Code specific
 .claude/settings.local.json
+.claude/worktrees/
 # Agent artifacts
 .gemini/
 
