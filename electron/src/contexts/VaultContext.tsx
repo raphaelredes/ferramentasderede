@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { VaultCredential } from '../types';
+import { API_BASE } from '../config/api';
 
 interface VaultContextType {
     hasVault: boolean;
@@ -35,7 +36,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 
     const refreshStatus = async () => {
         try {
-            const res = await fetch('http://127.0.0.1:8000/security/status');
+            const res = await fetch(`${API_BASE}/security/status`);
             if (res.ok) {
                 const data = await res.json();
                 setHasVault(data.has_vault);
@@ -55,7 +56,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 
     const refreshCredentials = async () => {
         try {
-            const res = await fetch('http://127.0.0.1:8000/security/credentials');
+            const res = await fetch(`${API_BASE}/security/credentials`);
             if (res.ok) {
                 const data = await res.json();
                 setVaultCredentials(data);
@@ -67,7 +68,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 
     const unlock = async (password: string, hint?: string): Promise<boolean> => {
         try {
-            const res = await fetch('http://127.0.0.1:8000/security/unlock', {
+            const res = await fetch(`${API_BASE}/security/unlock`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ password, hint })
@@ -87,7 +88,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 
     const lock = async () => {
         try {
-            await fetch('http://127.0.0.1:8000/security/lock', { method: 'POST' });
+            await fetch(`${API_BASE}/security/lock`, { method: 'POST' });
             setIsUnlocked(false);
             setVaultCredentials([]);
         } catch (error) {
@@ -97,8 +98,10 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 
     useEffect(() => {
         refreshStatus();
-        // Poll status every 5 seconds to check for auto-lock or external changes
-        const interval = setInterval(refreshStatus, 5000);
+        // Poll status every 30s. Vault state changes are rare (manual lock/unlock,
+        // auto-lock) so 5s was wasteful — N hosts × short interval was hammering
+        // the backend with no benefit.
+        const interval = setInterval(refreshStatus, 30000);
         return () => clearInterval(interval);
     }, []);
 

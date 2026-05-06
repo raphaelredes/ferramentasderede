@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
 import { useToast } from './ToastContext';
 import { Host, HostStatistics } from '../types';
+import { API_BASE } from '../config/api';
 
 interface MonitoringStats {
     total: number;
@@ -28,7 +29,7 @@ export const MonitoringProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     const { showToast } = useToast();
 
     // Refs for polling control
-    const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+    const pollingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const isFirstLoad = useRef(true);
 
     const fetchHosts = useCallback(async (silent = false) => {
@@ -36,8 +37,8 @@ export const MonitoringProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         try {
             // Fetch hosts and monitor stats in parallel
             const [hostsResponse, monitorResponse] = await Promise.all([
-                fetch('http://127.0.0.1:8000/hosts'),
-                fetch('http://127.0.0.1:8000/network/monitor')
+                fetch(`${API_BASE}/hosts`),
+                fetch(`${API_BASE}/network/monitor`)
             ]);
 
             if (!hostsResponse.ok) throw new Error('Failed to fetch hosts');
@@ -103,31 +104,53 @@ export const MonitoringProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         }
     }, [showToast]);
 
-    // Initial load and polling
-    // Initial load and polling
+    // Initial load and polling with exponential backoff on failure.
+    // Healthy state: poll every 2s. On failure: 2s -> 4s -> 8s -> ... cap 30s.
     useEffect(() => {
         let isMounted = true;
         let retryCount = 0;
-        const maxRetries = 20; // Try for 20 seconds
+        const maxInitialRetries = 20;
+        const baseInterval = 2000;
+        const maxInterval = 30000;
+        let currentInterval = baseInterval;
+        let warnedDisconnected = false;
+
+        const scheduleNext = () => {
+            if (!isMounted) return;
+            pollingTimeoutRef.current = setTimeout(poll, currentInterval);
+        };
+
+        const poll = async () => {
+            if (!isMounted) return;
+            const success = await fetchHosts(true);
+            if (!isMounted) return;
+            if (success) {
+                if (warnedDisconnected) {
+                    showToast('Conexão com o servidor restaurada.', 'success');
+                    warnedDisconnected = false;
+                }
+                currentInterval = baseInterval;
+            } else {
+                currentInterval = Math.min(currentInterval * 2, maxInterval);
+                if (!warnedDisconnected && currentInterval >= maxInterval) {
+                    showToast('Servidor não responde. Tentando reconectar...', 'error');
+                    warnedDisconnected = true;
+                }
+            }
+            scheduleNext();
+        };
 
         const initialFetch = async () => {
-            while (retryCount < maxRetries && isMounted) {
-                const success = await fetchHosts(retryCount > 0); // Silent on retries
-
+            while (retryCount < maxInitialRetries && isMounted) {
+                const success = await fetchHosts(retryCount > 0);
                 if (success) {
-                    if (isMounted) {
-                        // Start polling only after success
-                        pollingIntervalRef.current = setInterval(() => {
-                            fetchHosts(true);
-                        }, 2000);
-                    }
+                    if (isMounted) scheduleNext();
                     return;
                 }
-
                 retryCount++;
                 await new Promise(resolve => setTimeout(resolve, 1000));
             }
-            if (isMounted && retryCount >= maxRetries) {
+            if (isMounted && retryCount >= maxInitialRetries) {
                 showToast('Não foi possível conectar ao servidor local.', 'error');
             }
         };
@@ -136,11 +159,12 @@ export const MonitoringProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
         return () => {
             isMounted = false;
-            if (pollingIntervalRef.current) {
-                clearInterval(pollingIntervalRef.current);
+            if (pollingTimeoutRef.current) {
+                clearTimeout(pollingTimeoutRef.current);
+                pollingTimeoutRef.current = null;
             }
         };
-    }, [fetchHosts]);
+    }, [fetchHosts, showToast]);
 
     // Derived state: Unique Groups
     const uniqueGroups = Array.from(new Set(hosts.map(h => h.group).filter(Boolean) as string[])).sort();
