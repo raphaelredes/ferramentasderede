@@ -83,8 +83,9 @@
   .test.high { border-left-color: var(--orange); }
   .test.med  { border-left-color: var(--yellow); }
   .test.low  { border-left-color: var(--muted); }
+  .test.new  { border-left-color: var(--green); }
 
-  .row { display: flex; gap: 12px; align-items: baseline; }
+  .row { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
   .id {
     font-family: "Cascadia Code", monospace;
     font-size: 12px;
@@ -161,14 +162,13 @@
 
   hr { border: none; border-top: 1px solid var(--border); margin: 24px 0; }
 
-  .check {
-    display: inline-block;
-    width: 14px; height: 14px;
-    border: 1.5px solid var(--muted);
-    border-radius: 3px;
-    margin-right: 8px;
-    vertical-align: -2px;
+  .meta {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 6px;
   }
+  .meta code { font-size: 11px; }
+
   @media print {
     body { background: white; color: black; padding: 12px; }
     .card, .test, .toc, details { background: #f5f5f5; border-color: #ccc; }
@@ -183,7 +183,7 @@
 
 <h1>Plano de Testes — Ferramentas de Rede</h1>
 <p class="lead">Roteiro completo de validação após a refatoração técnica e implementação multi-domínio / multi-VLAN.<br>
-Gerado em <strong>2026-05-06</strong>. Ambiente alvo: rede ampla com 2 domínios e várias VLANs.</p>
+Atualizado em <strong>2026-05-06</strong>. Ambiente alvo: rede ampla com 2 domínios e várias VLANs.</p>
 
 <div class="card">
   <strong>Como usar este documento:</strong> abra em qualquer navegador (offline, é um único arquivo). Cada teste tem um ID, severidade, passos e o resultado esperado. Marque mentalmente os ✅ conforme valida.<br>
@@ -197,10 +197,12 @@ Gerado em <strong>2026-05-06</strong>. Ambiente alvo: rede ampla com 2 domínios
     <li><a href="#sec-seguranca">1. Segurança (críticos)</a></li>
     <li><a href="#sec-build">2. Build &amp; saúde geral</a></li>
     <li><a href="#sec-multi">3. Multi-domínio / multi-VLAN ⭐</a></li>
-    <li><a href="#sec-stab">4. Estabilidade (DB, polling, race)</a></li>
+    <li><a href="#sec-stab">4. Estabilidade &amp; performance</a></li>
     <li><a href="#sec-winrm">5. Acesso remoto (WinRM)</a></li>
-    <li><a href="#sec-ux">6. UX e regressões funcionais</a></li>
-    <li><a href="#troubleshoot">7. Troubleshooting</a></li>
+    <li><a href="#sec-vendor">6. Vendor lookup &amp; logs</a></li>
+    <li><a href="#sec-ux">7. UX &amp; regressões funcionais</a></li>
+    <li><a href="#troubleshoot">8. Troubleshooting</a></li>
+    <li><a href="#refs">9. Referência</a></li>
   </ul>
 </div>
 
@@ -212,8 +214,8 @@ Gerado em <strong>2026-05-06</strong>. Ambiente alvo: rede ampla com 2 domínios
     <li><strong>Python 3.13+</strong> instalado e no PATH</li>
     <li><strong>Node.js 20+</strong> com <code>npm install</code> já rodado em <code>electron/</code></li>
     <li>Acesso administrativo na máquina de teste (para WinRM e firewall)</li>
-    <li><strong>Wireshark</strong> instalado (para confirmar item ⭐3.3)</li>
-    <li>Idealmente: máquina dual-NIC ligada às duas VLANs/domínios. Se só tem uma, marque os testes multi-VLAN como N/A — eles não dão pra validar de verdade.</li>
+    <li><strong>Wireshark</strong> instalado (para confirmar item ⭐T3.3)</li>
+    <li>Idealmente: máquina dual-NIC ligada às duas VLANs/domínios. Se só tem uma, marque os testes multi-VLAN como N/A.</li>
   </ul>
 </div>
 
@@ -222,7 +224,7 @@ Gerado em <strong>2026-05-06</strong>. Ambiente alvo: rede ampla com 2 domínios
   <div class="step">Executar:</div>
   <pre>cd C:\Users\raphael.rego\Desktop\ferramentasderede\python
 pip install -r requirements.txt</pre>
-  <div class="expect">✅ <strong>Esperado:</strong> mensagem <code>Successfully installed dnspython-2.7.0</code> (ou "already satisfied" se já estava instalado). Demais deps já estavam.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> mensagem <code>Successfully installed dnspython-2.7.0</code> (ou "already satisfied" se já estava instalado).</div>
   <div class="fail">❌ Se falhar: provavelmente proxy/firewall bloqueando PyPI. Configure variável <code>HTTPS_PROXY</code> antes.</div>
 </div>
 
@@ -233,8 +235,8 @@ pip install -r requirements.txt</pre>
 taskkill /F /IM python.exe 2&gt;nul</pre>
   <div class="step">Iniciar:</div>
   <pre>python C:\Users\raphael.rego\Desktop\ferramentasderede\python\main.py</pre>
-  <div class="expect">✅ <strong>Esperado:</strong> Vite abre, janela do Electron sobe, dashboard carrega lista de hosts.</div>
-  <div class="fail">❌ Se a janela ficar branca por mais de 10s: provavelmente o backend não subiu — abra <code>%TEMP%\network_tools_debug.log</code>.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> Vite abre, janela do Electron sobe, dashboard carrega lista de hosts em até ~10s.</div>
+  <div class="fail">❌ Se a janela ficar branca por mais de 15s: provavelmente o backend não subiu — abra <code>%TEMP%\network_tools_debug.log</code>.</div>
 </div>
 
 <hr>
@@ -245,7 +247,7 @@ taskkill /F /IM python.exe 2&gt;nul</pre>
   <div class="step">Com o app rodando, em outro terminal:</div>
   <pre>netstat -ano | findstr :8000</pre>
   <div class="expect">✅ <strong>Esperado:</strong> apenas <code>127.0.0.1:8000 ... LISTENING</code>. Nenhuma linha com <code>0.0.0.0:8000</code>.</div>
-  <div class="fail">❌ Se aparecer <code>0.0.0.0:8000</code>: ainda há um processo antigo rodando — mate todos os python.exe e suba de novo.</div>
+  <div class="meta">Implementação: <code>NT_API_HOST</code> default <code>127.0.0.1</code> em <code>python/api/server.py</code>.</div>
 </div>
 
 <div class="test crit">
@@ -253,17 +255,15 @@ taskkill /F /IM python.exe 2&gt;nul</pre>
   <div class="step">De outra máquina na mesma rede (ou de um celular no Wi-Fi corporativo), tentar:</div>
   <pre>curl http://&lt;IP-da-sua-máquina&gt;:8000/hosts</pre>
   <div class="expect">✅ <strong>Esperado:</strong> conexão recusada / timeout. <em>Não pode</em> retornar a lista de hosts.</div>
-  <div class="fail">❌ Se retornar dados: ⚠️ revise <code>NT_API_HOST</code> e a configuração de firewall.</div>
 </div>
 
 <div class="test crit">
-  <div class="row"><span class="id">T1.3</span><span class="title">Terminal externo (PowerShell) não vaza senha no histórico</span><span class="badge badge-crit">CRÍTICO</span></div>
+  <div class="row"><span class="id">T1.3</span><span class="title">Terminal externo (PowerShell) não vaza senha</span><span class="badge badge-crit">CRÍTICO</span></div>
   <div class="step">No app, abrir um host com WinRM funcionando, clicar em "Abrir Terminal Externo" com credenciais.</div>
   <div class="step">Na janela do PowerShell que abriu, digitar:</div>
   <pre>Get-History | Format-List
 Get-ChildItem env: | Where-Object { $_.Name -like "NT_*" }</pre>
   <div class="expect">✅ <strong>Esperado:</strong> nenhum comando contendo a senha em texto claro. As variáveis <code>NT_REMOTE_*</code> não devem aparecer (foram removidas no início do script).</div>
-  <div class="fail">❌ Se aparecer a senha em <code>$pass</code> ou em <code>Get-History</code>: a refatoração do <code>open_external_terminal</code> não rodou — confirme que copiou <code>python/api/routes/network.py</code>.</div>
 </div>
 
 <div class="test crit">
@@ -282,15 +282,14 @@ await window.electron.showItemInFolder('..\\..\\Windows')   // deve dar Invalid 
 
 <div class="test high">
   <div class="row"><span class="id">T2.1</span><span class="title">TypeScript sem erros</span><span class="badge badge-high">alto</span></div>
-  <div class="step">Em <code>electron/</code>:</div>
-  <pre>npx tsc --noEmit</pre>
+  <pre>cd electron &amp;&amp; npx tsc --noEmit</pre>
   <div class="expect">✅ <strong>Esperado:</strong> saída vazia (zero erros).</div>
 </div>
 
 <div class="test med">
   <div class="row"><span class="id">T2.2</span><span class="title">Vite build conclui sem erro</span><span class="badge badge-med">médio</span></div>
   <pre>npx vite build</pre>
-  <div class="expect">✅ <strong>Esperado:</strong> três <code>✓ built in</code> no fim. Bundle do renderer ~1MB, main ~6KB, preload ~0.8KB.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> três <code>✓ built in</code> no fim.</div>
 </div>
 
 <div class="test med">
@@ -304,17 +303,16 @@ curl http://127.0.0.1:8000/network/interfaces</pre>
 <h2 id="sec-multi">3. Multi-domínio / Multi-VLAN ⭐</h2>
 
 <div class="card">
-  <strong>Pré-requisito desta seção:</strong> máquina conectada a pelo menos duas redes diferentes (duas NICs físicas, ou uma NIC + VPN, ou uma NIC + Hyper-V/WSL). Se você só tem uma, pule para o item 4.
+  <strong>Pré-requisito desta seção:</strong> máquina conectada a pelo menos duas redes diferentes (duas NICs físicas, ou uma NIC + VPN, ou uma NIC + Hyper-V/WSL). Se você só tem uma, pule para a seção 4.
 </div>
 
-<div class="test high">
+<div class="test new">
   <div class="row"><span class="id">T3.1</span><span class="title">Endpoint <code>/network/interfaces</code> detecta TODAS as NICs ativas</span><span class="badge badge-new">novo</span></div>
   <pre>curl http://127.0.0.1:8000/network/interfaces</pre>
   <div class="expect">✅ <strong>Esperado:</strong> JSON com uma entrada por NIC IPv4 que não seja loopback (127.x) nem APIPA (169.254.x). Cada uma com <code>name</code>, <code>ip</code>, <code>cidr</code>, <code>mac</code>.</div>
-  <div class="fail">❌ Se vier vazio: confira que <code>psutil</code> está instalado.</div>
 </div>
 
-<div class="test high">
+<div class="test new">
   <div class="row"><span class="id">T3.2</span><span class="title">Aba "Redes / VLANs" em Configurações</span><span class="badge badge-new">novo</span></div>
   <div class="step">Abrir o app → <strong>Configurações</strong>. Confirmar que existem 4 abas: Scanner de Rede / <strong>Redes / VLANs</strong> / Acesso Remoto / Dados.</div>
   <div class="step">Clicar em "Redes / VLANs". Conferir os blocos:</div>
@@ -329,8 +327,7 @@ curl http://127.0.0.1:8000/network/interfaces</pre>
     <li><strong>DNS server</strong>: ex. <code>10.10.0.1</code></li>
     <li><strong>Domínio AD</strong>: ex. <code>dominio-a.local</code></li>
   </ul>
-  <div class="step">Clicar em <strong>Salvar Alterações</strong>.</div>
-  <div class="expect">✅ <strong>Esperado:</strong> toast verde de sucesso. Recarregar a página → as redes persistem.</div>
+  <div class="step">Clicar em <strong>Salvar Alterações</strong>. Recarregar a página → as redes persistem.</div>
 </div>
 
 <div class="test crit">
@@ -339,19 +336,18 @@ curl http://127.0.0.1:8000/network/interfaces</pre>
   <div class="step">No app: <strong>Ferramentas → Ping</strong>. No dropdown "Sair pela rede", escolher a rede da NIC #1. Pingar <code>8.8.8.8</code>.</div>
   <div class="expect">✅ <strong>Esperado:</strong> Wireshark vê pacotes saindo. <em>Source = IP da NIC #1.</em></div>
   <div class="step">Parar. Trocar para a NIC #2 no dropdown. Pingar de novo. Mudar Wireshark para a outra NIC.</div>
-  <div class="expect">✅ <strong>Esperado:</strong> agora os pacotes saem pela NIC #2. Confirma que o <code>-S</code>/<code>-I</code> está funcionando.</div>
-  <div class="fail">❌ Se sair sempre pela mesma NIC: o flag não está chegando ao comando <code>ping</code>. Confira <code>python/src/network/ping.py</code> linha ~30.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> agora os pacotes saem pela NIC #2.</div>
 </div>
 
-<div class="test high">
+<div class="test new">
   <div class="row"><span class="id">T3.4</span><span class="title">Traceroute respeita source_ip</span><span class="badge badge-new">novo</span></div>
   <div class="step">Mesma ideia do T3.3, mas em <strong>Ferramentas → Traceroute</strong>.</div>
   <div class="expect">✅ <strong>Esperado:</strong> a primeira linha do tracert mostra o gateway da NIC selecionada (não o gateway default).</div>
 </div>
 
-<div class="test high">
+<div class="test new">
   <div class="row"><span class="id">T3.5</span><span class="title">DNS por servidor específico (multi-domínio)</span><span class="badge badge-new">novo</span></div>
-  <div class="step">Suponha que <code>SERVIDOR1</code> existe nos dois domínios com IPs diferentes. Sem o app saber:</div>
+  <div class="step">Suponha que <code>SERVIDOR1</code> existe nos dois domínios com IPs diferentes:</div>
   <pre>curl -X POST http://127.0.0.1:8000/network/dns/resolve ^
   -H "Content-Type: application/json" ^
   -d "{\"name\":\"SERVIDOR1\",\"dns_server\":\"10.10.0.1\",\"domain\":\"dominio-a.local\"}"</pre>
@@ -360,7 +356,7 @@ curl http://127.0.0.1:8000/network/interfaces</pre>
   <div class="expect">✅ <strong>Esperado:</strong> agora retorna o IP do <strong>Domínio B</strong>. IPs diferentes confirmam que o resolver está consultando o servidor certo.</div>
 </div>
 
-<div class="test high">
+<div class="test new">
   <div class="row"><span class="id">T3.6</span><span class="title">Discovery (Scanner) respeita source_ip por aba</span><span class="badge badge-new">novo</span></div>
   <div class="step">Em <strong>Ferramentas → Scanner de Rede</strong>: criar 2 abas. Em cada uma, escolher uma rede diferente no dropdown "Rede automática".</div>
   <div class="expect">✅ <strong>Esperado:</strong> ao escolher uma rede, o CIDR auto-preenche (se estiver vazio).</div>
@@ -368,34 +364,49 @@ curl http://127.0.0.1:8000/network/interfaces</pre>
   <div class="expect">✅ <strong>Esperado:</strong> pacotes ICMP de cada aba saem pela NIC correta. Resultados não se misturam.</div>
 </div>
 
-<div class="test med">
+<div class="test new">
   <div class="row"><span class="id">T3.7</span><span class="title">Badge de rede no Dashboard</span><span class="badge badge-new">novo</span></div>
   <div class="step">Voltar ao <strong>Painel</strong> com hosts cadastrados.</div>
   <div class="expect">✅ <strong>Esperado:</strong> hosts cujo IP cai dentro de uma rede cadastrada mostram um <strong>badge azul</strong> com o nome da rede ao lado do IP. Hosts que não batem em nenhuma não mostram badge.</div>
 </div>
 
-<div class="test med">
+<div class="test new">
   <div class="row"><span class="id">T3.8</span><span class="title">Filtro por rede no Dashboard</span><span class="badge badge-new">novo</span></div>
   <div class="step">No <strong>Painel</strong>, conferir que apareceu uma 2ª linha de filtros com <code>Rede:</code> e botões "Todas", "Sem rede", e um por rede cadastrada.</div>
   <div class="step">Clicar em uma rede.</div>
   <div class="expect">✅ <strong>Esperado:</strong> só aparecem hosts daquela rede.</div>
   <div class="step">Clicar em "Sem rede".</div>
-  <div class="expect">✅ <strong>Esperado:</strong> só aparecem hosts cujo IP não está em nenhuma rede cadastrada (ex: hosts WAN tipo <code>8.8.8.8</code>).</div>
+  <div class="expect">✅ <strong>Esperado:</strong> só aparecem hosts cujo IP não está em nenhuma rede cadastrada.</div>
+</div>
+
+<div class="test new">
+  <div class="row"><span class="id">T3.9</span><span class="title">Refresh de host usa o DNS da rede do host</span><span class="badge badge-new">novo</span></div>
+  <div class="step">Numa rede com <code>dns_server</code> e <code>domain</code> configurados, em um host onde <code>SERVIDOR1</code> existe com IP diferente em outro domínio:</div>
+  <div class="step">Clicar no botão "Atualizar" do card do host.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> hostname e domain são preenchidos com os valores corretos do <strong>DNS daquela rede</strong>, mesmo que o sistema resolveria diferente.</div>
+  <div class="meta">Implementação: <code>_resolve_fqdn_for_host()</code> em <code>python/api/routes/network.py</code> tenta PTR via DNS da rede primeiro.</div>
+</div>
+
+<div class="test new">
+  <div class="row"><span class="id">T3.10</span><span class="title">Quick-action no Dashboard pré-seleciona source IP</span><span class="badge badge-new">novo</span></div>
+  <div class="step">No card de um host que pertence a uma rede cadastrada (com badge azul), clicar com botão direito → <strong>Ping</strong>.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> abre Ferramentas → Ping com o dropdown "Sair pela rede" já preenchido com o nome da rede do host. Não precisa selecionar manualmente.</div>
+  <div class="step">Repetir com Traceroute.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> mesma coisa.</div>
 </div>
 
 <hr>
-<h2 id="sec-stab">4. Estabilidade (DB, polling, race conditions)</h2>
+<h2 id="sec-stab">4. Estabilidade &amp; performance</h2>
 
 <div class="test high">
-  <div class="row"><span class="id">T4.1</span><span class="title">SQLite sob carga (simular o cenário real)</span><span class="badge badge-high">alto</span></div>
+  <div class="row"><span class="id">T4.1</span><span class="title">SQLite sob carga</span><span class="badge badge-high">alto</span></div>
   <div class="step">Cadastrar 50+ hosts (importe um CSV se já tiver, ou faça discovery em uma /24).</div>
   <div class="step">Habilitar monitoramento de todos.</div>
   <div class="step">Em paralelo, abrir o Scanner de Rede e iniciar uma nova varredura. Mexer no Painel (mudar grupos, filtros).</div>
   <div class="expect">✅ <strong>Esperado:</strong> sem mensagens de <code>database is locked</code> nos logs. Status atualiza normalmente.</div>
-  <div class="fail">❌ Se aparecer locks: verificar logs do backend — o decorator <code>@_retry_on_locked</code> deveria absorver a maioria.</div>
 </div>
 
-<div class="test med">
+<div class="test new">
   <div class="row"><span class="id">T4.2</span><span class="title">Polling com backoff quando backend cai</span><span class="badge badge-new">novo</span></div>
   <div class="step">Com o app aberto, matar o processo do backend Python:</div>
   <pre>Get-NetTCPConnection -LocalPort 8000 -State Listen | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }</pre>
@@ -411,8 +422,16 @@ curl http://127.0.0.1:8000/network/interfaces</pre>
   <div class="expect">✅ <strong>Esperado:</strong> aproximadamente 2 chamadas/min (era ~12/min antes).</div>
 </div>
 
+<div class="test new">
+  <div class="row"><span class="id">T4.4</span><span class="title">Resolução DNS paralela no monitor</span><span class="badge badge-new">novo</span></div>
+  <div class="step">Em rede com DNS lento, monitorar 30+ hosts (preferencialmente com hostnames vazios).</div>
+  <div class="step">Observar logs do backend (<code>%APPDATA%\FerramentasDeRede\errors.log</code> não, mas o stdout do Python — em dev é o terminal onde o app foi iniciado).</div>
+  <div class="expect">✅ <strong>Esperado:</strong> logs <code>Reverse DNS Update: ...</code> aparecem em rajada (várias por segundo) em vez de espaçados de ~2s. Ciclo completo de N hosts conclui em segundos, não minutos.</div>
+  <div class="meta">Implementação: <code>ThreadPoolExecutor</code> com 16 workers em <code>monitor.py</code>.</div>
+</div>
+
 <div class="test low">
-  <div class="row"><span class="id">T4.4</span><span class="title">Memória estável após 30 minutos</span><span class="badge badge-low">baixo</span></div>
+  <div class="row"><span class="id">T4.5</span><span class="title">Memória estável após 30 minutos</span><span class="badge badge-low">baixo</span></div>
   <div class="step">Deixar o app rodando 30 minutos com monitoramento ativo. Anotar uso de memória do processo Electron no início e no fim (Task Manager).</div>
   <div class="expect">✅ <strong>Esperado:</strong> crescimento &lt; 50MB. Sem leak agressivo.</div>
 </div>
@@ -421,7 +440,7 @@ curl http://127.0.0.1:8000/network/interfaces</pre>
 <h2 id="sec-winrm">5. Acesso remoto (WinRM)</h2>
 
 <div class="test high">
-  <div class="row"><span class="id">T5.1</span><span class="title">Mensagens de erro classificadas</span><span class="badge badge-new">novo</span></div>
+  <div class="row"><span class="id">T5.1</span><span class="title">Mensagens de erro classificadas</span><span class="badge badge-high">alto</span></div>
   <p>Para cada cenário abaixo, a tentativa de conectar via WinRM deve retornar mensagem específica (não mais "Falha em todos os métodos"):</p>
   <table>
     <tr><th>Cenário</th><th>Mensagem esperada (resumo)</th><th>Code</th></tr>
@@ -432,52 +451,90 @@ curl http://127.0.0.1:8000/network/interfaces</pre>
     <tr><td>Falha Kerberos cross-domain</td><td>"Falha Kerberos... Provável domínio diferente sem relação de confiança"</td><td><code>CROSS_DOMAIN_AUTH</code></td></tr>
     <tr><td>IP não está em TrustedHosts</td><td>"&lt;ip&gt; não está em TrustedHosts."</td><td><code>TRUSTED_HOSTS_REQUIRED</code></td></tr>
   </table>
-  <div class="expect">✅ <strong>Esperado:</strong> os toasts/diálogos da UI exibem essas mensagens (não mais um stack trace genérico).</div>
+</div>
+
+<div class="test new">
+  <div class="row"><span class="id">T5.2</span><span class="title">⭐ Auto-tentativa de variantes de username</span><span class="badge badge-new">novo</span></div>
+  <div class="step">Numa máquina do Domínio B (com <code>domain</code> configurado em Configurações → Redes), tentar conectar via WinRM informando apenas o nome do usuário (sem domínio):</div>
+  <ul>
+    <li>Username: <code>raphael</code> (sem qualificador)</li>
+    <li>Senha: a correta para Domínio B</li>
+  </ul>
+  <div class="expect">✅ <strong>Esperado:</strong> a conexão funciona. Por baixo, o app testou automaticamente <code>raphael@dominio-b.local</code> e <code>dominio-b\raphael</code>.</div>
+  <div class="step">Conferir logs do backend para ver as tentativas:</div>
+  <pre>Tentando variante de username: raphael@dominio-b.local
+Tentando variante de username: dominio-b.local\raphael</pre>
+  <div class="meta">Implementação: <code>_username_variants()</code> em <code>winrm_handler.py</code> consulta o <code>domain</code> da rede do IP-alvo.</div>
 </div>
 
 <div class="test med">
-  <div class="row"><span class="id">T5.2</span><span class="title">Comportamento cross-domain</span><span class="badge badge-med">médio</span></div>
-  <div class="step">Estando logado em DOMINIO_A, tentar conectar em uma máquina de DOMINIO_B sem informar o domínio (só o usuário).</div>
-  <div class="expect">✅ <strong>Esperado:</strong> erro com a dica "informe DOMINIO\usuario ou usuario@dominio".</div>
-  <div class="step">Repetir informando <code>DOMINIO_B\usuario</code>.</div>
-  <div class="expect">✅ <strong>Esperado:</strong> conecta (se as credenciais forem válidas em DOMINIO_B).</div>
+  <div class="row"><span class="id">T5.3</span><span class="title">Comportamento cross-domain antigo (cenário negativo)</span><span class="badge badge-med">médio</span></div>
+  <div class="step">Repetir T5.2 mas <strong>sem</strong> domínio configurado na rede do host-alvo (limpar campo "Domínio AD" da rede em Configurações).</div>
+  <div class="expect">✅ <strong>Esperado:</strong> a conexão falha com <code>AUTH_FAILED</code> e a dica "informe DOMINIO\usuario ou usuario@dominio" — porque sem o domínio cadastrado, o app não tem como adivinhar.</div>
 </div>
 
 <hr>
-<h2 id="sec-ux">6. UX e regressões funcionais</h2>
+<h2 id="sec-vendor">6. Vendor lookup &amp; logs</h2>
 
-<p>Estes testes são para garantir que <strong>nada quebrou</strong> com tantas mudanças. Para cada feature antiga, abrir e usar 1 minuto:</p>
+<div class="test new">
+  <div class="row"><span class="id">T6.1</span><span class="title">Vendor lookup não bloqueia primeiro start sem internet</span><span class="badge badge-new">novo</span></div>
+  <div class="step">Deletar o cache OUI local: <code>%USERPROFILE%\.cache\python-mac-vendor-lookup\mac-vendors.txt</code> (se existir).</div>
+  <div class="step">Desconectar a máquina da internet (ou bloquear no firewall <code>standards-oui.ieee.org</code>).</div>
+  <div class="step">Iniciar o app.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> sobe normalmente em ~10s. Antes ficava 30s+ tentando baixar OUI.</div>
+  <div class="step">Fazer um discovery em uma /24 onde haja máquinas Dell/HP/Lenovo/VMware/Hyper-V.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> mesmo offline, vendor é classificado corretamente para essas marcas (via fallback embutido). Marcas raras aparecem como "Desconhecido".</div>
+</div>
+
+<div class="test new">
+  <div class="row"><span class="id">T6.2</span><span class="title">Logs em APP_DATA_DIR (não no Desktop / CWD)</span><span class="badge badge-new">novo</span></div>
+  <div class="step">Após executar uma sessão de Terminal Remoto, verificar:</div>
+  <pre>dir %APPDATA%\FerramentasDeRede\
+# Esperar ver: errors.log, terminal_debug.log, debug_sessions.txt</pre>
+  <div class="expect">✅ <strong>Esperado:</strong> os arquivos de log estão lá, não no Desktop nem no diretório onde o app foi iniciado.</div>
+  <div class="step">Conferir que <strong>não</strong> existe <code>~/Desktop/ferramentasderede/debug_sessions.txt</code> nem <code>Errors.txt</code> ou <code>terminal_debug.log</code> no CWD.</div>
+</div>
+
+<hr>
+<h2 id="sec-ux">7. UX &amp; regressões funcionais</h2>
+
+<p>Estes testes garantem que <strong>nada quebrou</strong> com tantas mudanças.</p>
 
 <div class="test low">
-  <div class="row"><span class="id">T6.1</span><span class="title">Adicionar / remover / editar host (CRUD)</span><span class="badge badge-low">regressão</span></div>
+  <div class="row"><span class="id">T7.1</span><span class="title">CRUD de host</span><span class="badge badge-low">regressão</span></div>
   <div class="expect">✅ Cadastrar um host novo, mudar o grupo, deletar pela lixeira. Sem erro.</div>
 </div>
 
 <div class="test low">
-  <div class="row"><span class="id">T6.2</span><span class="title">Refresh de host (hostname/domínio)</span><span class="badge badge-low">regressão</span></div>
-  <div class="step">No card do host, clicar no ícone "atualizar".</div>
-  <div class="expect">✅ Hostname e domínio são re-resolvidos. Recordar: corrigi a duplicação de <code>refresh_host</code> — a versão completa (com <code>resolve_via_ping_a</code>) é a que ficou.</div>
-</div>
-
-<div class="test low">
-  <div class="row"><span class="id">T6.3</span><span class="title">Cofre de credenciais</span><span class="badge badge-low">regressão</span></div>
+  <div class="row"><span class="id">T7.2</span><span class="title">Cofre de credenciais</span><span class="badge badge-low">regressão</span></div>
   <div class="expect">✅ Criar/desbloquear/bloquear cofre. Adicionar credencial. Usar credencial em ação remota.</div>
 </div>
 
-<div class="test low">
-  <div class="row"><span class="id">T6.4</span><span class="title">Backup / restore de configurações</span><span class="badge badge-low">regressão</span></div>
-  <div class="step">Em Configurações → Dados, gerar backup. Conferir que aparece na lista.</div>
-  <div class="expect">✅ Pode restaurar sem erro.</div>
+<div class="test new">
+  <div class="row"><span class="id">T7.3</span><span class="title">Reset/criação de cofre não recarrega a app</span><span class="badge badge-new">novo</span></div>
+  <div class="step">Em Segurança ou Configurações → criar um cofre.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> aba/scroll/contexto preservados. Antes a app inteira recarregava com flash.</div>
 </div>
 
 <div class="test low">
-  <div class="row"><span class="id">T6.5</span><span class="title">Terminal interativo (xterm WebSocket)</span><span class="badge badge-low">regressão</span></div>
+  <div class="row"><span class="id">T7.4</span><span class="title">Backup / restore de configurações</span><span class="badge badge-low">regressão</span></div>
+  <div class="expect">✅ Em Configurações → Dados, gerar backup. Conferir que aparece na lista. Pode restaurar sem erro.</div>
+</div>
+
+<div class="test low">
+  <div class="row"><span class="id">T7.5</span><span class="title">Terminal interativo (xterm WebSocket)</span><span class="badge badge-low">regressão</span></div>
   <div class="step">Em <strong>Terminal Remoto</strong>, conectar em um host e rodar <code>hostname</code>.</div>
   <div class="expect">✅ Saída aparece no terminal.</div>
 </div>
 
+<div class="test low">
+  <div class="row"><span class="id">T7.6</span><span class="title">Drag-and-drop reorder de hosts</span><span class="badge badge-low">regressão</span></div>
+  <div class="step">No Painel, com filtro "Todos" ativo, arrastar um card de host para reordenar.</div>
+  <div class="expect">✅ A ordem se preserva entre recargas (salva em <code>localStorage</code>).</div>
+</div>
+
 <hr>
-<h2 id="troubleshoot">7. Troubleshooting</h2>
+<h2 id="troubleshoot">8. Troubleshooting</h2>
 
 <details>
   <summary>Backend não sobe / API offline</summary>
@@ -490,12 +547,12 @@ curl http://127.0.0.1:8000/network/interfaces</pre>
 
 <details>
   <summary>"ModuleNotFoundError: No module named 'dns'"</summary>
-  <p>Falta rodar <code>pip install -r python/requirements.txt</code> (T0.1). O <code>dns_resolver.py</code> tem fallback para <code>socket</code>, mas só se o import falhar com <code>ImportError</code>. Outros erros (ex: WMI no Windows) também caem no fallback.</p>
+  <p>Falta rodar <code>pip install -r python/requirements.txt</code> (T0.1). O <code>dns_resolver.py</code> tem fallback para <code>socket</code>, então a app não morre, mas as features de DNS por servidor específico não funcionam.</p>
 </details>
 
 <details>
   <summary>Aba "Redes / VLANs" não aparece em Configurações</summary>
-  <p>Você está rodando uma build antiga. Certifique-se de que <code>electron/dist/</code> foi regerado (<code>npx vite build</code>) e que está abrindo o app a partir do diretório principal (<code>C:\Users\raphael.rego\Desktop\ferramentasderede\</code>), não de qualquer outro lugar.</p>
+  <p>Você está rodando uma build antiga. Certifique-se de que <code>electron/dist/</code> foi regerado (<code>npx vite build</code>) e que está abrindo o app a partir do diretório principal.</p>
 </details>
 
 <details>
@@ -508,29 +565,30 @@ curl http://127.0.0.1:8000/network/interfaces</pre>
 </details>
 
 <details>
-  <summary>Erro CORS no DevTools</summary>
-  <p>O CORS agora só permite <code>http://127.0.0.1:5173</code> e <code>http://localhost:5173</code>. Se você abriu a UI por outra origem (ex: <code>http://192.168.1.10:5173</code>), defina antes de subir o backend:</p>
-  <pre>set NT_CORS_ORIGINS=http://192.168.1.10:5173
-python python\main.py</pre>
+  <summary>"TypeError: Cannot read properties of null"</summary>
+  <p>Se aparecer com mensagens diferentes da do T3.7 (que foi corrigido), provavelmente é um campo novo do backend que veio null inesperado. Reportar com o stack trace e o ID do teste — fica fácil patchar.</p>
 </details>
 
 <details>
-  <summary>Erros TypeScript depois de mexer no código</summary>
-  <p>Rode <code>cd electron &amp;&amp; npx tsc --noEmit</code> e leia a primeira linha do erro. Os tipos críticos vivem em <code>electron/src/types.d.ts</code> e <code>electron/src/pages/Settings.tsx</code> (NetworkConfig).</p>
+  <summary>Erro CORS no DevTools</summary>
+  <p>O CORS agora só permite <code>http://127.0.0.1:5173</code> e <code>http://localhost:5173</code>. Se você abriu a UI por outra origem, defina antes de subir o backend:</p>
+  <pre>set NT_CORS_ORIGINS=http://outra-origem:5173
+python python\main.py</pre>
 </details>
 
 <hr>
+<h2 id="refs">9. Referência</h2>
 
-<h2>Referência rápida — variáveis de ambiente</h2>
+<h3>Variáveis de ambiente</h3>
 <table>
   <tr><th>Variável</th><th>Default</th><th>Uso</th></tr>
-  <tr><td><code>NT_API_HOST</code></td><td><code>127.0.0.1</code></td><td>Bind do uvicorn. Use <code>0.0.0.0</code> só quando precisar expor (raro).</td></tr>
+  <tr><td><code>NT_API_HOST</code></td><td><code>127.0.0.1</code></td><td>Bind do uvicorn. Use <code>0.0.0.0</code> só quando precisar expor.</td></tr>
   <tr><td><code>NT_API_PORT</code></td><td><code>8000</code></td><td>Porta do backend.</td></tr>
   <tr><td><code>NT_CORS_ORIGINS</code></td><td>(localhost:5173)</td><td>Lista separada por vírgula de origens permitidas.</td></tr>
   <tr><td><code>VITE_API_HOST</code> / <code>VITE_API_PORT</code></td><td><code>127.0.0.1</code> / <code>8000</code></td><td>Onde o frontend procura o backend (build time).</td></tr>
 </table>
 
-<h2>Referência rápida — endpoints novos</h2>
+<h3>Endpoints novos</h3>
 <table>
   <tr><th>Método</th><th>Path</th><th>Descrição</th></tr>
   <tr><td>GET</td><td><code>/network/interfaces</code></td><td>Lista NICs IPv4 ativas via psutil</td></tr>
@@ -540,9 +598,36 @@ python python\main.py</pre>
   <tr><td>POST</td><td><code>/network/discovery</code></td><td>Body aceita <code>source_ip</code> opcional</td></tr>
 </table>
 
+<h3>Códigos de erro WinRM</h3>
+<table>
+  <tr><th>Code</th><th>Significado</th><th>Ação esperada</th></tr>
+  <tr><td><code>AUTH_FAILED</code></td><td>Credenciais recusadas</td><td>Verificar usuário/senha; em multi-domínio, qualificar com DOMINIO\</td></tr>
+  <tr><td><code>CROSS_DOMAIN_AUTH</code></td><td>Falha Kerberos</td><td>Verificar relação de confiança ou usar UPN</td></tr>
+  <tr><td><code>NETWORK_UNREACHABLE</code></td><td>Sem rota / timeout</td><td>Conferir NIC, firewall, rota</td></tr>
+  <tr><td><code>WINRM_DISABLED</code></td><td>Porta 5985 recusada</td><td><code>Enable-PSRemoting -Force</code> no destino</td></tr>
+  <tr><td><code>TRUSTED_HOSTS_REQUIRED</code></td><td>Não está em TrustedHosts</td><td>App pede confirmação para adicionar</td></tr>
+</table>
+
+<h3>Caminhos importantes</h3>
+<table>
+  <tr><th>Path</th><th>Conteúdo</th></tr>
+  <tr><td><code>%APPDATA%\FerramentasDeRede\</code></td><td>Banco SQLite, configurações, logs</td></tr>
+  <tr><td><code>%APPDATA%\FerramentasDeRede\errors.log</code></td><td>Erros de PowerShell remoto</td></tr>
+  <tr><td><code>%APPDATA%\FerramentasDeRede\terminal_debug.log</code></td><td>Trace do terminal interativo</td></tr>
+  <tr><td><code>%APPDATA%\FerramentasDeRede\debug_sessions.txt</code></td><td>Output bruto da listagem de sessões</td></tr>
+  <tr><td><code>%TEMP%\network_tools_debug.log</code></td><td>Log do main process do Electron</td></tr>
+</table>
+
+<h3>Tech-debt restante (não-crítico)</h3>
+<ul>
+  <li><strong>Virtualização de listas grandes</strong>: o Dashboard renderiza todos os cards de host. Com 500+ hosts a renderização inicial fica visível. Drag-and-drop bloqueia uso direto de <code>react-window</code>; demanda solução customizada.</li>
+  <li><strong>ToolsContext (~540 linhas)</strong>: Ping/Trace/Scanner num único provider. Funcional, só verboso.</li>
+  <li><strong>Vendor DB embutida</strong>: hoje depende de download IEEE no primeiro uso (já com fallback). Embutir o arquivo OUI no instalador eliminaria a dependência de internet completamente.</li>
+</ul>
+
 <p style="text-align:center; color: var(--muted); margin-top: 48px; font-size: 12px;">
-Plano gerado em 2026-05-06 — Ferramentas de Rede multi-domínio<br>
-Para imprimir: Ctrl+P, modo Retrato, ative "imagens de fundo" se quiser preservar cores.
+Plano de testes — Ferramentas de Rede multi-domínio<br>
+Atualizado em 2026-05-06. Para imprimir: Ctrl+P, modo Retrato.
 </p>
 
 </div>
