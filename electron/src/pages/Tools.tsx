@@ -43,15 +43,17 @@ export function Tools() {
                 return;
             }
 
-            const { type, target } = pendingAction;
+            const { type, target, sourceIp } = pendingAction;
 
             if (type === 'ping') {
                 setActiveTab('ping');
                 setLocalPingTarget(target);
+                if (sourceIp !== undefined) setPingSourceIp(sourceIp);
                 // Auto-run disabled per user request
             } else if (type === 'traceroute') {
                 setActiveTab('traceroute');
                 setLocalTraceTarget(target);
+                if (sourceIp !== undefined) setTraceSourceIp(sourceIp);
                 // Auto-run disabled per user request
             }
 

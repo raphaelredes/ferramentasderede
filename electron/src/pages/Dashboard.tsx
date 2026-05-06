@@ -575,11 +575,25 @@ export default function Dashboard() {
                                                 setIsDetailsModalOpen={setIsDetailsModalOpenCallback}
                                                 isDragDisabled={!isReorderEnabled}
                                                 onPing={(host) => {
-                                                    setPendingAction({ type: 'ping', target: host.ip || host.address, id: crypto.randomUUID() });
+                                                    // Carrega o source_ip da rede do host se cadastrada — assim
+                                                    // ações rápidas no card já saem pela NIC certa em multi-VLAN.
+                                                    const net = host.network_id ? networks.find(n => n.id === host.network_id) : undefined;
+                                                    setPendingAction({
+                                                        type: 'ping',
+                                                        target: host.ip || host.address,
+                                                        id: crypto.randomUUID(),
+                                                        sourceIp: net?.source_ip,
+                                                    });
                                                     navigate('/tools');
                                                 }}
                                                 onTraceroute={(host) => {
-                                                    setPendingAction({ type: 'traceroute', target: host.ip || host.address, id: crypto.randomUUID() });
+                                                    const net = host.network_id ? networks.find(n => n.id === host.network_id) : undefined;
+                                                    setPendingAction({
+                                                        type: 'traceroute',
+                                                        target: host.ip || host.address,
+                                                        id: crypto.randomUUID(),
+                                                        sourceIp: net?.source_ip,
+                                                    });
                                                     navigate('/tools');
                                                 }}
                                                 onDelete={handleDeleteClick}

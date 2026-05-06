@@ -30,20 +30,28 @@ interface ScanSession {
     sourceIp?: string;  // NIC source for the discovery scan (multi-VLAN)
 }
 
+export interface PendingAction {
+    type: 'ping' | 'traceroute';
+    target: string;
+    id: string;
+    /** Optional NIC source IP — set when the host belongs to a configured network. */
+    sourceIp?: string;
+}
+
 interface ToolsContextType {
     // Independent States
     pingState: ToolState;
     traceState: ToolState;
     scanSessions: ScanSession[];
     activeSessionId: string | null;
-    pendingAction: { type: 'ping' | 'traceroute'; target: string; id: string } | null;
+    pendingAction: PendingAction | null;
     processedActionIds: Set<string>;
     markActionAsProcessed: (id: string) => void;
 
     // Actions
     setPingTarget: (target: string) => void;
     setTraceTarget: (target: string) => void;
-    setPendingAction: (action: { type: 'ping' | 'traceroute'; target: string; id: string } | null) => void;
+    setPendingAction: (action: PendingAction | null) => void;
 
     createScanSession: (cidr: string, mode?: 'quick' | 'full') => string;
     closeScanSession: (id: string) => void;
@@ -76,7 +84,7 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
 
     // Pending Action State (for auto-run from Dashboard)
-    const [pendingAction, setPendingAction] = useState<{ type: 'ping' | 'traceroute'; target: string; id: string } | null>(null);
+    const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
     const [processedActionIds, setProcessedActionIds] = useState<Set<string>>(new Set());
 
     const markActionAsProcessed = useCallback((id: string) => {
