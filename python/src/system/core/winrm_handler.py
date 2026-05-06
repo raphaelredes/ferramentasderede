@@ -48,15 +48,58 @@ class WinRMHandler:
 
         return result
 
+    def _classify_error(self, exc, method):
+        """Classify a WinRM exception into a stable error code + friendly message.
+
+        Codes:
+          AUTH_FAILED          — credenciais inválidas
+          CROSS_DOMAIN_AUTH    — credenciais válidas mas domínio errado / sem trust
+          NETWORK_UNREACHABLE  — sem rota/timeout
+          WINRM_DISABLED       — porta 5985 fechada / serviço parado
+          TRUSTED_HOSTS_REQUIRED — máquina não está em TrustedHosts
+          UNKNOWN              — outros
+        """
+        msg = str(exc).lower()
+        exc_name = type(exc).__name__
+
+        if isinstance(exc, ConnectTimeout) or "timed out" in msg or "timeout" in msg:
+            return ("NETWORK_UNREACHABLE",
+                    f"Tempo esgotado conectando em {self.target_ip}:5985 ({method}). Verifique rota e firewall.")
+        if isinstance(exc, ConnectionError) or "connection refused" in msg or "actively refused" in msg:
+            return ("WINRM_DISABLED",
+                    f"Porta WinRM (5985) recusada em {self.target_ip}. O serviço WinRM pode estar desabilitado no destino "
+                    f"(rode `Enable-PSRemoting -Force` no host alvo).")
+        if "no route to host" in msg or "unreachable" in msg or "name or service not known" in msg:
+            return ("NETWORK_UNREACHABLE",
+                    f"Sem rota até {self.target_ip}. Cheque a NIC e a tabela de rotas (`route print`).")
+        if "trusted" in msg and "host" in msg:
+            return ("TRUSTED_HOSTS_REQUIRED",
+                    f"{self.target_ip} não está em TrustedHosts.")
+        # NTLM / Kerberos auth-specific signatures
+        if any(t in msg for t in ("kerberos", "spn", "kdc")):
+            return ("CROSS_DOMAIN_AUTH",
+                    f"Falha Kerberos contra {self.target_ip}. Provável domínio diferente do seu sem relação de confiança. "
+                    f"Tente usuário no formato DOMINIO\\usuario ou usuario@dominio.")
+        if any(t in msg for t in ("0x80090308", "logon failure", "the user name or password", "unauthorized", "401", "access is denied", "access denied")):
+            # Could be wrong password OR wrong domain — give a hint
+            if "@" not in self.username and "\\" not in self.username:
+                return ("AUTH_FAILED",
+                        f"Credenciais recusadas por {self.target_ip}. Em ambiente multi-domínio, "
+                        f"informe o usuário como DOMINIO\\usuario ou usuario@dominio.")
+            return ("AUTH_FAILED",
+                    f"Credenciais recusadas por {self.target_ip} (usuário: {self.username}).")
+        return ("UNKNOWN", f"{exc_name}: {exc}")
+
     def _try_connect(self, username, password):
         """Tenta conectar com um conjunto específico de credenciais."""
         errors = []
+        codes = []
         auth_methods = ['negotiate', 'ntlm', 'credssp']
-        
+
         for method in auth_methods:
             try:
                 logging.info(f"Tentando conexão WinRM com método: {method} para {self.target_ip} (User: {username})")
-                
+
                 wsman = WSMan(
                     server=self.target_ip, username=username, password=password,
                     ssl=False, connection_timeout=20, auth_method=method
@@ -64,29 +107,28 @@ class WinRMHandler:
                 pool = RunspacePool(wsman, configuration_name='Microsoft.PowerShell')
                 pool.open()
                 ps = PowerShell(pool)
-                
-                # Se sucesso, salva na instância
+
                 self.wsman = wsman
                 self.pool = pool
                 self.ps = ps
                 logging.info(f"Conexão WinRM bem sucedida com método: {method}")
                 return {"success": True}
-                
+
             except Exception as e:
-                # Limpa recursos locais se falhar
-                try: 
+                try:
                     if 'pool' in locals() and pool: pool.close()
-                except: pass
-                try: 
+                except Exception:
+                    pass
+                try:
                     if 'wsman' in locals() and wsman: wsman.close()
-                except: pass
-                
-                error_str = str(e)
-                logging.warning(f"Falha na autenticação WinRM ({method}): {error_str}")
-                logging.debug(f"Detalhes do erro WinRM ({method}): {type(e).__name__}: {e}", exc_info=True)
-                errors.append(f"{method}: {error_str}")
-            except:
-                pass
+                except Exception:
+                    pass
+
+                code, friendly = self._classify_error(e, method)
+                logging.warning(f"WinRM falhou ({method}) [{code}]: {e}")
+                logging.debug(f"Detalhes ({method}): {type(e).__name__}: {e}", exc_info=True)
+                errors.append(f"{method}: {friendly}")
+                codes.append(code)
             self.pool = None
         
         if self.wsman:
@@ -106,15 +148,40 @@ class WinRMHandler:
         if self.target_ip not in ["127.0.0.1", "localhost"]:
             current_trusted = WinRMHandler.get_trusted_hosts()
             logging.info(f"Verificando TrustedHosts. Atual: '{current_trusted}', Alvo: '{self.target_ip}'")
-            # Se não for *, verifica se o IP está na lista
             if current_trusted != "*":
                 trusted_list = [h.strip() for h in current_trusted.split(',') if h.strip()]
                 if self.target_ip not in trusted_list:
-                    logging.warning(f"IP {self.target_ip} não está em TrustedHosts ({current_trusted}). Retornando erro TRUSTED_HOSTS_REQUIRED.")
-                    return {"error": "TRUSTED_HOSTS_REQUIRED", "detail": "O IP alvo não está na lista de TrustedHosts."}
+                    logging.warning(f"IP {self.target_ip} não está em TrustedHosts ({current_trusted}).")
+                    return {"error": "TRUSTED_HOSTS_REQUIRED", "code": "TRUSTED_HOSTS_REQUIRED",
+                            "detail": "O IP alvo não está na lista de TrustedHosts."}
 
-        logging.error(f"Falha em todos os métodos de autenticação para {self.target_ip}. Erros: {errors}")
-        return {"error": "Falha em todos os métodos de autenticação:\n" + "\n".join(errors)}
+        # Pick the most informative code observed across attempts
+        priority = {
+            "WINRM_DISABLED": 0,
+            "NETWORK_UNREACHABLE": 1,
+            "TRUSTED_HOSTS_REQUIRED": 2,
+            "CROSS_DOMAIN_AUTH": 3,
+            "AUTH_FAILED": 4,
+            "UNKNOWN": 5,
+        }
+        primary_code = sorted(codes, key=lambda c: priority.get(c, 99))[0] if codes else "UNKNOWN"
+        # Friendly summary keyed off the primary code, with all per-method details below.
+        summary_map = {
+            "WINRM_DISABLED": f"WinRM parece desabilitado em {self.target_ip}. Rode `Enable-PSRemoting -Force` no destino.",
+            "NETWORK_UNREACHABLE": f"Sem conectividade até {self.target_ip}. Verifique rota e firewall.",
+            "TRUSTED_HOSTS_REQUIRED": f"{self.target_ip} não está em TrustedHosts.",
+            "CROSS_DOMAIN_AUTH": (f"Autenticação Kerberos falhou contra {self.target_ip}. "
+                                  f"Provável domínio diferente sem relação de confiança — tente DOMINIO\\usuario ou usuario@dominio."),
+            "AUTH_FAILED": (f"Credenciais recusadas por {self.target_ip} (usuário: {self.username}). "
+                            f"Em multi-domínio, informe DOMINIO\\usuario ou usuario@dominio."),
+            "UNKNOWN": f"Falha em todos os métodos de autenticação para {self.target_ip}.",
+        }
+        logging.error(f"WinRM falhou para {self.target_ip}. Código principal: {primary_code}")
+        return {
+            "error": summary_map[primary_code],
+            "code": primary_code,
+            "details": errors,
+        }
 
     def close(self):
         """Fecha o RunspacePool e a conexão WSMan."""
