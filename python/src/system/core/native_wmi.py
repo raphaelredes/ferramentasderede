@@ -90,7 +90,8 @@ class NativeWMIHandler:
             cpu = self.query("SELECT Name FROM Win32_Processor")
             if cpu:
                 info["CPU"] = cpu[0].Name
-        except: pass
+        except Exception as e:
+            logging.debug(f"WMI CPU info failed: {e}")
 
         # 3. RAM
         try:
@@ -99,7 +100,8 @@ class NativeWMIHandler:
                 ram_bytes = float(cs[0].TotalPhysicalMemory)
                 info["RAM_GB"] = round(ram_bytes / (1024**3), 2)
                 info["CurrentUser"] = cs[0].UserName if cs[0].UserName else "N/A"
-        except: pass
+        except Exception as e:
+            logging.debug(f"WMI RAM/ComputerSystem failed: {e}")
 
         # 4. Disks
         try:
@@ -113,7 +115,8 @@ class NativeWMIHandler:
                     "Free_GB": round(float(d.FreeSpace) / (1024**3), 2) if d.FreeSpace else 0
                 })
             info["Disks"] = disks
-        except: pass
+        except Exception as e:
+            logging.debug(f"WMI Disks query failed: {e}")
 
         # 5. Network (Complex logic to match target IP)
         try:
@@ -151,7 +154,8 @@ class NativeWMIHandler:
                             if speed >= 1e9: info["LinkSpeed"] = f"{round(speed/1e9, 1)} Gbps"
                             elif speed >= 1e6: info["LinkSpeed"] = f"{round(speed/1e6, 0)} Mbps"
                             else: info["LinkSpeed"] = f"{speed} bps"
-                except: pass
+                except Exception as e:
+                    logging.debug(f"WMI NetworkAdapter speed lookup failed: {e}")
         except Exception as e:
             logging.error(f"WMI Net Error: {e}")
 
@@ -165,7 +169,8 @@ class NativeWMIHandler:
         # Format: 20241022143000.000000-180
         try:
             return f"{wmi_time[0:4]}-{wmi_time[4:6]}-{wmi_time[6:8]}T{wmi_time[8:10]}:{wmi_time[10:12]}:{wmi_time[12:14]}"
-        except: return wmi_time
+        except Exception:
+            return wmi_time
 
     def _wmitime_to_dt(self, wmi_time):
         if not wmi_time: return None
@@ -175,4 +180,5 @@ class NativeWMIHandler:
                 int(wmi_time[0:4]), int(wmi_time[4:6]), int(wmi_time[6:8]),
                 int(wmi_time[8:10]), int(wmi_time[10:12]), int(wmi_time[12:14])
             )
-        except: return None
+        except Exception:
+            return None

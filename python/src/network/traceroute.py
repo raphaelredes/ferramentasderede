@@ -90,8 +90,8 @@ def traceroute(target_ip, current_process_holder=None, source_ip=None):
                     yield f"\nTraceroute finalizado (código: {return_code}).\n"
             else:
                 yield f"\nTraceroute interrompido.\n"
-        except:
-            pass
+        except Exception as e:
+            logging.debug(f"TRACEROUTE: post-loop status check failed: {e}")
             
     except FileNotFoundError:
         yield f"Erro: Comando traceroute não encontrado no sistema.\n"
@@ -107,8 +107,8 @@ def traceroute(target_ip, current_process_holder=None, source_ip=None):
                 time.sleep(0.1)
                 if process.poll() is None:
                     process.kill()
-            except:
-                pass
+            except Exception as e:
+                logging.debug(f"TRACEROUTE: cleanup terminate/kill failed: {e}")
         
         if current_process_holder is not None:
             current_process_holder['_current_process'] = None

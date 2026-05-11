@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { AlertTriangle, X } from 'lucide-react';
 import { clsx } from 'clsx';
 
@@ -25,6 +25,15 @@ export function ConfirmationModal({
     type = 'danger',
     isLoading = false
 }: ConfirmationModalProps) {
+    useEffect(() => {
+        if (!isOpen) return;
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === 'Escape' && !isLoading) onClose();
+        };
+        document.addEventListener('keydown', onKey);
+        return () => document.removeEventListener('keydown', onKey);
+    }, [isOpen, isLoading, onClose]);
+
     if (!isOpen) return null;
 
     const colors = {
@@ -50,20 +59,34 @@ export function ConfirmationModal({
 
     const color = colors[type];
 
+    const titleId = `confirm-title-${title.replace(/\s+/g, '-').toLowerCase()}`;
     return (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fadeIn" onClick={onClose}>
-            <div className={clsx("bg-zinc-900 border rounded-xl p-6 max-w-md w-full shadow-2xl space-y-6", color.border)} onClick={(e) => e.stopPropagation()}>
+        <div
+            // z-[110] keeps confirmation dialogs above any modal that triggers them
+            // (e.g., HostDetailsModal at z-[100], Settings/Security pages, CredentialModal).
+            className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[110] flex items-center justify-center p-4 animate-fadeIn"
+            onClick={onClose}
+            role="presentation"
+        >
+            <div
+                className={clsx("bg-zinc-900 border rounded-xl p-6 max-w-md w-full shadow-2xl space-y-6", color.border)}
+                onClick={(e) => e.stopPropagation()}
+                role="alertdialog"
+                aria-modal="true"
+                aria-labelledby={titleId}
+            >
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                        <div className={clsx("p-3 rounded-full", color.bg, color.icon)}>
+                        <div className={clsx("p-3 rounded-full", color.bg, color.icon)} aria-hidden="true">
                             <AlertTriangle size={24} />
                         </div>
-                        <h3 className="text-xl font-bold text-white">{title}</h3>
+                        <h3 id={titleId} className="text-xl font-bold text-white">{title}</h3>
                     </div>
                     <button
                         onClick={onClose}
                         className="text-zinc-500 hover:text-zinc-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         disabled={isLoading}
+                        aria-label="Fechar"
                     >
                         <X size={20} />
                     </button>

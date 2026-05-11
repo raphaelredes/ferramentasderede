@@ -50,8 +50,8 @@ def check_host_status(ip_address, cache=None, cache_timeout=30, timeout=None, so
                         status = True
                     elif sock.connect_ex((ip_address, 445)) == 0:
                         status = True
-            except:
-                pass
+            except Exception as e:
+                logging.debug(f"TCP fallback for {ip_address} failed: {e}")
 
         # Armazenar no cache
         if cache is not None:
@@ -274,8 +274,8 @@ def check_host_status_detailed(ip_address, count=1, is_wan=False, resolve_names=
                             parts = resolved_hostname.split('.')
                             if len(parts) > 1:
                                 domain = '.'.join(parts[1:])
-                except:
-                    pass
+                except Exception as e:
+                    logging.debug(f"getfqdn fallback for {ip_address} failed: {e}")
 
         else:
             packet_loss = count
@@ -296,8 +296,8 @@ def check_host_status_detailed(ip_address, count=1, is_wan=False, resolve_names=
                         elif sock.connect_ex((ip_address, 445)) == 0:
                             online = True
                             latency = int((time.time() - start_time) * 1000)
-                except:
-                    pass
+                except Exception as e:
+                    logging.debug(f"TCP probe fallback for {ip_address} failed: {e}")
         
         # Fallback 2: Verificar tabela ARP (para hosts na mesma sub-rede que bloqueiam tudo)
         # OTIMIZAÇÃO: Se fast_mode, pular ARP check pois arp -a é lento

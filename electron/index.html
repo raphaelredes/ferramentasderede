@@ -3,6 +3,19 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      Content Security Policy.
+      - default-src 'self': baseline lockdown.
+      - script-src: 'self' + 'unsafe-inline'/'unsafe-eval' needed for Vite HMR in dev
+        and for some recharts internals; remove the unsafe-* tokens once the
+        renderer no longer needs them (post-bundle prod build could be tighter).
+      - style-src: 'unsafe-inline' for Tailwind-injected styles + recharts.
+      - connect-src: only the local FastAPI (127.0.0.1:8000) and the dev server
+        (5173 / 5174) ports. Blocks exfiltration to any other origin.
+      - img-src/font-src/media-src: self + data: for inline SVG icons/PNG logos.
+      - object-src 'none' + base-uri 'self' to harden against legacy embed vectors.
+    -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self'; connect-src 'self' http://127.0.0.1:8000 http://localhost:8000 http://127.0.0.1:5173 http://localhost:5173 http://127.0.0.1:5174 http://localhost:5174 ws://127.0.0.1:5173 ws://localhost:5173 ws://127.0.0.1:8000 ws://localhost:8000; object-src 'none'; base-uri 'self'; frame-ancestors 'none';" />
 <title>Ferramentas de Rede</title>
 <style>
   body {

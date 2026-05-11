@@ -1,192 +1,215 @@
-import { useEffect, useRef, useState } from 'react';
-import { Terminal as XTerm } from 'xterm';
-import { FitAddon } from 'xterm-addon-fit';
-import 'xterm/css/xterm.css';
-import { Terminal as TerminalIcon, Power, PowerOff } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Terminal as TerminalIcon, ExternalLink, ChevronDown, Search } from 'lucide-react';
 import { clsx } from 'clsx';
 import { API_BASE } from '../config/api';
+import { useMonitoring } from '../contexts/MonitoringContext';
+import { Host } from '../types';
+import { probeHost } from '../utils/hostProbe';
+import { resolveTeamViewerId } from '../utils/teamviewer';
+
+type LogEntry = { ts: number; level: 'info' | 'warn' | 'error'; text: string };
+
+const MANUAL_OPTION_VALUE = '__manual__';
 
 export function Terminal() {
-    const terminalRef = useRef<HTMLDivElement>(null);
-    const xtermRef = useRef<XTerm | null>(null);
-    const fitAddonRef = useRef<FitAddon | null>(null);
-    const wsRef = useRef<WebSocket | null>(null);
+    const { hosts, refreshHosts } = useMonitoring();
+    const [connection, setConnection] = useState({ ip: '', username: '', password: '' });
+    const [status, setStatus] = useState('Pronto');
+    const [busy, setBusy] = useState(false);
+    const [log, setLog] = useState<LogEntry[]>([]);
+    const [defaultCredName, setDefaultCredName] = useState<string | null>(null);
 
-    const [connection, setConnection] = useState({
-        ip: '',
-        username: '',
-        password: ''
-    });
-    const [isConnected, setIsConnected] = useState(false);
-    const [status, setStatus] = useState('Desconectado');
+    // Selected entry in the host picker. Empty = no host chosen yet, MANUAL_OPTION_VALUE
+    // = user picked "digitar manualmente" so the IP field becomes a free text input.
+    const [selectedAddress, setSelectedAddress] = useState<string>('');
+    const [isPickerOpen, setIsPickerOpen] = useState(false);
+    const [search, setSearch] = useState('');
+    const pickerRef = useRef<HTMLDivElement>(null);
 
-    // Buffer de entrada local
-    const inputBuffer = useRef('');
-
-    const [, setSettings] = useState<any>(null);
-    const [defaultCred, setDefaultCred] = useState<any>(null);
+    const append = (text: string, level: LogEntry['level'] = 'info') =>
+        setLog(prev => [...prev.slice(-200), { ts: Date.now(), level, text }]);
 
     useEffect(() => {
-        // Fetch settings
         fetch(`${API_BASE}/settings`)
             .then(res => res.json())
             .then(data => {
-                setSettings(data);
                 if (data.remote?.auto_login && data.remote?.default_credential_id) {
-                    // Try to fetch credentials (requires vault unlocked)
-                    fetch(`${API_BASE}/security/credentials`)
+                    return fetch(`${API_BASE}/security/credentials`)
                         .then(res => res.json())
                         .then(creds => {
                             const cred = creds.find((c: any) => c.id === data.remote.default_credential_id);
                             if (cred) {
-                                setDefaultCred(cred);
-                                setConnection(prev => ({ ...prev, username: cred.username, password: '' })); // Password empty, will use ID
-                                xtermRef.current?.writeln(`\r\n[INFO] Credencial padrão '${cred.name}' carregada para login automático.`);
+                                setDefaultCredName(cred.name);
+                                setConnection(prev => ({ ...prev, username: cred.username }));
+                                append(`Credencial padrão '${cred.name}' carregada.`, 'info');
                             }
                         })
-                        .catch(() => {
-                            xtermRef.current?.writeln('\r\n[AVISO] Não foi possível carregar credencial padrão (Vault bloqueado?).');
-                        });
+                        .catch(() => append('Cofre bloqueado — credencial padrão indisponível.', 'warn'));
                 }
             })
-            .catch(err => console.error("Failed to fetch settings", err));
+            .catch(err => console.error('Failed to fetch settings', err));
     }, []);
 
+    // Close dropdown on outside click.
     useEffect(() => {
-        if (!terminalRef.current) return;
-
-        const term = new XTerm({
-            cursorBlink: true,
-            theme: {
-                background: '#09090b', // zinc-950
-                foreground: '#f4f4f5', // zinc-100
-            },
-            fontFamily: 'Consolas, "Courier New", monospace',
-            fontSize: 14,
-        });
-
-        const fitAddon = new FitAddon();
-        term.loadAddon(fitAddon);
-
-        term.open(terminalRef.current);
-        fitAddon.fit();
-
-        term.writeln('Bem-vindo ao Terminal Remoto (WinRM)');
-        term.writeln('Configure a conexão acima para iniciar.\r\n');
-
-        xtermRef.current = term;
-        fitAddonRef.current = fitAddon;
-
-        // Handle Input
-        term.onData(data => {
-            if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-
-            const code = data.charCodeAt(0);
-
-            if (code === 13) { // Enter
-                term.write('\r\n');
-                const command = inputBuffer.current;
-                inputBuffer.current = '';
-
-                if (command.trim()) {
-                    wsRef.current.send(JSON.stringify({ type: 'command', command }));
-                } else {
-                    term.write('PS > ');
-                }
-            } else if (code === 127) { // Backspace
-                if (inputBuffer.current.length > 0) {
-                    term.write('\b \b');
-                    inputBuffer.current = inputBuffer.current.slice(0, -1);
-                }
-            } else if (code >= 32) { // Printable
-                term.write(data);
-                inputBuffer.current += data;
+        if (!isPickerOpen) return;
+        const onDown = (e: MouseEvent) => {
+            if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) {
+                setIsPickerOpen(false);
             }
-        });
-
-        const handleResize = () => fitAddon.fit();
-        window.addEventListener('resize', handleResize);
-
-        return () => {
-            window.removeEventListener('resize', handleResize);
-            term.dispose();
-            wsRef.current?.close();
         };
-    }, []);
+        document.addEventListener('mousedown', onDown);
+        return () => document.removeEventListener('mousedown', onDown);
+    }, [isPickerOpen]);
 
-    const connect = () => {
-        // Allow connection if we have default cred (password empty is ok)
-        if (!connection.ip || (!connection.username && !defaultCred) || (!connection.password && !defaultCred)) {
-            // If we have default cred, username is filled. Password might be empty.
-            // But if user manually cleared username, we shouldn't proceed.
-            if (!defaultCred || !connection.username) {
-                xtermRef.current?.writeln('\r\nErro: Preencha todos os campos de conexão.');
-                return;
+    // Sort hosts: monitored first, then alphabetical by display name. We coalesce
+    // null name/hostname to '' because some discovered hosts ship with null and
+    // localeCompare on null blows up.
+    const sortedHosts = useMemo(() => {
+        return [...hosts]
+            .filter(h => !!h.address)
+            .sort((a, b) => {
+                const am = a.monitoring !== false ? 0 : 1;
+                const bm = b.monitoring !== false ? 0 : 1;
+                if (am !== bm) return am - bm;
+                const an = (a.name || a.hostname || a.address || '').toLowerCase();
+                const bn = (b.name || b.hostname || b.address || '').toLowerCase();
+                return an.localeCompare(bn);
+            });
+    }, [hosts]);
+
+    const filteredHosts = useMemo(() => {
+        if (!search.trim()) return sortedHosts;
+        const q = search.toLowerCase();
+        return sortedHosts.filter(h => {
+            const name = (h.name || h.hostname || '').toLowerCase();
+            const ip = (h.ip || h.address || '').toLowerCase();
+            const group = (h.group || '').toLowerCase();
+            return name.includes(q) || ip.includes(q) || group.includes(q);
+        });
+    }, [sortedHosts, search]);
+
+    const selectedHost: Host | null = useMemo(
+        () => sortedHosts.find(h => h.address === selectedAddress) || null,
+        [sortedHosts, selectedAddress]
+    );
+
+    const isManualMode = selectedAddress === MANUAL_OPTION_VALUE;
+
+    const pickHost = (host: Host) => {
+        setSelectedAddress(host.address);
+        setConnection(prev => {
+            const next = { ...prev, ip: host.ip || host.address };
+
+            // Auto-set the DOMINIO\ prefix from the picked host's known AD
+            // domain. We use the NetBIOS short name (CONTOSO from
+            // contoso.local) since that's what WinRM expects in DOMINIO\user.
+            //
+            // Replacement strategy — preserves the operator's intent:
+            //   ""             → "NEWDOMAIN\"
+            //   "user"         → "NEWDOMAIN\user"     (came from default cred)
+            //   "OLDDOM\"      → "NEWDOMAIN\"         (empty user from prior pick)
+            //   "OLDDOM\user"  → "NEWDOMAIN\user"     (switching domains)
+            //   "user@foo.com" → unchanged            (operator chose UPN — respect)
+            if (host.domain) {
+                const shortDomain = host.domain.split('.')[0].toUpperCase();
+                const current = (prev.username || '').trim();
+                const isUpn = current.includes('@');
+                if (!isUpn) {
+                    const idx = current.indexOf('\\');
+                    const userPart = idx >= 0 ? current.slice(idx + 1) : current;
+                    next.username = userPart
+                        ? `${shortDomain}\\${userPart}`
+                        : `${shortDomain}\\`;
+                }
             }
+            return next;
+        });
+        setIsPickerOpen(false);
+        setSearch('');
+    };
+
+    const pickManual = () => {
+        setSelectedAddress(MANUAL_OPTION_VALUE);
+        setConnection(prev => ({ ...prev, ip: '' }));
+        setIsPickerOpen(false);
+        setSearch('');
+    };
+
+    const openExternal = () => {
+        if (!connection.ip || !connection.username || !connection.password) {
+            append('Preencha host, usuário e senha antes de abrir o terminal.', 'error');
+            return;
         }
 
-        setStatus('Iniciando Terminal Externo...');
-
-        const payload: any = {
-            ip: connection.ip,
-            username: connection.username,
-            password: connection.password
-        };
-
-        // If using default cred and password field is empty (or match), send ID
-        // NOTE: For external terminal, we need the actual password. 
-        // If we only have ID, we might need to fetch it first or change backend to handle ID.
-        // For now, let's assume password is provided or we fetch it.
-        // Actually, the backend endpoint expects password. 
-        // If we are using defaultCred, we need to get the password.
-        // But the frontend doesn't have the password if it's from vault (it's hidden).
-        // Wait, the /security/credentials endpoint returns the password? 
-        // Let's check the fetch in useEffect.
-        // It calls /security/credentials. If that returns passwords, we are good.
-        // If not, we need to change backend to accept credential_id.
-
-        // Let's assume for now we send what we have. If password is empty and we have defaultCred,
-        // we might need to handle that.
-        // But looking at the code, setConnection updates password to '' when loading defaultCred.
-        // So we might be missing the password if it's not returned by API.
-
-        // However, for the sake of this task (switching to external), let's implement the call.
+        setBusy(true);
+        setStatus('Abrindo terminal externo...');
+        append(`Iniciando PowerShell remoto para ${connection.username}@${connection.ip}…`, 'info');
 
         fetch(`${API_BASE}/tools/terminal/external`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
+            body: JSON.stringify(connection),
         })
             .then(res => res.json())
             .then(data => {
                 if (data.status === 'success') {
-                    setStatus('Terminal Externo Aberto');
-                    xtermRef.current?.writeln('\r\n[INFO] Terminal PowerShell externo iniciado.');
-                    xtermRef.current?.writeln('[INFO] A conexão será estabelecida na nova janela.');
+                    setStatus('Terminal externo aberto');
+                    append('Janela do PowerShell aberta — interaja por lá.', 'info');
+                    // Opportunistic background probe: we have admin creds the user
+                    // just confirmed work for this host. Fetch MAC/Domain/CurrentUser/
+                    // LastBoot/DiskFree (cheap WinRM round-trip) and TV ID (if missing)
+                    // and let the backend persist them. Only fires when the operator
+                    // picked a known host from the panel — in manual mode we have no
+                    // host record to attach the data to.
+                    if (selectedHost) {
+                        probeHost({
+                            targetIp: selectedHost.ip || selectedHost.address,
+                            username: connection.username,
+                            password: connection.password,
+                        }).then((r) => {
+                            if (r.ok) {
+                                refreshHosts(true).catch(() => undefined);
+                            }
+                        }).catch(() => undefined);
+
+                        if (!selectedHost.teamviewer_id) {
+                            resolveTeamViewerId({
+                                targetIp: selectedHost.ip || selectedHost.address,
+                                username: connection.username,
+                                password: connection.password,
+                                persistOnHost: selectedHost.address,
+                            }).then((r) => {
+                                if (r.ok) refreshHosts(true).catch(() => undefined);
+                            }).catch(() => undefined);
+                        }
+                    }
                 } else {
                     setStatus('Erro');
-                    const errorMsg = data.detail || data.message || "Erro desconhecido";
-                    xtermRef.current?.writeln(`\r\n[ERRO] ${errorMsg}`);
+                    append(data.detail || data.message || 'Erro desconhecido.', 'error');
                 }
             })
             .catch(err => {
-                console.error("Failed to open external terminal", err);
-                setStatus('Erro de Conexão');
-                xtermRef.current?.writeln('\r\n[ERRO] Falha ao iniciar terminal externo.');
-            });
+                console.error('Failed to open external terminal', err);
+                setStatus('Erro de conexão');
+                append('Falha ao contatar o backend.', 'error');
+            })
+            .finally(() => setBusy(false));
     };
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
-        if (e.key === 'Enter' && !isConnected) {
-            connect();
-        }
+        if (e.key === 'Enter' && !busy) openExternal();
     };
 
-    const disconnect = () => {
-        // No-op for external terminal, or maybe clear status
-        setStatus('Desconectado');
-        setIsConnected(false);
-    };
+    // Label rendered inside the picker button — host name + ip, or hint.
+    const pickerLabel = (() => {
+        if (isManualMode) return 'Digitar IP/Hostname manualmente';
+        if (selectedHost) {
+            const name = selectedHost.name || selectedHost.hostname || selectedHost.address;
+            return `${name} — ${selectedHost.ip || selectedHost.address}`;
+        }
+        return 'Selecione um host do painel…';
+    })();
 
     return (
         <div className="h-full flex flex-col space-y-4 min-h-0 p-8">
@@ -194,70 +217,192 @@ export function Terminal() {
                 <h2 className="text-2xl font-bold text-white flex items-center gap-2">
                     <TerminalIcon /> Terminal Remoto
                 </h2>
-                <p className="text-zinc-400">Acesso via WinRM/PowerShell.</p>
+                <p className="text-zinc-400">
+                    Abre uma janela PowerShell nativa autenticada via WinRM. A sessão acontece fora desta janela.
+                </p>
             </header>
 
             <div className="bg-zinc-900 p-4 rounded-xl border border-zinc-800 flex gap-4 items-end">
-                <div className="flex-1 grid grid-cols-3 gap-4">
-                    <div className="space-y-1">
-                        <label className="text-xs text-white">IP / Hostname</label>
-                        <input
-                            type="text"
-                            value={connection.ip}
-                            onChange={e => setConnection(prev => ({ ...prev, ip: e.target.value }))}
-                            className="w-full bg-zinc-950 border border-zinc-700 rounded px-3 py-2 text-sm text-zinc-500 placeholder:text-zinc-500"
-                            placeholder="192.168.1.10"
-                            disabled={isConnected}
-                            onKeyDown={handleKeyDown}
-                        />
+                <div className="flex-1 grid grid-cols-1 md:grid-cols-[2fr_1fr_1fr] gap-4">
+                    {/* Host picker */}
+                    <div className="space-y-1 relative" ref={pickerRef}>
+                        <label className="text-xs text-white">Host</label>
+                        <button
+                            type="button"
+                            onClick={() => setIsPickerOpen(v => !v)}
+                            disabled={busy}
+                            className={clsx(
+                                'w-full bg-zinc-950 border rounded px-3 py-2 text-sm flex items-center justify-between gap-2 transition-colors',
+                                isPickerOpen ? 'border-blue-500' : 'border-zinc-700 hover:border-zinc-600',
+                                busy && 'opacity-50 cursor-not-allowed'
+                            )}
+                            aria-haspopup="listbox"
+                            aria-expanded={isPickerOpen}
+                        >
+                            <span className={clsx('truncate text-left', !selectedAddress && 'text-zinc-500')}>
+                                {pickerLabel}
+                            </span>
+                            <ChevronDown size={16} className={clsx('text-zinc-500 shrink-0 transition-transform', isPickerOpen && 'rotate-180')} />
+                        </button>
+                        {isManualMode && (
+                            <input
+                                type="text"
+                                value={connection.ip}
+                                onChange={e => setConnection(prev => ({ ...prev, ip: e.target.value }))}
+                                className="mt-2 w-full bg-zinc-950 border border-zinc-700 focus:border-blue-500 focus:outline-none rounded px-3 py-2 text-sm text-zinc-300 placeholder:text-zinc-500"
+                                placeholder="192.168.1.10 ou hostname"
+                                disabled={busy}
+                                onKeyDown={handleKeyDown}
+                                autoFocus
+                            />
+                        )}
+                        {isPickerOpen && (
+                            <div
+                                className="absolute z-20 mt-1 w-full bg-zinc-900 border border-zinc-700 rounded-lg shadow-xl overflow-hidden flex flex-col max-h-80"
+                                role="listbox"
+                            >
+                                <div className="p-2 border-b border-zinc-800 flex items-center gap-2">
+                                    <Search size={14} className="text-zinc-500 shrink-0" />
+                                    <input
+                                        type="text"
+                                        value={search}
+                                        onChange={e => setSearch(e.target.value)}
+                                        placeholder="Buscar por nome, IP ou grupo…"
+                                        className="flex-1 bg-transparent text-sm text-zinc-200 placeholder:text-zinc-500 focus:outline-none"
+                                        autoFocus
+                                    />
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={pickManual}
+                                    className="w-full px-3 py-2 text-left text-sm text-blue-400 hover:bg-zinc-800 border-b border-zinc-800 flex items-center gap-2"
+                                    role="option"
+                                    aria-selected={isManualMode}
+                                >
+                                    <span className="font-medium">+ Digitar manualmente</span>
+                                    <span className="text-zinc-500 text-xs">IP ou hostname não cadastrado</span>
+                                </button>
+                                <div className="flex-1 overflow-y-auto">
+                                    {filteredHosts.length === 0 ? (
+                                        <div className="px-3 py-4 text-sm text-zinc-500 text-center">
+                                            {hosts.length === 0
+                                                ? 'Nenhum host no painel ainda.'
+                                                : 'Nenhum host bate com a busca.'}
+                                        </div>
+                                    ) : (
+                                        filteredHosts.map(h => {
+                                            const displayName = h.name || h.hostname || h.address;
+                                            const ipText = h.ip || h.address;
+                                            const isSelected = h.address === selectedAddress;
+                                            const online = h.stats?.online ?? h.last_status ?? false;
+                                            return (
+                                                <button
+                                                    key={h.address}
+                                                    type="button"
+                                                    onClick={() => pickHost(h)}
+                                                    className={clsx(
+                                                        'w-full px-3 py-2 text-left text-sm flex items-center gap-3 transition-colors',
+                                                        isSelected ? 'bg-zinc-800' : 'hover:bg-zinc-800/60'
+                                                    )}
+                                                    role="option"
+                                                    aria-selected={isSelected}
+                                                >
+                                                    <span
+                                                        className={clsx(
+                                                            'w-1.5 h-1.5 rounded-full shrink-0',
+                                                            h.monitoring === false ? 'bg-zinc-700' : (online ? 'bg-green-500' : 'bg-red-500')
+                                                        )}
+                                                        aria-hidden="true"
+                                                    />
+                                                    <div className="min-w-0 flex-1">
+                                                        <div className="text-zinc-200 truncate">{displayName}</div>
+                                                        <div className="text-xs text-zinc-500 font-mono truncate">
+                                                            {ipText}
+                                                            {h.group && <span className="ml-2 text-zinc-600">· {h.group}</span>}
+                                                        </div>
+                                                    </div>
+                                                </button>
+                                            );
+                                        })
+                                    )}
+                                </div>
+                            </div>
+                        )}
                     </div>
+
+                    {/* Username */}
                     <div className="space-y-1">
-                        <label className="text-xs text-white">Usuário</label>
+                        <label className="text-xs text-white">
+                            Usuário {defaultCredName && <span className="text-blue-400">({defaultCredName})</span>}
+                        </label>
                         <input
                             type="text"
                             value={connection.username}
                             onChange={e => setConnection(prev => ({ ...prev, username: e.target.value }))}
-                            className="w-full bg-zinc-950 border border-zinc-700 rounded px-3 py-2 text-sm text-zinc-500 placeholder:text-zinc-500"
-                            placeholder="Administrador"
-                            disabled={isConnected}
+                            className="w-full bg-zinc-950 border border-zinc-700 focus:border-blue-500 focus:outline-none rounded px-3 py-2 text-sm text-zinc-300 placeholder:text-zinc-500"
+                            placeholder="DOMINIO\\usuario"
+                            disabled={busy}
                             onKeyDown={handleKeyDown}
                         />
                     </div>
+
+                    {/* Password */}
                     <div className="space-y-1">
                         <label className="text-xs text-white">Senha</label>
                         <input
                             type="password"
                             value={connection.password}
                             onChange={e => setConnection(prev => ({ ...prev, password: e.target.value }))}
-                            className="w-full bg-zinc-950 border border-zinc-700 rounded px-3 py-2 text-sm text-zinc-500 placeholder:text-zinc-500"
+                            className="w-full bg-zinc-950 border border-zinc-700 focus:border-blue-500 focus:outline-none rounded px-3 py-2 text-sm text-zinc-300 placeholder:text-zinc-500"
                             placeholder="••••••"
-                            disabled={isConnected}
+                            disabled={busy}
                             onKeyDown={handleKeyDown}
                         />
                     </div>
                 </div>
 
                 <button
-                    onClick={isConnected ? disconnect : connect}
+                    onClick={openExternal}
+                    disabled={busy}
                     className={clsx(
-                        "flex items-center gap-2 px-6 py-2 rounded-lg font-medium transition-colors h-[38px] border",
-                        isConnected
-                            ? "bg-zinc-800 hover:bg-zinc-700 text-red-400 border-red-900/30 hover:border-red-500/50"
-                            : "bg-zinc-800 hover:bg-zinc-700 text-green-400 border-green-900/30 hover:border-green-500/50"
+                        'flex items-center gap-2 px-6 py-2 rounded-lg font-medium transition-colors h-[38px] border',
+                        busy
+                            ? 'bg-zinc-800 text-zinc-500 border-zinc-800 cursor-not-allowed'
+                            : 'bg-zinc-800 hover:bg-zinc-700 text-green-400 border-green-900/30 hover:border-green-500/50'
                     )}
                 >
-                    {isConnected ? <PowerOff size={18} /> : <Power size={18} />}
-                    {isConnected ? 'Desconectar' : 'Conectar'}
+                    <ExternalLink size={18} />
+                    Abrir Terminal
                 </button>
             </div>
 
-            <div className="flex-1 bg-black rounded-xl border border-zinc-800 overflow-hidden p-2">
-                <div ref={terminalRef} className="h-full w-full" />
+            <div className="flex-1 bg-black rounded-xl border border-zinc-800 overflow-hidden p-4 font-mono text-sm">
+                {log.length === 0 ? (
+                    <p className="text-zinc-600">Aguardando ação. As credenciais são enviadas via variáveis de ambiente, não pela linha de comando do PowerShell.</p>
+                ) : (
+                    <ul className="space-y-1">
+                        {log.map((entry, i) => (
+                            <li
+                                key={i}
+                                className={clsx(
+                                    entry.level === 'error' && 'text-red-400',
+                                    entry.level === 'warn' && 'text-yellow-400',
+                                    entry.level === 'info' && 'text-zinc-300'
+                                )}
+                            >
+                                <span className="text-zinc-600 mr-2">
+                                    {new Date(entry.ts).toLocaleTimeString()}
+                                </span>
+                                {entry.text}
+                            </li>
+                        ))}
+                    </ul>
+                )}
             </div>
 
             <div className="text-xs text-zinc-600 flex justify-between px-2">
                 <span>Status: {status}</span>
-                <span>Protocolo: WinRM (HTTP/HTTPS Negotiate)</span>
+                <span>Protocolo: WinRM (HTTP Negotiate)</span>
             </div>
         </div>
     );

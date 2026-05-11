@@ -15,7 +15,9 @@ def scan_top_ports(target_ip):
                 sock.settimeout(0.3)
                 result = sock.connect_ex((target_ip, port))
                 return port, result == 0
-        except:
+        except Exception:
+            # Connect failures in port scan are expected for closed/filtered ports;
+            # silencing here keeps the hot loop fast (logging 65535 misses would flood).
             return port, False
     
     # Usar ThreadPoolExecutor para escaneamento paralelo
@@ -61,7 +63,9 @@ def scan_all_ports(target_ip):
                 sock.settimeout(0.1)  # Timeout ainda menor para máxima velocidade
                 result = sock.connect_ex((target_ip, port))
                 return port, result == 0
-        except:
+        except Exception:
+            # Connect failures in port scan are expected for closed/filtered ports;
+            # silencing here keeps the hot loop fast (logging 65535 misses would flood).
             return port, False
     
     # Usar ThreadPoolExecutor para escaneamento paralelo

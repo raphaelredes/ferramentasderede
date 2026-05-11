@@ -56,7 +56,8 @@ class NetworkTools:
                 sock.settimeout(timeout)
                 result = sock.connect_ex((ip_address, int(port)))
                 return result == 0
-        except:
+        except Exception as e:
+            logging.debug(f"check_port {ip_address}:{port} failed: {e}")
             return False
 
     def resolve_and_check_status(self, hostname):
@@ -119,8 +120,8 @@ class NetworkTools:
                     time.sleep(0.1)
                     if process.poll() is None:
                         process.kill()
-                except:
-                    pass
+                except Exception as e:
+                    logging.debug(f"cancel_task: terminate/kill failed for {task_id}: {e}")
                 if task_id in self._active_tasks:
                     del self._active_tasks[task_id]
 
@@ -279,8 +280,8 @@ class NetworkTools:
                     # Para simplificar, vamos assumir /24 se falhar
                     info["netmask"] = "255.255.255.0"
                     info["gateway"] = local_ip.rsplit('.', 1)[0] + ".1"
-                except:
-                    pass
+                except Exception as e:
+                    logging.debug(f"ipconfig parse fallback failed: {e}")
             
             # Calcular rede
             if "ip" in info:
@@ -375,8 +376,8 @@ class NetworkTools:
                                 return fqdn
                         finally:
                             socket.setdefaulttimeout(default_timeout)
-                    except:
-                        pass
+                    except Exception as e:
+                        logging.debug(f"getfqdn lookup failed: {e}")
                 return hostname
 
         # Estratégia 2: Reverse DNS Padrão (com timeout via ThreadPool persistente)
@@ -415,8 +416,8 @@ class NetworkTools:
                         parts = line.split()
                         if parts:
                             return parts[0]
-            except:
-                pass
+            except Exception as e:
+                logging.debug(f"nbtstat fallback for {ip_address} failed: {e}")
                 
         return None
 

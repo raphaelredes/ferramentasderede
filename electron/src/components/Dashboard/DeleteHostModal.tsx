@@ -1,4 +1,5 @@
 import { Trash2 } from 'lucide-react';
+import { useEffect } from 'react';
 import { Host } from '../../types';
 
 interface DeleteHostModalProps {
@@ -10,16 +11,38 @@ interface DeleteHostModalProps {
 }
 
 export function DeleteHostModal({ isOpen, onClose, onConfirm, host, isDeleting }: DeleteHostModalProps) {
+    useEffect(() => {
+        if (!isOpen) return;
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === 'Escape' && !isDeleting) onClose();
+        };
+        document.addEventListener('keydown', onKey);
+        return () => document.removeEventListener('keydown', onKey);
+    }, [isOpen, isDeleting, onClose]);
+
     if (!isOpen || !host) return null;
 
     return (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={onClose}>
-            <div className="bg-zinc-900 border border-zinc-800 rounded-xl w-full max-w-md p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div
+            // z-[110] so this lands above HostDetailsModal (z-[100]). The "Remover Host"
+            // button lives inside HostDetailsModal, so without elevating the confirmation
+            // it would render *behind* the parent and look broken.
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[110] p-4"
+            onClick={onClose}
+            role="presentation"
+        >
+            <div
+                className="bg-zinc-900 border border-zinc-800 rounded-xl w-full max-w-md p-6 shadow-2xl"
+                onClick={(e) => e.stopPropagation()}
+                role="alertdialog"
+                aria-modal="true"
+                aria-labelledby="delete-host-title"
+            >
                 <div className="flex items-center gap-3 text-red-500 mb-4">
-                    <div className="p-3 bg-red-500/10 rounded-full">
+                    <div className="p-3 bg-red-500/10 rounded-full" aria-hidden="true">
                         <Trash2 size={24} />
                     </div>
-                    <h3 className="text-xl font-bold text-white">Remover Host</h3>
+                    <h3 id="delete-host-title" className="text-xl font-bold text-white">Remover Host</h3>
                 </div>
 
                 <p className="text-zinc-400 mb-6">

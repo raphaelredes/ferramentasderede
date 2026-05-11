@@ -47,6 +47,20 @@ class SystemTools:
             lambda cmd: cmd.get_teamviewer_id()
         )
 
+    def get_host_probe(self, target_ip, username, password):
+        """Lightweight opportunistic probe — see RemoteCommands.get_host_probe."""
+        return self._execute_winrm_command(
+            target_ip, username, password,
+            lambda cmd: cmd.get_host_probe()
+        )
+
+    def get_pre_power_check(self, target_ip, username, password):
+        """Pre-shutdown/restart check — uptime, pending reboot, active sessions."""
+        return self._execute_winrm_command(
+            target_ip, username, password,
+            lambda cmd: cmd.get_pre_power_check()
+        )
+
     def get_remote_system_info_raw(self, target_ip, username, password):
         # 1. Tentar WMI Nativo primeiro (Bypass TrustedHosts)
         if target_ip not in ["127.0.0.1", "localhost"]:

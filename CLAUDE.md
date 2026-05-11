@@ -110,12 +110,17 @@ Se mexeu em arquivos do backend que estão importados em runtime, vale rodar `py
 
 ### Bumpar versão do app
 
-A versão aparece em **3 lugares**, mas a fonte única é `data/changelog.ts`:
+**Fonte única: [electron/package.json](electron/package.json)** — campo `version`. Tudo o mais deriva dela.
 
-1. [electron/src/data/changelog.ts](electron/src/data/changelog.ts) — `APP_VERSION` + adicionar entrada no topo do array `CHANGELOG`. Cada mudança é tipada por `kind`: `feat | fix | perf | security | ui | refactor | docs`.
-2. [electron/package.json](electron/package.json) — campo `version`.
-3. [python/src/config/settings.py](python/src/config/settings.py) — `APP_VERSION = "..."`.
-4. (Opcional) `cd electron && npm install --package-lock-only` para sincronizar `package-lock.json`.
+1. Editar `version` em `electron/package.json`.
+2. Adicionar entrada no topo do array `CHANGELOG` em [electron/src/data/changelog.ts](electron/src/data/changelog.ts). Cada mudança é tipada por `kind`: `feat | fix | perf | security | ui | refactor | docs`. **Não edite o `APP_VERSION`** — ele é importado de `package.json`.
+3. `cd electron && npm install --package-lock-only` para sincronizar `package-lock.json`.
+
+Derivações automáticas:
+- Backend Python lê em runtime via `src/config/settings.py:_read_app_version()` (cai em ENV `NT_APP_VERSION` se setado, depois `electron/package.json` no checkout, depois no bundle PyInstaller).
+- `python/build_webview.spec` lê `electron/package.json` no momento do build e empacota uma cópia no bundle para o runtime resolver depois.
+- `electron/src/data/changelog.ts` faz `import pkg from '../../package.json'`.
+- `GET /` do backend retorna `version: APP_VERSION` — não há mais string hardcoded.
 
 `AboutModal` e `LoadingScreen` importam de `data/changelog.ts`. O popup de changelog é aberto clicando em "Versão X" no Sobre.
 
@@ -196,6 +201,7 @@ Estes são problemas conhecidos com decisão explícita de não atacar agora. N�
 1. **Virtualização de listas grandes** — Dashboard renderiza todos os cards. Conflita com `@dnd-kit/sortable` (precisa do DOM nodes). Só importa com 500+ hosts; ninguém na base atual tem isso.
 2. **ToolsContext (~540 linhas)** — Ping/Trace/Scanner num único provider. Funcional, só verboso. Splittar criaria sincronização entre providers que custa mais que economiza.
 3. **Vendor DB embarcada** — fallback embutido cobre 95% dos casos corporativos. Embarcar arquivo IEEE adicionaria ~3MB ao bundle pra ganho marginal.
+4. **Electron 30 → LTS atual** — bump requer sessão dedicada com smoke test do executável em Windows. Riscos identificados: `setWindowOpenHandler`/`will-navigate` mudaram entre 30 e 33; `vite-plugin-electron 0.28` precisa subir junto; sandbox que acabamos de habilitar foi reforçado em 32 (verificar regressão de IPC). 27 vulnerabilidades pendentes no `npm audit` são todas de transitivas do Electron — bumpar limpa a maioria. **Critério para tirar daqui: ter capacidade de rodar smoke test do .exe em CI ou janela de manutenção dedicada.**
 
 Ver seção "Tech-debt restante" no final do TESTES.html.
 

@@ -11,19 +11,34 @@
 #   - dnspython (Windows + WMI optional helper handled by graceful fallback in
 #     src/network/dns_resolver.py — but we still ship its modules)
 #
-# To bump version: change `APP_VERSION` below AND in
-# python/src/config/settings.py + electron/package.json + electron/src/data/changelog.ts.
+# Version is now derived from electron/package.json — the single source of
+# truth. Bumping `version` there propagates to: this spec (APP_VERSION below),
+# Python runtime (src/config/settings.py reads the same file), and the UI
+# (src/data/changelog.ts re-exports it from package.json). The changelog
+# *entries* still need a manual append, but the version string does not.
 
 block_cipher = None
-APP_VERSION = '1.2.3'
+
+import json
+def _read_version_from_package_json():
+    try:
+        with open('../electron/package.json', 'r', encoding='utf-8') as f:
+            return json.load(f).get('version', '0.0.0-dev')
+    except Exception as e:
+        print(f"WARN: spec failed to read electron/package.json version: {e}")
+        return '0.0.0-dev'
+APP_VERSION = _read_version_from_package_json()
 
 frontend_dist = '../electron/dist'
 
+# Ship package.json inside the bundle so settings.APP_VERSION can resolve at
+# runtime without needing the source tree alongside the .exe.
 added_files = [
     ('assets/*.*', 'assets'),
     ('data', 'data'),
     (frontend_dist, 'gui'),
     ('src/system/scripts/*.ps1', 'src/system/scripts'),
+    ('../electron/package.json', '.'),
 ]
 
 from PyInstaller.utils.hooks import collect_submodules, collect_all, collect_data_files

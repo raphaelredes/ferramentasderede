@@ -12,39 +12,73 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from api.routes.network import get_hosts_list, save_hosts_list, host_monitor, manager
 from api.routes import system, network, security
 from src.system.backup import BackupManager
+from src.core.database import db as _db
 import asyncio
 
 # Global event loop reference
 main_loop = None
+
+# Mapping from monitor-emitted keys to the DB column names accepted by
+# DatabaseManager.update_host_fields. Anything else falls through to the slow
+# read-modify-save path (rare; e.g. ports list changes).
+_MONITOR_TO_DB_FIELD = {
+    'hostname': 'hostname',
+    'name': 'hostname',       # monitor sometimes emits 'name' (UI form) for hostname
+    'domain': 'domain',
+    'mac': 'mac',
+    'last_status': 'last_status',
+    'last_checked': 'last_checked',
+    'vendor': 'vendor',
+    'monitoring': 'monitoring',
+}
+
 # --- Callbacks ---
 def handle_host_update(address: str, updates: dict):
-    """Callback para persistir atualizações do monitoramento."""
+    """Persistência granular das mudanças emitidas pelo monitor.
+
+    Antes: cada update (1×/s por host) chamava replace_all_hosts → DELETE+INSERT
+    da tabela inteira. Em 100 hosts isso era ~100 reescritas/s. Agora mapeamos
+    cada chave volátil para uma coluna e fazemos UPDATE granular protegido pelo
+    write lock + retry do DatabaseManager. Chaves não-mapeadas caem no fallback
+    antigo (raro — só quando mudam ports, group etc., que não vêm do monitor).
+    """
     try:
-        current_hosts = get_hosts_list()
-        modified = False
-        
-        for h in current_hosts:
-            if h.address == address:
+        db_fields = {}
+        fallback_needed = False
+        for key, value in updates.items():
+            if key in _MONITOR_TO_DB_FIELD:
+                db_fields[_MONITOR_TO_DB_FIELD[key]] = value
+            elif key == 'ip':
+                # 'ip' do monitor é o address resolvido — só relevante quando o
+                # host foi cadastrado por hostname. Não persistimos a cada tick.
+                continue
+            else:
+                fallback_needed = True
+
+        if db_fields:
+            _db.update_host_fields(address, db_fields)
+
+        if fallback_needed:
+            # Caminho raro: chave não mapeada — ler o row do DB, aplicar updates
+            # whitelisted e UPSERT individual via save_host (NÃO save_hosts_list,
+            # que chama replace_all_hosts e apagaria os outros hosts).
+            row = next((r for r in _db.get_all_hosts() if r.get('address') == address), None)
+            if row:
+                # tags/ports são colunas JSON: deixar passar se vierem como list.
                 for key, value in updates.items():
-                    if hasattr(h, key):
-                        current_val = getattr(h, key)
-                        if current_val != value:
-                            setattr(h, key, value)
-                            modified = True
-                break
-        
-        if modified:
-            print(f"Persistindo atualização para {address}: {updates}")
-            save_hosts_list(current_hosts)
-            
+                    if key in _MONITOR_TO_DB_FIELD or key == 'ip':
+                        continue
+                    if key in ('tags', 'ports'):
+                        row[key] = value
+                _db.save_host(row)
+
         # Broadcast update via WebSocket
         if main_loop and main_loop.is_running():
-            # Send structured update: {ip: {key: value}}
             message = {"type": "update", "data": {address: updates}}
             asyncio.run_coroutine_threadsafe(manager.broadcast(message), main_loop)
-            
+
     except Exception as e:
-        print(f"Erro ao persistir atualização de host: {e}")
+        logging.exception(f"Erro ao persistir atualização de host {address}: {e}")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -103,7 +137,11 @@ app.include_router(security.router)
 # --- Root Endpoint ---
 @app.get("/")
 async def root():
-    return {"status": "online", "version": "2.0.0"}
+    # Mirror the single-source version from settings (which reads package.json).
+    # The hard-coded "2.0.0" that used to live here was stale and confused
+    # smoke tests against TESTES.html.
+    from src.config.settings import APP_VERSION
+    return {"status": "online", "version": APP_VERSION}
 
 # --- Settings & Security Endpoints ---
 # Settings moved to api.routes.settings

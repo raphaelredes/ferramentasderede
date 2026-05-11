@@ -27,8 +27,8 @@ def kill_port_process(port):
                 except psutil.TimeoutExpired:
                     try:
                         process.kill()
-                    except:
-                        pass
+                    except Exception as e:
+                        print(f"Warning: failed to kill process on port: {e}")
     except Exception as e:
         print(f"Warning: Could not check port {port}: {e}")
 
@@ -148,8 +148,23 @@ def main():
             except Exception:
                 return ""
 
+        def _is_safe_host(self, value):
+            """Mesma validação conservadora do backend (_is_safe_remote_target)."""
+            import re
+            if not value or not isinstance(value, str) or len(value) > 253:
+                return False
+            if re.fullmatch(r"(?:\d{1,3}\.){3}\d{1,3}", value):
+                try:
+                    return all(0 <= int(o) <= 255 for o in value.split("."))
+                except ValueError:
+                    return False
+            return bool(re.fullmatch(r"[A-Za-z0-9._-]+", value))
+
         def launchRdp(self, ip):
             import subprocess
+            if not self._is_safe_host(ip):
+                print(f"launchRdp: invalid host rejected")
+                return False
             try:
                 subprocess.Popen(['mstsc', '/v:' + ip])
                 return True
@@ -159,16 +174,29 @@ def main():
 
         def launchMsra(self, ip, askCredentials=False):
             import subprocess
+            import os
+            # Validate IP/hostname BEFORE building any command — caller-controlled
+            # input must never reach a PowerShell f-string. The IP is passed via
+            # env var ($env:NT_MSRA_TARGET) so it stays out of `Get-Process` /
+            # event-viewer command-line snapshots.
+            if not self._is_safe_host(ip):
+                print(f"launchMsra: invalid host rejected")
+                return False
             try:
                 if askCredentials:
-                    # PowerShell command to prompt for credentials and launch MSRA
-                    cmd = f"""
-                    $cred = Get-Credential
-                    if ($cred) {{
-                        Start-Process "$env:windir\\system32\\msra.exe" -ArgumentList "/offerRA {ip}" -Credential $cred -LoadUserProfile -WorkingDirectory "C:\\"
-                    }}
-                    """
-                    subprocess.Popen(['powershell', '-Command', cmd])
+                    cmd = (
+                        "$ip = $env:NT_MSRA_TARGET; "
+                        "Remove-Item Env:\\NT_MSRA_TARGET -ErrorAction SilentlyContinue; "
+                        "$cred = Get-Credential; "
+                        "if ($cred -and $ip) { "
+                        "  Start-Process \"$env:windir\\system32\\msra.exe\" "
+                        "  -ArgumentList \"/offerRA $ip\" "
+                        "  -Credential $cred -LoadUserProfile -WorkingDirectory 'C:\\' "
+                        "}"
+                    )
+                    env = os.environ.copy()
+                    env["NT_MSRA_TARGET"] = ip
+                    subprocess.Popen(['powershell', '-NoProfile', '-Command', cmd], env=env)
                 else:
                     subprocess.Popen(['msra', '/offerRA', ip])
                 return True

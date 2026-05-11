@@ -3,12 +3,6 @@ export { };
 declare global {
     interface Window {
         electron: {
-            ipcRenderer: {
-                invoke(channel: string, ...args: any[]): Promise<any>;
-                send(channel: string, ...args: any[]): void;
-                on(channel: string, func: (...args: any[]) => void): void;
-                removeAllListeners(channel: string): void;
-            };
             launchRdp(ip: string): Promise<void>;
             launchMsra(ip: string, askCredentials?: boolean): Promise<void>;
             launchTeamViewer(id?: string): Promise<void>;
@@ -16,6 +10,7 @@ declare global {
             getLocalDomain(): Promise<string>;
             showItemInFolder(path: string): Promise<void>;
             saveFileAs(filename: string, content: string): Promise<string | null>;
+            onWindowFocusChange(callback: (focused: boolean) => void): () => void;
         };
         pywebview?: {
             api: {
@@ -66,6 +61,11 @@ export interface Host {
     ports?: number[];
     stats?: HostStatistics;
     current_user?: string;
+    // Opportunistic host-probe data, collected when the operator authenticates
+    // against this host for any reason (Power Action, Terminal Remoto,
+    // TestConnection, HostDetails). All optional — only set after a successful probe.
+    last_boot?: string;
+    system_disk_free_gb?: number;
     // Inferred by backend from settings.networks (multi-VLAN/multi-domain)
     network_id?: string;
     network_name?: string;

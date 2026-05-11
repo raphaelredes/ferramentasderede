@@ -64,6 +64,10 @@ class Host(BaseModel):
     teamviewer_id: Optional[str | int | float] = None
     ports: Optional[List[int]] = []
     current_user: Optional[str] = None
+    # Opportunistic host-probe fields (Sprint 4: data collected for free when
+    # the operator authenticates against this host for any reason)
+    last_boot: Optional[str] = None
+    system_disk_free_gb: Optional[float] = None
     # Inferred from settings.networks at read time — not persisted.
     network_id: Optional[str] = None
     network_name: Optional[str] = None
@@ -177,6 +181,12 @@ class HostUpdate(BaseModel):
     reset_stats: Optional[bool] = False
     teamviewer_id: Optional[str] = None
     ports: Optional[List[int]] = None
+    # Opportunistic probe results (host-probe). All optional; senders should
+    # only include keys they actually want to update.
+    domain: Optional[str] = None
+    current_user: Optional[str] = None
+    last_boot: Optional[str] = None
+    system_disk_free_gb: Optional[float] = None
 
 # ... (omitted lines)
 
@@ -185,20 +195,46 @@ def update_host(address: str, update: HostUpdate):
     try:
         current_hosts = get_hosts_list()
         target_host = next((h for h in current_hosts if h.address == address), None)
-        
+
         if not target_host:
             raise HTTPException(status_code=404, detail="Host não encontrado.")
-            
-        if update.name is not None: target_host.name = update.name
-        if update.group is not None: target_host.group = update.group
-        if update.mac is not None: target_host.mac = update.mac
-        if update.monitoring is not None: target_host.monitoring = update.monitoring
-        if update.teamviewer_id is not None: target_host.teamviewer_id = update.teamviewer_id
-        if update.ports is not None: target_host.ports = update.ports
-        if update.reset_stats: host_monitor.reset_host_stats(target_host.address)
-            
-        save_hosts_list(current_hosts)
-        host_monitor.update_hosts([h.model_dump() for h in current_hosts])
+
+        # Fast path: opportunistic probe fields and other simple column updates
+        # go through update_host_fields directly. This avoids the full
+        # save_hosts_list round-trip (which under the hood was issuing a heavy
+        # rewrite). It also doesn't churn the monitor's host list since none of
+        # these fields are monitored by it.
+        from src.core.database import db as _db
+        probe_field_updates = {}
+        if update.mac is not None: probe_field_updates['mac'] = update.mac
+        if update.domain is not None: probe_field_updates['domain'] = update.domain
+        if update.current_user is not None: probe_field_updates['current_user'] = update.current_user
+        if update.last_boot is not None: probe_field_updates['last_boot'] = update.last_boot
+        if update.system_disk_free_gb is not None: probe_field_updates['system_disk_free_gb'] = update.system_disk_free_gb
+        if update.teamviewer_id is not None: probe_field_updates['teamviewer_id'] = update.teamviewer_id
+        if probe_field_updates:
+            _db.update_host_fields(address, probe_field_updates)
+
+        # Display-only / structural updates still go through the slower path so
+        # the nickname-vs-hostname routing in save_hosts_list applies and the
+        # monitor picks up changes (e.g. ports list).
+        slow_path_needed = (
+            update.name is not None
+            or update.group is not None
+            or update.monitoring is not None
+            or update.ports is not None
+        )
+        if slow_path_needed:
+            if update.name is not None: target_host.name = update.name
+            if update.group is not None: target_host.group = update.group
+            if update.monitoring is not None: target_host.monitoring = update.monitoring
+            if update.ports is not None: target_host.ports = update.ports
+            save_hosts_list(current_hosts)
+            host_monitor.update_hosts([h.model_dump() for h in current_hosts])
+
+        if update.reset_stats:
+            host_monitor.reset_host_stats(target_host.address)
+
         return {"status": "success", "message": "Host atualizado com sucesso.", "host": target_host}
     except HTTPException as he: raise he
     except Exception as e: raise HTTPException(status_code=500, detail=f"Erro ao atualizar host: {str(e)}")
@@ -274,9 +310,17 @@ def _match_network(ip_str: str, configured):
 def get_hosts_list():
     """Helper to get hosts as Host objects using HostManager.
 
-    Each host gets `network_id` / `network_name` inferred from its IP against
-    the user-configured networks (Settings → Redes / VLANs). This is computed
-    here rather than persisted so it stays in sync with Settings changes.
+    Naming model:
+      * `nickname` (DB column `description`)  – operator-chosen label, sticky.
+      * `name`/`hostname`                     – DNS-resolved hostname, updated
+                                                automatically by the monitor.
+    UI's `host.name` is what shows up big on the card; we prefer the nickname
+    when set, otherwise fall back to the resolved hostname. `host.hostname`
+    keeps the raw DNS hostname so views that want to show "real name" (e.g.,
+    HostDetails / RDP launcher) still have it.
+
+    Each host also gets `network_id` / `network_name` inferred from its IP
+    against the user-configured networks (Settings → Redes / VLANs).
     """
     raw_hosts = host_manager_instance.get_all_hosts()
     configured = _load_configured_networks()
@@ -284,13 +328,16 @@ def get_hosts_list():
     for item in raw_hosts:
         ip = item.get("ip")
         net_id, net_name = _match_network(ip, configured)
+        resolved_hostname = item.get("name")          # DNS-resolved
+        nickname = item.get("nickname")               # operator label (DB description)
+        display_name = nickname or resolved_hostname  # what UI shows as title
         hosts.append(Host(
-            name=item.get("name", "Unknown"),
+            name=display_name or "Unknown",
             address=ip,
             type=item.get("type", "generic"),
             mac=item.get("mac"),
             vendor=item.get("vendor"),
-            hostname=item.get("name"),
+            hostname=resolved_hostname,
             domain=item.get("domain"),
             ip=ip,
             last_status=item.get("last_status"),
@@ -300,24 +347,36 @@ def get_hosts_list():
             teamviewer_id=item.get("teamviewer_id"),
             ports=item.get("ports", []),
             current_user=item.get("current_user"),
+            last_boot=item.get("last_boot"),
+            system_disk_free_gb=item.get("system_disk_free_gb"),
             network_id=net_id,
             network_name=net_name,
         ))
     return hosts
 
 def save_hosts_list(hosts_list):
-    """Helper to save hosts using HostManager."""
-    # Convert Host objects back to dicts expected by HostManager
+    """Helper to save hosts using HostManager.
+
+    Maps Pydantic `Host` (UI shape) back to the HostManager dict shape:
+      * `h.hostname` (DNS-resolved) → manager['name']      → DB `hostname`.
+      * `h.name`     (display)      → manager['nickname']  → DB `description`,
+        BUT only if it actually differs from the resolved hostname — otherwise
+        we'd persist the resolver's output as a "user nickname" and freeze it
+        in place after the first save.
+    """
     updated_list = []
     for h in hosts_list:
+        resolved = h.hostname
+        display = h.name
+        nickname = display if (display and display != resolved and display != 'Unknown') else None
         updated_list.append({
-            'name': h.name,
+            'name': resolved,
             'ip': h.address,
             'mac': h.mac,
-            'nickname': h.name, # Use name as nickname/description if not separate
+            'nickname': nickname,
             'group': h.group,
             'domain': h.domain,
-            'tags': [], # Host model doesn't have tags yet, maybe add?
+            'tags': [],
             'ports': h.ports,
             'monitoring': h.monitoring,
             'vendor': h.vendor,
@@ -335,12 +394,15 @@ def get_hosts():
 @router.post("/hosts")
 def add_host(host: Host):
     try:
-        # Use HostManager directly for adding
+        # `host.name` here is the user-typed nickname (label in UI is "Apelido").
+        # Store it in `nickname` (DB column `description`). Leave `name` (which
+        # maps to DB `hostname`) empty so the reverse-DNS resolver can fill it
+        # in later without overwriting the nickname the operator chose.
         new_host_data = {
-            'name': host.name,
+            'name': None,
             'ip': host.address,
             'mac': host.mac,
-            'nickname': host.name,
+            'nickname': host.name or None,
             'group': host.group,
             'ports': host.ports,
             'monitoring': host.monitoring,
@@ -705,7 +767,8 @@ def check_status(ip: str):
                      is_online = True
                      resolved_ip_found = resolved_ip
                      result['resolved_ip'] = resolved_ip
-         except: pass
+         except Exception as e:
+             logging.debug(f"check_status: hostname fallback resolve failed for {ip}: {e}")
 
     try:
         from datetime import datetime, timezone
@@ -730,7 +793,8 @@ def check_status(ip: str):
                         if resolved_ip and resolved_ip != "N/A":
                             h.ip = resolved_ip
                             modified = True
-                    except: pass
+                    except Exception as e:
+                        logging.debug(f"check_status: post-online IP resolution failed for {ip}: {e}")
                 break
         
         if modified:

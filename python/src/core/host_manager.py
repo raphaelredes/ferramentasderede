@@ -85,7 +85,11 @@ class HostManager:
                     'type': h.get('type'),
                     'teamviewer_id': h.get('teamviewer_id'),
                     'last_checked': h.get('last_checked'),
-                    'last_status': bool(h.get('last_status')) if h.get('last_status') is not None else None
+                    'last_status': bool(h.get('last_status')) if h.get('last_status') is not None else None,
+                    # host-probe opportunistic data (Sprint 4)
+                    'current_user': h.get('current_user'),
+                    'last_boot': h.get('last_boot'),
+                    'system_disk_free_gb': h.get('system_disk_free_gb'),
                 })
         except Exception as e:
             logging.error(f"Erro ao carregar hosts do DB: {e}")
@@ -258,72 +262,51 @@ class HostManager:
         self.hosts = [h for h in self.hosts if h['ip'] not in hosts_to_remove_ips]
 
     def update_host_ip(self, host_name, new_ip):
-        """Encontra um host pelo nome e atualiza seu endereço IP principal."""
-        
-        host_found = False
-        target_host = None
-        
-        for host in self.hosts:
-            if host['name'] == host_name:
-                target_host = host
-                break
-        
-        if target_host:
-            old_ip = target_host['ip']
-            
-            try:
-                with db._get_connection() as conn:
-                    cursor = conn.cursor()
-                    cursor.execute("UPDATE hosts SET address = ? WHERE address = ?", (new_ip, old_ip))
-                    conn.commit()
-                
+        """Encontra um host pelo nome e atualiza seu endereço IP principal.
+
+        `address` é PK — não pode ser UPDATE-ado diretamente sem violar o UNIQUE
+        constraint se já houver outro registro. Resolvemos lendo o row inteiro,
+        re-inserindo (UPSERT respeita retry + write lock) e só então removendo o
+        antigo. Cenário raro (operador renomeando IP manualmente).
+        """
+        target_host = next((h for h in self.hosts if h['name'] == host_name), None)
+        if not target_host:
+            return False
+        old_ip = target_host['ip']
+        try:
+            row = next((h for h in db.get_all_hosts() if h.get('address') == old_ip), None)
+            if not row:
+                return False
+            row['address'] = new_ip
+            if db.save_host(row):
+                db.delete_host(old_ip)
                 target_host['ip'] = new_ip
-                host_found = True
                 logging.debug(f"Host {host_name}: IP atualizado de {old_ip} para {new_ip}")
-            except Exception as e:
-                logging.error(f"Erro ao atualizar IP no DB: {e}")
-                
-        return host_found
+                return True
+        except Exception as e:
+            logging.exception(f"Erro ao atualizar IP do host {host_name}: {e}")
+        return False
 
     def update_host_details(self, ip, hostname=None, domain=None):
-        """Atualiza detalhes específicos (hostname, domínio) de um host."""
-        host_found = False
-        
-        # Atualizar em memória
+        """Atualiza hostname/domínio de um host. Usa o write lock + retry do DatabaseManager."""
+        fields = {}
+        if hostname is not None:
+            fields['hostname'] = hostname
+        if domain is not None:
+            fields['domain'] = domain
+        if not fields:
+            return False
+
+        # Atualizar memória (UI usa 'name' como hostname)
         for host in self.hosts:
             if host['ip'] == ip:
-                if hostname: host['name'] = hostname # UI usa 'name' como hostname
-                if domain: host['domain'] = domain
-                host_found = True
+                if hostname:
+                    host['name'] = hostname
+                if domain:
+                    host['domain'] = domain
                 break
-        
-        # Atualizar no DB
-        if host_found:
-            try:
-                with db._get_connection() as conn:
-                    cursor = conn.cursor()
-                    updates = []
-                    params = []
-                    
-                    if hostname:
-                        updates.append("hostname = ?")
-                        params.append(hostname)
-                    
-                    if domain:
-                        updates.append("domain = ?")
-                        params.append(domain)
-                        
-                    if updates:
-                        params.append(ip)
-                        sql = f"UPDATE hosts SET {', '.join(updates)} WHERE address = ?"
-                        cursor.execute(sql, params)
-                        conn.commit()
-                        logging.debug(f"Host {ip}: Detalhes atualizados (Hostname: {hostname}, Domain: {domain})")
-                        return True
-            except Exception as e:
-                logging.error(f"Erro ao atualizar detalhes do host {ip} no DB: {e}")
-                
-        return False
+
+        return db.update_host_fields(ip, fields)
 
     def add_secondary_ip(self, host_name, ip, label=None):
         """Adiciona um IP secundário ao host."""

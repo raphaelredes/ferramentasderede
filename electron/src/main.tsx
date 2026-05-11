@@ -14,10 +14,3 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     </ErrorBoundary>
   </React.StrictMode>,
 )
-
-// Use contextBridge
-if (window.ipcRenderer) {
-  window.ipcRenderer.on('main-process-message', (_event, message) => {
-    console.log(message)
-  })
-}

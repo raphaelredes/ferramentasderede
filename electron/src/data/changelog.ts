@@ -1,8 +1,10 @@
-// Single source of truth for app version and release history.
-// AboutModal renders the version as a clickable element that opens a popup
-// with this list. LoadingScreen also reads APP_VERSION from here.
+// `package.json` is the single source of truth for the app version. The
+// changelog entries below remain manual — only the bare version string is
+// resolved from package.json so a release bump only requires editing
+// package.json + appending one entry here.
+import pkg from '../../package.json';
 
-export const APP_VERSION = '1.2.3';
+export const APP_VERSION: string = pkg.version;
 
 export type ChangeKind = 'feat' | 'fix' | 'perf' | 'security' | 'ui' | 'refactor' | 'docs';
 
@@ -14,6 +16,27 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+    {
+        version: '1.2.4',
+        date: '2026-05-11',
+        title: 'Coleta oportunista de informações + UX refinada',
+        changes: [
+            { kind: 'feat', text: 'Quando o operador autentica em um host para qualquer ação (Terminal Remoto, TestConnection, Power Action, abrir Detalhes Avançados, buscar TeamViewer ID), agora coletamos em background MAC, domínio AD real, usuário atual, último boot e disco livre — tudo persistido sem o operador precisar fazer nada extra. Novo endpoint /system/host-probe + script PowerShell enxuto.' },
+            { kind: 'feat', text: 'Confirmação pré-shutdown/restart: novo diálogo mostra uptime, sessões ativas e reinício pendente antes de mandar a ação. Auto-skip quando não há nada para avisar. Endpoint /system/pre-power-check + heurística shouldWarn.' },
+            { kind: 'feat', text: 'Terminal Remoto agora tem picker de hosts do painel com busca, indicador online/offline e opção "Digitar manualmente". Selecionar um host preenche o IP e o prefixo de domínio (DOMINIO\\) automaticamente; trocar de host troca o domínio preservando a parte do usuário.' },
+            { kind: 'feat', text: 'Card TeamViewer no Acesso Remoto agora tem 4 estados (sucesso/loading/needs_credentials/failed) com form inline de credenciais quando o vault não pode atender — sem mais instruções manuais.' },
+            { kind: 'feat', text: 'Apelido do host (campo "Apelido" do AddHost) agora é separado do hostname resolvido por DNS — antes o reverse DNS sobrescrevia o apelido. Card mostra apelido se houver, senão hostname; HostDetails/RDP continuam usando o hostname real.' },
+            { kind: 'fix', text: 'Assistência Remota (msra) com path absoluto + arguments via array PS — corrige caso em que o MSRA abria sem efetivar o /offerRA. "Executar como outro usuário" também ajustado.' },
+            { kind: 'fix', text: 'Remover host a partir do popup de detalhes agora fecha o popup automaticamente (antes ficava exibindo um host removido).' },
+            { kind: 'fix', text: 'DeleteHost e ConfirmationModal agora em z-[110], ficam acima do HostDetailsModal (z-[100]) — antes a confirmação renderizava atrás do popup pai.' },
+            { kind: 'fix', text: 'Esconder "% de perda" no card quando o host está offline (já redundante com "HOST OFFLINE"); critério de online agora consolidado (não pisca verde em pingue isolado dentro de 96% de perda).' },
+            { kind: 'perf', text: 'Persistência granular: atualizações de status do monitor agora usam UPDATE de coluna em vez de DELETE+INSERT da tabela inteira (era o gargalo principal em 100+ hosts). PATCH /hosts/{address} também tem caminho rápido.' },
+            { kind: 'perf', text: 'Monitor migrado de 1 thread/host para ThreadPoolExecutor(64) com scheduler único — escala para 500+ hosts sem esgotar handles do Windows.' },
+            { kind: 'perf', text: 'Code splitting: Tools, Settings, HostDetails, Security e Terminal viraram chunks lazy. Bundle inicial de 1067KB → 666KB.' },
+            { kind: 'security', text: 'launchMsra/launchRdp do pywebview validam IP e passam via env var (não interpolam em string PowerShell). 25 except: bare removidos. sandbox: true + CSP no Electron. Preload restrito (sem ipcRenderer genérico).' },
+            { kind: 'refactor', text: 'Versão unificada: agora vem só de electron/package.json (settings.py lê em runtime, build_webview.spec lê no build, changelog.ts importa). server.py / não tem mais hardcode "2.0.0".' },
+        ],
+    },
     {
         version: '1.2.3',
         date: '2026-05-06',

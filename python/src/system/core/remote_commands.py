@@ -239,7 +239,7 @@ class RemoteCommands:
             "__TARGET_IP__": self.target_ip
         })
         result = self.handler.execute_script(script)
-        
+
         output = result.get("output", [])
         if output:
             try:
@@ -252,6 +252,45 @@ class RemoteCommands:
                 logging.error(f"JSON decode error in get_system_info_raw: {e}")
                 return {"error": "Falha ao decodificar JSON de resposta."}
         return {"error": "Sem resposta do host remoto."}
+
+    def get_host_probe(self):
+        """Lightweight probe: MAC, Domain, CurrentUser, LastBoot, SystemDiskFreeGB.
+
+        Designed to be called opportunistically (Terminal Remoto open, TestConnection
+        success, etc.) since each WMI/CIM query is small. Returns a dict with N/A
+        strings for fields the script couldn't resolve — never raises.
+        """
+        logging.info(f"Executing 'get_host_probe' on {self.target_ip}")
+        script = self._load_script("get_host_probe")
+        result = self.handler.execute_script(script)
+        output = result.get("output", [])
+        if not output:
+            return {"error": "Sem resposta do host remoto."}
+        try:
+            data = json.loads("".join(output))
+            return data if isinstance(data, dict) else {"error": "Resposta inválida do script."}
+        except json.JSONDecodeError as e:
+            logging.error(f"JSON decode error in get_host_probe: {e}")
+            return {"error": "Falha ao decodificar JSON de resposta."}
+
+    def get_pre_power_check(self):
+        """Pre-shutdown/restart probe — uptime, pending reboot, active sessions.
+
+        Used to warn the operator before destructive power actions. See
+        get_pre_power_check.ps1 for the contract.
+        """
+        logging.info(f"Executing 'get_pre_power_check' on {self.target_ip}")
+        script = self._load_script("get_pre_power_check")
+        result = self.handler.execute_script(script)
+        output = result.get("output", [])
+        if not output:
+            return {"error": "Sem resposta do host remoto."}
+        try:
+            data = json.loads("".join(output))
+            return data if isinstance(data, dict) else {"error": "Resposta inválida do script."}
+        except json.JSONDecodeError as e:
+            logging.error(f"JSON decode error in get_pre_power_check: {e}")
+            return {"error": "Falha ao decodificar JSON de resposta."}
 
     def get_remote_event_logs(self, log_name, level, count):
         """Obtém logs de eventos do Windows."""

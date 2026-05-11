@@ -80,8 +80,8 @@ def get_mac_from_arp(ip_address=None):
             for entry in full_table:
                 if entry['ip'] == ip_address:
                     return entry['mac']
-        except:
-            pass
+        except Exception as e:
+            logging.debug(f"ARP full-table fallback for {ip_address} failed: {e}")
             
     return None
 

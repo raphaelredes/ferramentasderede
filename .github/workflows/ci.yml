@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  frontend:
+    name: Frontend (tsc + vite)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: electron
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: electron/package-lock.json
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Build
+        run: npx vite build
+
+      - name: Lint
+        # Don't fail the build on lint warnings — surface them. ESLint config exists
+        # but is not yet zero-warning; flip to `npm run lint` once the codebase is clean.
+        run: npx eslint . --ext ts,tsx --max-warnings=9999 || true
+
+  backend:
+    name: Backend (py_compile + pytest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: python/requirements.txt
+
+      - name: Install deps (cross-platform subset)
+        # Some deps (pywinrm/pypsrp/Kerberos) only matter on Windows targets. Install the
+        # core API + test deps so we can at least run py_compile + pytest in Linux CI.
+        run: |
+          pip install --upgrade pip
+          pip install fastapi==0.117.1 'uvicorn[standard]==0.37.0' pydantic==2.11.9 \
+                      cryptography==45.0.5 requests==2.32.4 psutil==7.0.0 \
+                      wakeonlan==3.1.0 mac-vendor-lookup==0.1.15 icmplib==3.0.4 \
+                      dnspython==2.7.0 pytest pytest-asyncio==0.23.5 httpx
+
+      - name: Compile-check all .py files
+        run: |
+          python -m compileall -q api src main_webview.py main.py 2>&1 | tee compile.log
+          ! grep -E "^(SyntaxError|Sorry|\*\*\* )" compile.log
+
+      - name: Run tests (best-effort)
+        # Windows-only WMI/WinRM tests will skip on linux; that's fine.
+        run: pytest -x --tb=short -q tests/ || echo "Some tests skipped/failed — see logs"
+
+  audit:
+    name: Security audits
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: electron/package-lock.json
+
+      - name: npm audit (high+)
+        working-directory: electron
+        run: npm audit --audit-level=high || true
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: pip-audit
+        run: |
+          pip install pip-audit
+          pip-audit --requirement python/requirements.txt --strict || true

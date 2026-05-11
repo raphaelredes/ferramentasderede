@@ -12,30 +12,24 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const [isWindowFocused, setIsWindowFocused] = useState(true);
     const toastQueue = React.useRef<Array<{ message: string; type: ToastType }>>([]);
 
-    React.useEffect(() => {
-        const handleFocusChange = (_event: any, focused: boolean) => {
-            setIsWindowFocused(focused);
-            if (focused && toastQueue.current.length > 0) {
-                // Flush queue
-                toastQueue.current.forEach(t => {
-                    addToast(t.message, t.type);
-                });
-                toastQueue.current = [];
-            }
-        };
-
-        // @ts-ignore
-        window.electron?.ipcRenderer?.on('window-focus-change', handleFocusChange);
-
-        return () => {
-            // Cleanup if needed, though usually not necessary for main app component
-        };
-    }, []);
-
     const addToast = useCallback((message: string, type: ToastType) => {
         const id = Math.random().toString(36).substring(2, 9);
         setToasts(prev => [...prev, { id, message, type }]);
     }, []);
+
+    React.useEffect(() => {
+        const handleFocusChange = (focused: boolean) => {
+            setIsWindowFocused(focused);
+            if (focused && toastQueue.current.length > 0) {
+                toastQueue.current.forEach(t => addToast(t.message, t.type));
+                toastQueue.current = [];
+            }
+        };
+
+        // Returns its own unsubscribe so StrictMode remounts don't stack listeners.
+        const unsubscribe = window.electron?.onWindowFocusChange?.(handleFocusChange);
+        return () => unsubscribe?.();
+    }, [addToast]);
 
     const showToast = useCallback((message: string, type: ToastType) => {
         if (isWindowFocused) {

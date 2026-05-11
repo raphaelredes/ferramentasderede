@@ -1,12 +1,17 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, lazy, Suspense } from 'react';
 import { HashRouter as Router, Routes, Route } from 'react-router-dom';
 import { Sidebar } from './components/Sidebar';
 import Dashboard from './pages/Dashboard';
-import { Tools } from './pages/Tools';
-import { Terminal } from './pages/Terminal';
-import { Settings } from './pages/Settings';
-import { HostDetails } from './pages/HostDetails';
-import { Security } from './pages/Security';
+
+// Lazy-load secondary routes — Dashboard is the landing page so it stays in the
+// main bundle to avoid a Suspense flash on app open. Tools (recharts-heavy),
+// Settings, Security (vault UI), Terminal and HostDetails are split into their
+// own chunks. Cuts the initial JS from ~1MB to roughly half.
+const Tools = lazy(() => import('./pages/Tools').then(m => ({ default: m.Tools })));
+const Terminal = lazy(() => import('./pages/Terminal').then(m => ({ default: m.Terminal })));
+const Settings = lazy(() => import('./pages/Settings').then(m => ({ default: m.Settings })));
+const HostDetails = lazy(() => import('./pages/HostDetails').then(m => ({ default: m.HostDetails })));
+const Security = lazy(() => import('./pages/Security').then(m => ({ default: m.Security })));
 
 import { LoadingScreen } from './components/LoadingScreen';
 
@@ -41,15 +46,17 @@ function App() {
                   <div className="flex h-screen bg-zinc-950 text-zinc-100 font-sans overflow-hidden">
                     <Sidebar />
                     <main className="flex-1 overflow-auto">
-                      <Routes>
-                        <Route path="/" element={<Dashboard />} />
-                        <Route path="/dashboard" element={<Dashboard />} />
-                        <Route path="/host/:ip" element={<HostDetails />} />
-                        <Route path="/tools" element={<Tools />} />
-                        <Route path="/terminal" element={<Terminal />} />
-                        <Route path="/settings" element={<Settings />} />
-                        <Route path="/security" element={<Security />} />
-                      </Routes>
+                      <Suspense fallback={<div className="p-8 text-zinc-500 text-sm">Carregando…</div>}>
+                        <Routes>
+                          <Route path="/" element={<Dashboard />} />
+                          <Route path="/dashboard" element={<Dashboard />} />
+                          <Route path="/host/:ip" element={<HostDetails />} />
+                          <Route path="/tools" element={<Tools />} />
+                          <Route path="/terminal" element={<Terminal />} />
+                          <Route path="/settings" element={<Settings />} />
+                          <Route path="/security" element={<Security />} />
+                        </Routes>
+                      </Suspense>
                     </main>
                   </div>
                 </Router>

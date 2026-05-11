@@ -39,11 +39,12 @@ export function AboutModal({ isOpen, onClose }: AboutModalProps) {
                     <button
                         onClick={() => setIsChangelogOpen(true)}
                         title="Ver últimas melhorias e alterações"
-                        className="group inline-flex items-center gap-2 mb-8 px-3 py-1 rounded-full text-zinc-400 hover:text-blue-300 hover:bg-blue-500/5 border border-transparent hover:border-blue-500/20 transition-colors"
+                        className="group inline-flex items-center gap-2 mb-1 px-3 py-1 rounded-full text-zinc-400 hover:text-blue-300 hover:bg-blue-500/5 border border-transparent hover:border-blue-500/20 transition-colors"
                     >
                         <span>Versão {APP_VERSION}</span>
                         <Sparkles size={14} className="opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all" />
                     </button>
+                    <p className="text-xs text-zinc-600 mb-8">Build portátil · Windows · multi-domínio AD</p>
 
                     <div className="space-y-4 mb-8">
                         <div className="p-4 bg-zinc-950/50 rounded-xl border border-zinc-800/50">
@@ -52,9 +53,13 @@ export function AboutModal({ isOpen, onClose }: AboutModalProps) {
                         </div>
 
                         <div className="p-4 bg-zinc-950/50 rounded-xl border border-zinc-800/50">
-                            <p className="text-sm text-zinc-500 mb-2 uppercase tracking-wider font-semibold">Tecnologias Utilizadas</p>
+                            <p className="text-sm text-zinc-500 mb-2 uppercase tracking-wider font-semibold">Tecnologias</p>
                             <div className="flex flex-wrap justify-center gap-2">
-                                {['Python', 'React', 'TypeScript', 'Electron', 'Tailwind CSS'].map((tech) => (
+                                {[
+                                    'Python', 'FastAPI', 'SQLite',
+                                    'React', 'TypeScript', 'Tailwind CSS',
+                                    'Electron', 'WinRM', 'PowerShell',
+                                ].map((tech) => (
                                     <span key={tech} className="px-2 py-1 bg-zinc-800 rounded text-xs text-zinc-300 border border-zinc-700">
                                         {tech}
                                     </span>

@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Monitor } from 'lucide-react';
 import {
@@ -34,6 +34,8 @@ import { DeleteHostModal } from '../components/Dashboard/DeleteHostModal';
 import { TrashDroppable } from '../components/Dashboard/TrashDroppable';
 import { SetGroupModal } from '../components/Dashboard/SetGroupModal';
 import { HostDetailsModal } from '../components/Dashboard/HostDetailsModal';
+import { PrePowerActionModal } from '../components/Dashboard/PrePowerActionModal';
+import { preCheckPowerAction, shouldWarn, PrePowerCheckData } from '../utils/prePowerCheck';
 import { Host } from '../types';
 import { useMonitoring } from '../contexts/MonitoringContext';
 import { useHostActions } from '../hooks/useHostActions';
@@ -45,6 +47,8 @@ import { GroupNetworkTabs } from '../components/Dashboard/GroupNetworkTabs';
 import { API_BASE } from '../config/api';
 import { useNetworks } from '../hooks/useNetworks';
 import { useFilteredHosts } from '../hooks/useFilteredHosts';
+import { resolveTeamViewerId } from '../utils/teamviewer';
+import { probeHost } from '../utils/hostProbe';
 
 export default function Dashboard() {
     const {
@@ -140,6 +144,11 @@ export default function Dashboard() {
             await fetchHosts();
             setIsDeleteModalOpen(false);
             setHostToDelete(null);
+            // Also close the details modal if the deleted host is the one being
+            // shown there — otherwise the user is left staring at a card for a
+            // host that no longer exists.
+            setIsDetailsModalOpen(false);
+            setDetailsHost(null);
             showToast('Host removido com sucesso', 'success');
         } else {
             showToast('Erro ao remover host', 'error');
@@ -221,6 +230,20 @@ export default function Dashboard() {
     } | null>(null);
     const [pendingTrustedAction, setPendingTrustedAction] = useState<(() => Promise<void>) | null>(null);
 
+    // Pre-power confirmation state — shown only for shutdown/restart after the
+    // user has provided creds. Holds the in-flight check + the auth pair so we
+    // can dispatch executePowerAction immediately on confirm.
+    const [prePowerState, setPrePowerState] = useState<{
+        host: Host;
+        type: 'shutdown' | 'restart';
+        message?: string;
+        delay?: number;
+        user: string;
+        pass: string;
+        check: PrePowerCheckData | null;
+        error: string | null;
+    } | null>(null);
+
     const executePowerAction = async (
         host: Host,
         type: 'shutdown' | 'restart' | 'wol' | 'message' | 'cancel',
@@ -295,6 +318,28 @@ export default function Dashboard() {
 
                 if (!hasError) {
                     showToast(`Ação ${type} enviada com sucesso`, 'success');
+                    // Opportunistic background probes: we just proved these
+                    // credentials work for this host. Free signals — fire-and-
+                    // forget, backend persists, then we silent-refresh once.
+                    const followUps: Promise<unknown>[] = [];
+                    if (!host.teamviewer_id) {
+                        followUps.push(resolveTeamViewerId({
+                            targetIp: host.address,
+                            username: user,
+                            password: pass,
+                            persistOnHost: host.address,
+                            tempAuth: effectiveTempAuth,
+                        }));
+                    }
+                    followUps.push(probeHost({
+                        targetIp: host.address,
+                        username: user,
+                        password: pass,
+                        tempAuth: effectiveTempAuth,
+                    }));
+                    Promise.allSettled(followUps).then(() => {
+                        fetchHosts(true).catch(() => undefined);
+                    });
                 }
             } else {
                 const err = await res.json().catch(() => ({}));
@@ -364,6 +409,61 @@ export default function Dashboard() {
         sortBy,
         hostOrder,
     });
+
+    // Stable reference cache for the `stats` prop fed to each HostCard.
+    // Without this, every poll (2s) creates a new `host.stats` object reference
+    // even when the underlying values didn't change — defeating React.memo on
+    // HostCard and causing O(N) re-renders per tick. We compare shallow on the
+    // fields that actually drive the card UI and reuse the previous reference
+    // when nothing relevant moved.
+    const statsCacheRef = useRef<Map<string, { hash: string; stats: any; isOnline: boolean }>>(new Map());
+    const getStableStats = useCallback((host: Host) => {
+        const raw = host.stats;
+        const isOnline = raw?.online ?? host.last_status ?? false;
+        // Hash captures every field HostCard actually reads. history is summarized
+        // by length + last latency since recharts rerenders are cheap and full
+        // deep compare would be wasted work.
+        const hash = raw
+            ? [
+                  raw.online,
+                  raw.latency,
+                  raw.average_latency,
+                  raw.packet_loss_pct?.toFixed?.(1),
+                  raw.total_packets,
+                  raw.calibration_done,
+                  raw.is_smart_offline,
+                  raw.has_ever_been_online,
+                  raw.history?.length ?? 0,
+                  raw.history?.[raw.history.length - 1]?.latency ?? 0,
+                  Object.keys(raw.ports_status ?? {}).length,
+                  raw.ip,
+              ].join('|')
+            : `__empty__|${isOnline}`;
+
+        const cached = statsCacheRef.current.get(host.address);
+        if (cached && cached.hash === hash) {
+            return { stats: cached.stats, isOnline: cached.isOnline };
+        }
+        const stats = raw ?? {
+            online: isOnline,
+            latency: null,
+            average_latency: null,
+            packet_loss: 0,
+            packet_loss_pct: 0,
+            total_packets: 0,
+            calibration_done: false,
+        };
+        statsCacheRef.current.set(host.address, { hash, stats, isOnline });
+        return { stats, isOnline };
+    }, []);
+
+    // GC do cache: remover entradas de hosts que não existem mais (host deletado).
+    useEffect(() => {
+        const live = new Set(hosts.map(h => h.address));
+        for (const key of statsCacheRef.current.keys()) {
+            if (!live.has(key)) statsCacheRef.current.delete(key);
+        }
+    }, [hosts]);
 
     const handleDragEndDnd = (event: DragEndEvent) => {
         const { active, over } = event;
@@ -451,16 +551,7 @@ export default function Dashboard() {
                             >
                                 <div className="flex flex-wrap gap-4">
                                     {filteredHosts.map((host, index) => {
-                                        const isOnline = host.stats?.online ?? host.last_status ?? false;
-                                        const stats = host.stats || {
-                                            online: isOnline,
-                                            latency: null,
-                                            average_latency: null,
-                                            packet_loss: 0,
-                                            packet_loss_pct: 0,
-                                            total_packets: 0,
-                                            calibration_done: false
-                                        };
+                                        const { stats, isOnline } = getStableStats(host);
 
                                         const isReorderEnabled = sortBy === 'manual' && filterStatus === 'all' && searchTerm === '' && activeGroupTab === 'all';
 
@@ -515,16 +606,7 @@ export default function Dashboard() {
                                 (() => {
                                     const host = hosts.find(h => h.address === activeId);
                                     if (!host) return null;
-                                    const isOnline = host.stats?.online ?? host.last_status ?? false;
-                                    const stats = host.stats || {
-                                        online: isOnline,
-                                        latency: null,
-                                        average_latency: null,
-                                        packet_loss: 0,
-                                        packet_loss_pct: 0,
-                                        total_packets: 0,
-                                        calibration_done: false
-                                    };
+                                    const { stats, isOnline } = getStableStats(host);
                                     return (
                                         <HostCard
                                             host={host}
@@ -612,18 +694,66 @@ export default function Dashboard() {
                 title="Autenticação Necessária"
                 initialDomain={pendingPowerAction?.host.domain || ''}
                 onConfirm={(username, password) => {
-                    if (pendingPowerAction) {
-                        executePowerAction(
-                            pendingPowerAction.host,
-                            pendingPowerAction.type,
-                            pendingPowerAction.message,
-                            pendingPowerAction.delay,
+                    if (!pendingPowerAction) return;
+                    setIsAuthModalOpen(false);
+                    const { host, type, message, delay } = pendingPowerAction;
+
+                    // Destructive actions go through a pre-check first so the
+                    // operator sees uptime/sessions/pending-reboot warnings before
+                    // we ship the shutdown. Other action types (wol/message/
+                    // cancel) just execute as before.
+                    if (type === 'shutdown' || type === 'restart') {
+                        setPrePowerState({
+                            host,
+                            type,
+                            message,
+                            delay,
+                            user: username,
+                            pass: password,
+                            check: null,
+                            error: null,
+                        });
+                        preCheckPowerAction({
+                            targetIp: host.address,
                             username,
-                            password
-                        );
-                        setIsAuthModalOpen(false);
+                            password,
+                            tempAuth: isTrustedSessionApproved(host.address),
+                        }).then(r => {
+                            setPrePowerState(prev => {
+                                if (!prev || prev.host.address !== host.address) return prev;
+                                if (r.ok) {
+                                    // Auto-skip the dialog when there's nothing to warn about.
+                                    if (!shouldWarn(r.data, type)) {
+                                        executePowerAction(host, type, message ?? '', delay ?? 0, username, password);
+                                        return null;
+                                    }
+                                    return { ...prev, check: r.data, error: null };
+                                }
+                                return { ...prev, check: null, error: r.message };
+                            });
+                        }).catch(e => {
+                            setPrePowerState(prev => prev && { ...prev, error: String(e) });
+                        });
+                        setPendingPowerAction(null);
+                    } else {
+                        executePowerAction(host, type, message, delay, username, password);
                         setPendingPowerAction(null);
                     }
+                }}
+            />
+
+            <PrePowerActionModal
+                isOpen={!!prePowerState}
+                host={prePowerState?.host ?? null}
+                type={prePowerState?.type ?? 'shutdown'}
+                check={prePowerState?.check ?? null}
+                error={prePowerState?.error ?? null}
+                onClose={() => setPrePowerState(null)}
+                onProceed={() => {
+                    if (!prePowerState) return;
+                    const { host, type, message, delay, user, pass } = prePowerState;
+                    executePowerAction(host, type, message ?? '', delay ?? 0, user, pass);
+                    setPrePowerState(null);
                 }}
             />
 

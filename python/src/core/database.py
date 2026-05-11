@@ -81,6 +81,9 @@ class DatabaseManager:
                         teamviewer_id TEXT,
                         last_checked TEXT,
                         last_status BOOLEAN,
+                        current_user TEXT,                 -- last known interactive user (host-probe)
+                        last_boot TEXT,                    -- last known LastBootUpTime (host-probe)
+                        system_disk_free_gb REAL,          -- free space on SystemDrive in GB (host-probe)
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
@@ -115,7 +118,11 @@ class DatabaseManager:
                 'teamviewer_id': 'TEXT',
                 'last_checked': 'TEXT',
                 'last_status': 'BOOLEAN',
-                'domain': 'TEXT'
+                'domain': 'TEXT',
+                # host-probe (Sprint: opportunistic data collection)
+                'current_user': 'TEXT',
+                'last_boot': 'TEXT',
+                'system_disk_free_gb': 'REAL',
             }
             
             for col, dtype in new_columns.items():
@@ -231,6 +238,65 @@ class DatabaseManager:
                     return True
             except Exception as e:
                 logging.exception(f"Erro ao salvar múltiplos hosts: {e}")
+                return False
+
+    @_retry_on_locked()
+    def update_host_status(self, address: str, last_status: Optional[bool], last_checked: Optional[str]) -> bool:
+        """Atualiza só os campos voláteis do ping de um host (last_status, last_checked).
+
+        Usado pelo monitor a cada tick (~1×/s/host). Substitui o padrão antigo de
+        `replace_all_hosts` no callback, que reescrevia a tabela inteira a cada
+        ping — gargalo crítico em redes com ≥100 hosts.
+        """
+        with self._write_lock:
+            try:
+                with self._get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        """
+                        UPDATE hosts
+                        SET last_status = ?, last_checked = ?, updated_at = CURRENT_TIMESTAMP
+                        WHERE address = ?
+                        """,
+                        (last_status, last_checked, address),
+                    )
+                    conn.commit()
+                    return cursor.rowcount > 0
+            except Exception as e:
+                logging.exception(f"Erro ao atualizar status do host {address}: {e}")
+                return False
+
+    @_retry_on_locked()
+    def update_host_fields(self, address: str, fields: Dict[str, Any]) -> bool:
+        """Atualiza um subconjunto arbitrário de colunas para um host.
+
+        Mais barato que ler-modificar-salvar via `save_host` quando só uma coluna
+        muda (ex.: monitor descobre MAC novo, hostname novo via DNS reverso, IP
+        resolvido para o nome). Aceita apenas chaves whitelisted.
+        """
+        if not fields:
+            return False
+        allowed = {
+            'hostname', 'domain', 'mac', 'description', 'group_name',
+            'monitoring', 'vendor', 'type', 'teamviewer_id',
+            'last_checked', 'last_status',
+            'current_user', 'last_boot', 'system_disk_free_gb',
+        }
+        # tags/ports are JSON columns — handle them explicitly if needed.
+        sanitized = {k: v for k, v in fields.items() if k in allowed}
+        if not sanitized:
+            return False
+        with self._write_lock:
+            try:
+                set_clause = ", ".join(f"{k} = ?" for k in sanitized) + ", updated_at = CURRENT_TIMESTAMP"
+                params = list(sanitized.values()) + [address]
+                with self._get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(f"UPDATE hosts SET {set_clause} WHERE address = ?", params)
+                    conn.commit()
+                    return cursor.rowcount > 0
+            except Exception as e:
+                logging.exception(f"Erro ao atualizar campos do host {address}: {e}")
                 return False
 
     @_retry_on_locked()

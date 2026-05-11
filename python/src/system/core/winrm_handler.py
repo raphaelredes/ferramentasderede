@@ -270,14 +270,14 @@ class WinRMHandler:
         if self.pool:
             try:
                 self.pool.close()
-            except:
-                pass
+            except Exception as e:
+                logging.debug(f"pool.close() failed: {e}")
             self.pool = None
         if self.wsman:
             try:
                 self.wsman.close()
-            except:
-                pass
+            except Exception as e:
+                logging.debug(f"wsman.close() failed: {e}")
             self.wsman = None
         self.ps = None
 

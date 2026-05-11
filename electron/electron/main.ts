@@ -122,10 +122,29 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
       contextIsolation: true,
+      // Sandbox the renderer process so a compromised page can't spawn child
+      // processes, read arbitrary files or use Node APIs. The preload still
+      // runs in a privileged context and exposes only validated bridges.
+      sandbox: true,
     },
   })
 
   win.removeMenu()
+
+  // Defense-in-depth navigation guards:
+  // 1. Reject window.open / target=_blank — the UI doesn't need it. External URLs
+  //    go through the explicit `openExternal` IPC which validates the URL.
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  // 2. Block in-renderer navigation away from the bundled UI (dev: vite, prod:
+  //    file://). Prevents a crafted link or compromised content from steering
+  //    the window to an attacker-controlled origin.
+  win.webContents.on('will-navigate', (event, url) => {
+    const allowedPrefixes = [VITE_DEV_SERVER_URL, 'file://'].filter(Boolean) as string[]
+    if (!allowedPrefixes.some(p => url.startsWith(p))) {
+      event.preventDefault()
+      logToFile(`Blocked navigation to ${url}`)
+    }
+  })
 
   // Test active push message to Renderer-process.
   win.webContents.on('did-finish-load', () => {
@@ -224,27 +243,52 @@ app.whenReady().then(() => {
 
   ipcMain.handle('launch-msra', async (_event: unknown, ip: unknown, askCredentials?: unknown) => {
     if (!isSafeHost(ip)) throw new Error('Invalid host')
+
+    // Resolve msra.exe absolute path. Plain `spawn('msra', ...)` relies on the
+    // process PATH including %WINDIR%\system32, which is usually true, but if
+    // the Electron child env is sanitized we get ENOENT. Using the absolute
+    // path is safer and lets us pin the system version (avoids any user-shadowed
+    // msra.cmd / .ps1 hijack via PATH).
+    const msraPath = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'msra.exe')
+
     if (askCredentials) {
-      // Static PowerShell script — IP comes via env var so it cannot be
-      // interpolated into the command text.
+      // Pass the target via env var (not interpolated into the script body) AND
+      // build PowerShell arguments as an *array literal* so `/offerRA` stays a
+      // separate argv element regardless of any quoting weirdness with hyphens
+      // or underscores in the hostname. Errors get appended (not overwritten)
+      // to a debug log so we can see what happened across multiple attempts.
       const script = `
         $ErrorActionPreference = 'Stop'
         $target = $env:NT_MSRA_TARGET
         Remove-Item Env:\\NT_MSRA_TARGET -ErrorAction SilentlyContinue
-        $cred = Get-Credential
+        $logPath = Join-Path $env:TEMP 'msra_debug.log'
+        "[" + (Get-Date -Format o) + "] launch-msra (other user) target=$target" | Out-File -FilePath $logPath -Append -Encoding utf8
+        $cred = Get-Credential -Message "Credenciais para conectar em $target"
         if ($cred) {
           try {
-            Start-Process "$env:windir\\system32\\msra.exe" -ArgumentList "/offerRA $target" -Credential $cred -LoadUserProfile -WorkingDirectory "C:\\" -ErrorAction Stop
+            Start-Process -FilePath "${msraPath.replace(/\\/g, '\\\\')}" -ArgumentList @('/offerRA', $target) -Credential $cred -LoadUserProfile -WorkingDirectory 'C:\\' -ErrorAction Stop
+            "[" + (Get-Date -Format o) + "] Start-Process OK" | Out-File -FilePath $logPath -Append -Encoding utf8
           } catch {
-            Set-Content -Path "$env:TEMP\\msra_debug.txt" -Value "Error launching MSRA: $($_.Exception.Message)"
+            "[" + (Get-Date -Format o) + "] Start-Process FAILED: $($_.Exception.Message)" | Out-File -FilePath $logPath -Append -Encoding utf8
           }
+        } else {
+          "[" + (Get-Date -Format o) + "] Get-Credential cancelled by user" | Out-File -FilePath $logPath -Append -Encoding utf8
         }
       `
-      spawn('powershell', ['-NoProfile', '-Command', script], {
-        env: { ...process.env, NT_MSRA_TARGET: ip }
+      const child = spawn('powershell', ['-NoProfile', '-Command', script], {
+        env: { ...process.env, NT_MSRA_TARGET: ip as string },
+        windowsHide: false,
       })
+      child.on('error', (err) => logToFile(`launch-msra (askCreds) spawn error: ${err.message}`))
+      child.on('exit', (code) => logToFile(`launch-msra (askCreds) ps exited with code ${code}`))
     } else {
-      spawn('msra', ['/offerRA', ip])
+      // Direct mode: `msra.exe /offerRA <ip>` immediately opens the MSRA window
+      // already targeting <ip>. If the user reported that the window opens but
+      // does NOT auto-connect, the most likely cause was msra resolving via
+      // PATH and getting a hijack/shim — pinning the absolute path fixes it.
+      const child = spawn(msraPath, ['/offerRA', ip as string], { windowsHide: false })
+      child.on('error', (err) => logToFile(`launch-msra spawn error: ${err.message}`))
+      child.on('exit', (code) => logToFile(`launch-msra exited with code ${code}`))
     }
     return true
   })

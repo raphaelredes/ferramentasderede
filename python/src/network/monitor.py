@@ -3,25 +3,47 @@ import time
 import logging
 import socket
 import ipaddress
-from typing import List, Dict, Any
-# from concurrent.futures import ThreadPoolExecutor # REMOVED: Using dedicated threads
+import os
+from typing import List, Dict, Any, Optional
+from concurrent.futures import ThreadPoolExecutor
 from .ping import check_host_status_detailed
 from . import mac_utils
 from .tools import NetworkTools
 
 from src.core.host_manager import HostManager
 
+
+# Tunable via env var for ops without a redeploy. Cap default at 64: balances
+# parallelism vs. Windows handle / ping.exe spawn limits. Anything above ~128
+# starts triggering "no more handles" in tight loops.
+_DEFAULT_POOL_SIZE = int(os.environ.get("NT_MONITOR_POOL_SIZE", "64"))
+_TICK_INTERVAL_S = 1.0
+
+
 class HostMonitor:
+    """Pings every monitored host roughly once per second using a shared pool.
+
+    Previous design used one OS thread per host with its own 1s loop. That
+    didn't scale: 100 hosts = 100 ping.exe spawns/s + 100 idle threads + GIL
+    contention. Now a single scheduler thread enqueues N tasks per tick into
+    a fixed-size ThreadPoolExecutor — thread count is bounded regardless of
+    how many hosts the user adds. If a tick can't drain in 1s (overload) we
+    skip and log instead of piling up backlog.
+    """
+
     def __init__(self):
         self._hosts: Dict[str, Dict[str, Any]] = {}
         self._lock = threading.Lock()
         self._running = False
-        # self._executor = ThreadPoolExecutor(max_workers=50) # REMOVED
-        self._host_threads: Dict[str, threading.Thread] = {} # Map IP -> Thread
-        self._stop_events: Dict[str, threading.Event] = {} # Map IP -> Stop Event
-        
+        self._pool: Optional[ThreadPoolExecutor] = None
+        self._scheduler_thread: Optional[threading.Thread] = None
+        self._stop_event = threading.Event()
+        # Per-host in-flight guard: if last tick's ping didn't finish before the
+        # next tick fires, skip this round for that host rather than queueing
+        # duplicates that pile up under network pressure.
+        self._inflight: set = set()
+
         self._last_resolution_times = {}
-        # self._processing_hosts = set() # Not needed with dedicated threads
         self._tools = NetworkTools()
         self._host_manager = HostManager()
 
@@ -33,47 +55,63 @@ class HostMonitor:
 
         self._running = True
         self._on_update_callback = on_update_callback
+        self._stop_event.clear()
+        self._pool = ThreadPoolExecutor(
+            max_workers=_DEFAULT_POOL_SIZE,
+            thread_name_prefix="monitor-ping",
+        )
         self.update_hosts(hosts)
-        
-        # self._monitor_thread = threading.Thread(target=self._main_loop, daemon=True) # REMOVED
-        # self._monitor_thread.start()
-        
-        self._dns_thread = threading.Thread(target=self._dns_loop, daemon=True)
+
+        self._scheduler_thread = threading.Thread(
+            target=self._scheduler_loop, daemon=True, name="monitor-scheduler"
+        )
+        self._scheduler_thread.start()
+
+        self._dns_thread = threading.Thread(target=self._dns_loop, daemon=True, name="monitor-dns")
         self._dns_thread.start()
+
+        logging.info(f"HostMonitor started with pool_size={_DEFAULT_POOL_SIZE}")
 
     def stop_monitoring(self):
         """Para todo o monitoramento."""
         self._running = False
         self._on_update_callback = None
-        
-        # Stop all host threads
+        self._stop_event.set()
+
         with self._lock:
-            for ip, event in self._stop_events.items():
-                event.set()
-            
-            # Wait for threads? No, let them die naturally or daemon
-            self._host_threads.clear()
-            self._stop_events.clear()
             self._hosts.clear()
             self._last_resolution_times.clear()
+            self._inflight.clear()
+
+        if self._pool:
+            # Don't wait — tasks are short-lived; daemon threads die with the
+            # process anyway. `wait=False` avoids blocking shutdown on a stuck
+            # subprocess.run() inside ping.
+            try:
+                self._pool.shutdown(wait=False, cancel_futures=True)
+            except Exception:
+                logging.exception("HostMonitor: pool shutdown failed")
+            self._pool = None
 
     def update_hosts(self, hosts: List[Dict[str, Any]]):
-        """Atualiza a lista de hosts monitorados e gerencia threads."""
+        """Sincroniza o conjunto de hosts monitorados.
+
+        Não cria mais 1 thread por host — apenas atualiza o dicionário. O scheduler
+        descobre IPs novos no próximo tick.
+        """
         if not self._running:
             return
 
         current_ips = set()
-        
+
         with self._lock:
-            # Identificar hosts novos e removidos
             for host in hosts:
                 ip = host.get('address')
                 if not ip:
                     continue
-                
+
                 current_ips.add(ip)
-                
-                # Se é um novo host, inicializar stats e thread
+
                 if ip not in self._hosts:
                     self._hosts[ip] = {
                         'online': False,
@@ -91,65 +129,66 @@ class HostMonitor:
                         'domain': host.get('domain'),
                         'calibration_done': False,
                         'monitoring': host.get('monitoring', True),
-                        'ip': ip, # Store resolved/current IP
+                        'ip': ip,
                         'consecutive_successes': 0,
                         'consecutive_failures': 0,
                         'is_smart_offline': False,
                         'has_ever_been_online': False,
-                        'history': [], 
+                        'history': [],
                         'ports': host.get('ports', []),
                         'ports_status': {},
-                        'monitoring_start_time': time.time()
+                        'monitoring_start_time': time.time(),
                     }
-                    
-                    # Start dedicated thread for this host
-                    if self._hosts[ip]['monitoring']:
-                        self._start_host_thread(ip)
-                        
                 else:
-                    # Atualizar flag de monitoramento, hostname e portas se host já existe
-                    was_monitoring = self._hosts[ip].get('monitoring', True)
-                    is_monitoring = host.get('monitoring', True)
-                    
-                    self._hosts[ip]['monitoring'] = is_monitoring
+                    self._hosts[ip]['monitoring'] = host.get('monitoring', True)
                     self._hosts[ip]['hostname'] = host.get('hostname')
                     self._hosts[ip]['ports'] = host.get('ports', [])
-                    
-                    # Handle monitoring toggle
-                    if is_monitoring and not was_monitoring:
-                        self._start_host_thread(ip)
-                    elif not is_monitoring and was_monitoring:
-                        self._stop_host_thread(ip)
 
             # Remover hosts que não estão mais na lista
             ips_to_remove = [ip for ip in self._hosts if ip not in current_ips]
             for ip in ips_to_remove:
-                self._stop_host_thread(ip)
                 del self._hosts[ip]
                 if ip in self._last_resolution_times:
                     del self._last_resolution_times[ip]
+                self._inflight.discard(ip)
 
-    def _start_host_thread(self, ip: str):
-        """Inicia uma thread dedicada para monitorar um host."""
-        if ip in self._host_threads and self._host_threads[ip].is_alive():
-            return
+    def _scheduler_loop(self):
+        """Enfileira um ping por host a cada tick. Tick fixo de 1s.
 
-        stop_event = threading.Event()
-        self._stop_events[ip] = stop_event
-        
-        thread = threading.Thread(target=self._monitor_host_task, args=(ip, stop_event), daemon=True)
-        self._host_threads[ip] = thread
-        thread.start()
-        logging.info(f"Started monitoring thread for {ip}")
+        Se a fila do pool já tem trabalho para esse IP, pula esse tick para esse
+        host — evita backlog quando um destino lento bloqueia o worker.
+        """
+        while self._running and not self._stop_event.is_set():
+            tick_start = time.time()
+            try:
+                with self._lock:
+                    targets = [
+                        (ip, data.get('hostname'))
+                        for ip, data in self._hosts.items()
+                        if data.get('monitoring', True) and ip not in self._inflight
+                    ]
+                    for ip, _ in targets:
+                        self._inflight.add(ip)
 
-    def _stop_host_thread(self, ip: str):
-        """Para a thread de monitoramento de um host."""
-        if ip in self._stop_events:
-            self._stop_events[ip].set()
-            del self._stop_events[ip]
-        if ip in self._host_threads:
-            del self._host_threads[ip]
-            logging.info(f"Stopped monitoring thread for {ip}")
+                if targets and self._pool:
+                    for ip, hostname in targets:
+                        self._pool.submit(self._ping_task, ip, hostname)
+            except Exception:
+                logging.exception("HostMonitor: scheduler tick failed")
+
+            elapsed = time.time() - tick_start
+            sleep_for = max(0.05, _TICK_INTERVAL_S - elapsed)
+            self._stop_event.wait(sleep_for)
+
+    def _ping_task(self, ip: str, hostname: Optional[str]):
+        """Wrapper para a task no pool — chama _process_host e limpa o inflight."""
+        try:
+            self._process_host(ip, hostname)
+        except Exception:
+            logging.exception(f"HostMonitor: _process_host failed for {ip}")
+        finally:
+            with self._lock:
+                self._inflight.discard(ip)
 
     def reset_host_stats(self, ip: str):
         """Reseta as estatísticas de ping para um host específico."""
@@ -171,28 +210,6 @@ class HostMonitor:
                 stats['is_smart_offline'] = False
                 stats['has_ever_been_online'] = False
                 logging.info(f"Estatísticas resetadas para o host {ip}")
-
-    def _monitor_host_task(self, ip: str, stop_event: threading.Event):
-        """Tarefa executada pela thread dedicada de cada host."""
-        while not stop_event.is_set() and self._running:
-            start_time = time.time()
-            
-            # Get current hostname/data safely
-            hostname = None
-            with self._lock:
-                if ip in self._hosts:
-                    hostname = self._hosts[ip].get('hostname')
-                else:
-                    break # Host removed
-            
-            # Process the host (Ping)
-            self._process_host(ip, hostname)
-            
-            # Calculate sleep time to maintain 1s interval
-            elapsed = time.time() - start_time
-            sleep_time = max(0.1, 1.0 - elapsed)
-            
-            stop_event.wait(sleep_time)
 
     def _resolve_one_host(self, ip):
         """Resolve reverse DNS, forward DNS (if input was a hostname) and MAC
@@ -430,9 +447,13 @@ class HostMonitor:
                     stats['is_smart_offline'] = True
                 
                 # Lógica de Recuperação (Smart Recovery)
-                # Se estava offline e voltou a responder -> RESET IMEDIATO
-                if result['online'] and (stats.get('is_smart_offline', False) or stats.get('packet_loss_pct', 0) > 60):
-                    logging.info(f"Smart Recovery: Host {ip} recovered. Resetting stats.")
+                # Requer 2 sucessos consecutivos para evitar reset por falso positivo
+                # isolado (icmplib em SOCK_DGRAM, ARP cache, ping a IP reciclado por outra
+                # máquina, etc.). Antes era 1 — causava o card piscar entre "OFFLINE 96%"
+                # e "ONLINE 0% 1pkt" sempre que um pacote sneak passava.
+                was_offline_state = stats.get('is_smart_offline', False) or stats.get('packet_loss_pct', 0) > 60
+                if result['online'] and was_offline_state and stats.get('consecutive_successes', 0) >= 2:
+                    logging.info(f"Smart Recovery: Host {ip} recovered after 2+ consecutive pings. Resetting stats.")
                     # Resetar stats mas manter IP e hostname
                     stats['latency'] = result['latency'] # Manter o atual
                     stats['average_latency'] = result['latency']
@@ -445,7 +466,7 @@ class HostMonitor:
                     stats['online'] = True # Force online
                     stats['has_ever_been_online'] = True # Force ever online
                     stats['is_smart_offline'] = False # Reset smart offline flag
-                    
+
                     if 'history' not in stats: stats['history'] = []
                     stats['history'].append({
                         'timestamp': time.time(),
@@ -453,12 +474,24 @@ class HostMonitor:
                         'packet_loss': 0
                     })
                     if len(stats['history']) > 60: stats['history'].pop(0)
-                    return 
+                    return
 
                 # Atualização Normal de Stats
-                stats['online'] = result['online']
+                # `online` agora reflete o estado *consolidado*, não o último ping isolado.
+                # Um único pacote que passa em um host com 96% de perda não deve pintar
+                # o card de verde — manter coerência com o corpo "HOST OFFLINE".
+                # Regra: online = último ping respondeu E não está em smart-offline E
+                # (ou já é online estável, ou tem ≥2 sucessos consecutivos).
                 if result['online']:
                     stats['has_ever_been_online'] = True
+
+                last_ping_ok = bool(result['online'])
+                in_smart_offline = stats.get('is_smart_offline', False)
+                cons_ok = stats.get('consecutive_successes', 0)
+                was_online = stats.get('online', False)
+                # Estável: já estava online e respondeu agora -> mantém online
+                # Recuperando: estava offline e tem ≥2 ok consecutivos -> online
+                stats['online'] = last_ping_ok and not in_smart_offline and (was_online or cons_ok >= 2)
                 
                 if mac_address:
                     stats['mac'] = mac_address
@@ -548,7 +581,8 @@ class HostMonitor:
                 sock.settimeout(timeout)
                 result = sock.connect_ex((ip, int(port)))
                 return result == 0
-        except:
+        except Exception as e:
+            logging.debug(f"_check_port {ip}:{port} failed: {e}")
             return False
 
     def get_stats(self) -> Dict[str, Any]:

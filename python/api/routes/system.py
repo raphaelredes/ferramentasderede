@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Header
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from typing import Optional
 import json
 import asyncio
 import time
@@ -27,8 +28,30 @@ router = APIRouter(prefix="/system", tags=["system"])
 
 class SystemInfoRequest(BaseModel):
     target_ip: str
-    username: str
-    password: str
+    username: str = ""
+    password: str = ""
+    # When set, resolve username/password from the unlocked vault. Lets the UI
+    # silently fetch info (e.g. TeamViewer ID) using the configured default
+    # credential without ever exposing the password in the renderer.
+    credential_id: Optional[str] = None
+
+
+def _resolve_credentials(request: SystemInfoRequest):
+    """Resolve effective (username, password) for a request, honoring credential_id.
+
+    If `credential_id` is provided and the vault is unlocked, use those creds.
+    Otherwise fall back to whatever was passed in plaintext.
+    Raises HTTPException 401 when credential_id is set but the vault isn't ready.
+    """
+    if request.credential_id:
+        from api.routes.security import vault
+        if not vault.is_unlocked:
+            raise HTTPException(status_code=401, detail="Vault locked. Unlock it or provide credentials directly.")
+        cred = vault.get_credential(request.credential_id)
+        if not cred:
+            raise HTTPException(status_code=404, detail="Credential not found in vault.")
+        return cred.get("username", ""), cred.get("password", "")
+    return request.username, request.password
 
 class ServicesRequest(BaseModel):
     target_ip: str
@@ -322,16 +345,123 @@ def get_logs(request: LogsRequest, x_temp_auth: str = Header(default=None)):
 
     return StreamingResponse(event_generator(), media_type="application/x-ndjson")
 
+@router.post("/host-probe")
+def host_probe(request: SystemInfoRequest, x_temp_auth: str = Header(default=None)):
+    """Lightweight opportunistic probe — runs a single PowerShell script over WinRM
+    that collects MAC, Domain, CurrentUser, LastBootUpTime, SystemDiskFreeGB and
+    immediately persists them on the host record. Intended to be fired in the
+    background after the user authenticates against this host for any reason
+    (Terminal Remoto opening, TestConnection succeeding, etc.).
+
+    Failures are absorbed and returned in the JSON body so callers can be
+    fire-and-forget. The endpoint itself never errors out for routine WinRM
+    issues — only for malformed requests or missing vault credentials.
+    """
+    try:
+        username, password = _resolve_credentials(request)
+    except HTTPException as he:
+        return {"status": "error", "code": "CREDENTIALS_UNAVAILABLE", "message": he.detail}
+
+    try:
+        with get_trusted_hosts_context(request.target_ip, x_temp_auth):
+            result = sys_tools.get_host_probe(request.target_ip, username, password)
+    except Exception as e:
+        logging.exception(f"host_probe failed for {request.target_ip}: {e}")
+        return {"status": "error", "code": "PROBE_FAILED", "message": str(e)}
+
+    if not isinstance(result, dict):
+        return {"status": "error", "code": "PROBE_FAILED", "message": "Resposta inválida."}
+    if "error" in result:
+        if _is_trusted_hosts_error(result):
+            return {"status": "error", "code": "TRUSTED_HOSTS_REQUIRED", "message": result.get("error", "")}
+        return {"status": "error", "code": "PROBE_FAILED", "message": result.get("error", "")}
+
+    # Persist whatever fields actually came back. The probe script returns "N/A"
+    # strings for fields it couldn't resolve — we treat those as "no signal" and
+    # don't overwrite existing values with them.
+    try:
+        from src.core.database import db as _db
+        updates = {}
+        mac = result.get("MACAddress")
+        if mac and mac != "N/A":
+            updates['mac'] = mac
+        dom = result.get("Domain")
+        if dom and dom != "N/A":
+            updates['domain'] = dom
+        cu = result.get("CurrentUser")
+        if cu and cu != "N/A":
+            updates['current_user'] = cu
+        lb = result.get("LastBootUpTime")
+        if lb and lb != "N/A":
+            updates['last_boot'] = lb
+        df = result.get("SystemDiskFreeGB")
+        if isinstance(df, (int, float)):
+            updates['system_disk_free_gb'] = float(df)
+        if updates:
+            _db.update_host_fields(request.target_ip, updates)
+    except Exception as e:
+        # Persistence is best-effort. Caller still gets the data in the response.
+        logging.exception(f"host_probe persistence failed for {request.target_ip}: {e}")
+
+    return {"status": "success", "data": result}
+
+
+@router.post("/pre-power-check")
+def pre_power_check(request: SystemInfoRequest, x_temp_auth: str = Header(default=None)):
+    """Pre-shutdown/restart safety check — see get_pre_power_check.ps1.
+
+    Used by the UI to warn the operator about: recent uptime, pending reboots,
+    and active interactive sessions before triggering a destructive action.
+    Designed to be fast (<3s typical); failures don't block the underlying
+    action since the caller treats this purely as advisory.
+    """
+    try:
+        username, password = _resolve_credentials(request)
+    except HTTPException as he:
+        return {"status": "error", "code": "CREDENTIALS_UNAVAILABLE", "message": he.detail}
+
+    try:
+        with get_trusted_hosts_context(request.target_ip, x_temp_auth):
+            result = sys_tools.get_pre_power_check(request.target_ip, username, password)
+    except Exception as e:
+        logging.exception(f"pre_power_check failed for {request.target_ip}: {e}")
+        return {"status": "error", "code": "CHECK_FAILED", "message": str(e)}
+
+    if not isinstance(result, dict):
+        return {"status": "error", "code": "CHECK_FAILED", "message": "Resposta inválida."}
+    if "error" in result and not any(k in result for k in ("uptime_minutes", "sessions", "pending_reboot")):
+        # Full failure — script crashed before populating anything useful.
+        if _is_trusted_hosts_error(result):
+            return {"status": "error", "code": "TRUSTED_HOSTS_REQUIRED", "message": result.get("error", "")}
+        return {"status": "error", "code": "CHECK_FAILED", "message": result.get("error", "")}
+
+    return {"status": "success", "data": result}
+
+
 @router.post("/teamviewer")
 def get_teamviewer_id(request: SystemInfoRequest, x_temp_auth: str = Header(default=None)):
-    """Obtém o TeamViewer ID do host remoto."""
+    """Obtém o TeamViewer ID do host remoto.
+
+    Accepts either explicit credentials or `credential_id` referencing the
+    unlocked vault. The RemoteAccessModal uses credential_id to silently
+    auto-fetch missing IDs without ever handling the password in the renderer.
+    """
+    try:
+        username, password = _resolve_credentials(request)
+    except HTTPException as he:
+        # Propagate as a single-line NDJSON so the frontend can show the right
+        # message without parsing a 401/404 specially.
+        def err_gen():
+            yield json.dumps({"status": "error", "code": "CREDENTIALS_UNAVAILABLE", "message": he.detail}).encode('utf-8') + b"\n"
+        return StreamingResponse(err_gen(), media_type="application/x-ndjson")
+
     def event_generator():
         try:
             with get_trusted_hosts_context(request.target_ip, x_temp_auth):
                 iterator = sys_tools.get_remote_teamviewer_id(
                     request.target_ip,
-                    request.username,
-                    request.password
+                    username,
+                    password
                 )
                 for item in iterator:
                     if isinstance(item, tuple) and len(item) == 2:

@@ -67,14 +67,38 @@ export function AddHostModal({ isOpen, onClose, onAdd, isAdding, existingHosts, 
         g.toLowerCase().includes(group.toLowerCase())
     );
 
+    // ESC closes — basic accessibility hygiene for any modal.
+    useEffect(() => {
+        if (!isOpen) return;
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') onClose();
+        };
+        document.addEventListener('keydown', onKey);
+        return () => document.removeEventListener('keydown', onKey);
+    }, [isOpen, onClose]);
+
     if (!isOpen) return null;
 
     return (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={onClose}>
-            <div className="bg-zinc-900 border border-zinc-800 rounded-xl w-full max-w-md p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div
+            className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+            onClick={onClose}
+            role="presentation"
+        >
+            <div
+                className="bg-zinc-900 border border-zinc-800 rounded-xl w-full max-w-md p-6 shadow-2xl"
+                onClick={(e) => e.stopPropagation()}
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="addhost-title"
+            >
                 <div className="flex justify-between items-center mb-4">
-                    <h3 className="text-xl font-bold text-white">Adicionar Novo Host</h3>
-                    <button onClick={onClose} className="text-zinc-400 hover:text-white">
+                    <h3 id="addhost-title" className="text-xl font-bold text-white">Adicionar Novo Host</h3>
+                    <button
+                        onClick={onClose}
+                        className="text-zinc-400 hover:text-white"
+                        aria-label="Fechar"
+                    >
                         <X size={20} />
                     </button>
                 </div>

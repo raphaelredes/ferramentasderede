@@ -63,23 +63,46 @@ class Settings(BaseModel):
     networks: List[NetworkConfig] = []
 
 # --- Helpers ---
+#
+# `ui_preferences.json` was previously "encrypted" with Fernet using a key file
+# (`key.key`) sitting next to it in APP_DATA_DIR. That offers zero protection:
+# anyone with read access to the file has read access to the key, by design.
+# We now store it as plaintext JSON to be honest about the threat model — UI
+# preferences + network/VLAN config + a credential_id pointer (no actual
+# secrets). Real credentials still live in the PBKDF2 + AES-GCM SecureVault.
+# Disk-level protection (BitLocker / FileVault) is the right tool for the
+# concerns this used to pretend to address.
+#
+# Migration path: on load, try plaintext first. If that fails because the file
+# is still in the legacy encrypted format, decrypt once via the legacy
+# SecurityManager and rewrite as plaintext so future loads are direct.
 def load_settings() -> Settings:
     if not os.path.exists(SETTINGS_FILE):
         return Settings()
     try:
-        # Try to load as encrypted first
+        # 1. Plaintext (current format).
         try:
-            from src.core.security import SecurityManager
-            from src.config.settings import APP_DATA_DIR
-            sec_manager = SecurityManager(APP_DATA_DIR)
-            json_str = sec_manager.load_encrypted_file(SETTINGS_FILE)
-            data = json.loads(json_str)
-        except Exception:
-            # Fallback to plain text (legacy support)
             with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-                
-        return Settings(**data)
+            return Settings(**data)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            pass  # likely legacy encrypted blob — fall through.
+
+        # 2. Legacy: decrypt with Fernet, parse, then rewrite as plaintext so
+        #    we only pay the migration cost once.
+        from src.core.security import SecurityManager
+        from src.config.settings import APP_DATA_DIR
+        sec_manager = SecurityManager(APP_DATA_DIR)
+        json_str = sec_manager.load_encrypted_file(SETTINGS_FILE)
+        data = json.loads(json_str)
+        settings = Settings(**data)
+        try:
+            save_settings_to_file(settings)
+            print("ui_preferences.json migrated from legacy encrypted format to plaintext.")
+        except Exception as e:
+            print(f"Warning: failed to rewrite ui_preferences.json as plaintext: {e}")
+        return settings
+
     except Exception as e:
         print(f"Error loading settings: {e}")
         return Settings()
@@ -87,13 +110,12 @@ def load_settings() -> Settings:
 def save_settings_to_file(settings: Settings):
     try:
         json_str = json.dumps(settings.model_dump(), indent=4)
-        
-        # Encrypt and save
-        from src.core.security import SecurityManager
-        from src.config.settings import APP_DATA_DIR
-        sec_manager = SecurityManager(APP_DATA_DIR)
-        sec_manager.save_encrypted_file(SETTINGS_FILE, json_str)
-        
+        # Atomic write: tmp file + rename so a crash mid-write doesn't corrupt
+        # the prefs file (the legacy code wrote in-place).
+        tmp_path = SETTINGS_FILE + ".tmp"
+        with open(tmp_path, 'w', encoding='utf-8') as f:
+            f.write(json_str)
+        os.replace(tmp_path, SETTINGS_FILE)
     except Exception as e:
         print(f"Error saving settings: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to save settings: {str(e)}")

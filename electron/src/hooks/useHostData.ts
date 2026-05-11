@@ -1,6 +1,8 @@
 import { useState, useCallback } from 'react';
 import { SystemInfo, Service, LogEntry, Session } from '../types';
 import { API_BASE } from '../config/api';
+import { resolveTeamViewerId } from '../utils/teamviewer';
+import { probeHost } from '../utils/hostProbe';
 
 export function useHostData(ip: string | undefined) {
     const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
@@ -90,36 +92,37 @@ export function useHostData(ip: string | undefined) {
                 setSystemInfo(dataInfo);
                 saveToCache({ systemInfo: dataInfo });
 
-                // Fetch TeamViewer ID (streamed)
-                const resTv = await fetch(`${API_BASE}/system/teamviewer`, {
-                    method: 'POST',
-                    headers: headers,
-                    body: JSON.stringify({ target_ip: ip, username: user, password: pass })
-                });
+                // Fire opportunistic host-probe in background. /system/info
+                // already returns most of these fields but doesn't persist all
+                // of them (only current_user + teamviewer_id today). The probe
+                // endpoint persists MAC + domain + last_boot + disk free, so
+                // the painel can show this stable data even without opening
+                // the detail page again. Fire-and-forget — no UI dependency.
+                probeHost({
+                    targetIp: ip,
+                    username: user,
+                    password: pass,
+                    tempAuth,
+                }).catch(() => undefined);
 
-                if (resTv.ok && resTv.body) {
-                    const reader = resTv.body.getReader();
-                    const { value } = await reader.read();
-                    if (value) {
-                        const text = new TextDecoder().decode(value);
-                        try {
-                            const json = JSON.parse(text);
-                            if (json.code === "TRUSTED_HOSTS_REQUIRED") {
-                                throw new Error("TRUSTED_HOSTS_REQUIRED");
-                            }
-                            if (json.data) {
-                                setTeamViewerId(json.data);
-                                saveToCache({ teamViewerId: json.data });
-                                fetch(`${API_BASE}/hosts/${ip}`, {
-                                    method: 'PATCH',
-                                    headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ teamviewer_id: json.data })
-                                }).catch(() => { });
-                            }
-                        } catch (e: unknown) {
-                            if (e instanceof Error && e.message === "TRUSTED_HOSTS_REQUIRED") throw e;
-                        }
-                    }
+                // Fetch TeamViewer ID via the shared helper. We pass the same
+                // creds used for /system/info — if /info worked, /teamviewer
+                // should too unless TeamViewer just isn't installed. Errors
+                // are swallowed silently here so a missing TV doesn't blow up
+                // the whole detail page; the only one we surface is
+                // TRUSTED_HOSTS_REQUIRED so the caller can prompt the gate.
+                const tvResult = await resolveTeamViewerId({
+                    targetIp: ip,
+                    username: user,
+                    password: pass,
+                    persistOnHost: ip,
+                    tempAuth,
+                });
+                if (tvResult.ok) {
+                    setTeamViewerId(tvResult.id);
+                    saveToCache({ teamViewerId: tvResult.id });
+                } else if (tvResult.code === 'TRUSTED_HOSTS_REQUIRED') {
+                    throw new Error('TRUSTED_HOSTS_REQUIRED');
                 }
             }
 

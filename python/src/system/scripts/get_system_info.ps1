@@ -22,9 +22,10 @@ try {
     $cpu = Get-WmiObject Win32_Processor | Select-Object -First 1
     $cpuInfo = if ($cpu) { $cpu.Name } else { "N/A" }
             
-    # 3. RAM Info
+    # 3. RAM + Domain (Win32_ComputerSystem é único query — aproveita.)
     $ram = Get-WmiObject Win32_ComputerSystem
     $ramGB = if ($ram) { [math]::Round($ram.TotalPhysicalMemory / 1GB, 2) } else { 0 }
+    $domain = if ($ram -and $ram.Domain) { $ram.Domain } else { "N/A" }
             
     # 4. Disk Info
     $disks = Get-WmiObject Win32_LogicalDisk | Where-Object { $_.DriveType -eq 3 } | ForEach-Object {
@@ -193,6 +194,7 @@ try {
         Uptime         = $uptime
         CurrentUser    = $currentUser
         TeamViewerID   = $tvId
+        Domain         = $domain
     }
             
     $result | ConvertTo-Json -Depth 3 -Compress

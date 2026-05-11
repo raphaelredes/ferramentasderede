@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { X, Terminal, CheckCircle, AlertCircle, Loader2 } from 'lucide-react';
 import { API_BASE } from '../../config/api';
+import { probeHost } from '../../utils/hostProbe';
+import { resolveTeamViewerId } from '../../utils/teamviewer';
 
 interface TestConnectionModalProps {
     isOpen: boolean;
@@ -48,6 +50,22 @@ export const TestConnectionModal: React.FC<TestConnectionModalProps> = ({ isOpen
             setResult(data.result);
             setLogs(prev => prev + (data.logs || 'Nenhum log retornado.'));
 
+            // Opportunistic probe: the connection just proved these credentials
+            // work for this host via WinRM. Collect MAC/Domain/CurrentUser/
+            // LastBoot/DiskFree and TV ID in background — backend persists them.
+            if (data.result?.success) {
+                probeHost({
+                    targetIp: ip,
+                    username: credentials.username,
+                    password: credentials.password,
+                }).catch(() => undefined);
+                resolveTeamViewerId({
+                    targetIp: ip,
+                    username: credentials.username,
+                    password: credentials.password,
+                    persistOnHost: ip,
+                }).catch(() => undefined);
+            }
         } catch (error) {
             setResult({ success: false, error: String(error) });
             setLogs(prev => prev + `\nErro ao conectar ao servidor: ${error}`);

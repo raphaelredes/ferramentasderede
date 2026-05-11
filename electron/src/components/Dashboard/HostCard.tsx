@@ -194,8 +194,12 @@ export const HostCard = memo(function HostCard({
         ? 'w-full h-full'
         : 'w-full md:w-[calc(50%-0.5rem)] lg:w-[calc(33.333%-0.667rem)] xl:w-[calc(25%-0.75rem)]';
 
+    // Effective online: must pass both the instantaneous flag AND the consolidated state
+    // (sustained loss > 60% OR never responded). Avoids "green dot + HOST OFFLINE body" when
+    // a single ping sneaks through on an otherwise dead host.
     const isSmartOffline = stats.total_packets > 50 && stats.packet_loss_pct > 60;
-    const effectiveIsOnline = isOnline && !isSmartOffline;
+    const neverOnline = stats.calibration_done && stats.has_ever_been_online === false;
+    const effectiveIsOnline = isOnline && !isSmartOffline && !neverOnline;
 
     // Prepare data for sparkline
     const sparklineData = React.useMemo(() => {
@@ -282,8 +286,9 @@ export const HostCard = memo(function HostCard({
                                     }}
                                     className="opacity-0 group-hover/ip:opacity-100 p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-white transition-all"
                                     title="Copiar IP"
+                                    aria-label={`Copiar IP ${stats.ip || host.ip || host.address}`}
                                 >
-                                    <Copy size={12} />
+                                    <Copy size={12} aria-hidden="true" />
                                 </button>
                             </div>
                         </div>
@@ -296,17 +301,24 @@ export const HostCard = memo(function HostCard({
                             }}
                             className="p-1.5 rounded-lg text-blue-400 hover:bg-zinc-800 hover:text-blue-300 transition-colors"
                             title="Acesso Remoto (RDP, MSRA, TeamViewer)"
+                            aria-label="Abrir acesso remoto"
                         >
-                            <Monitor size={14} />
+                            <Monitor size={14} aria-hidden="true" />
                         </button>
                         <button
                             onClick={(e) => handleToggleMonitoring(e, host)}
                             className={`p-1.5 rounded-lg transition-colors ${host.monitoring === false ? 'text-zinc-600 hover:bg-zinc-800 hover:text-zinc-400' : 'text-green-500/50 hover:text-green-500 hover:bg-zinc-800'}`}
                             title={host.monitoring === false ? "Ativar monitoramento" : "Desativar monitoramento"}
+                            aria-label={host.monitoring === false ? "Ativar monitoramento" : "Desativar monitoramento"}
+                            aria-pressed={host.monitoring !== false}
                         >
-                            <Power size={14} />
+                            <Power size={14} aria-hidden="true" />
                         </button>
-                        <div className={`w-2 h-2 rounded-full ${host.monitoring === false ? 'bg-zinc-700' : (effectiveIsOnline ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)]' : 'bg-red-500')}`} />
+                        <div
+                            className={`w-2 h-2 rounded-full ${host.monitoring === false ? 'bg-zinc-700' : (effectiveIsOnline ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)]' : 'bg-red-500')}`}
+                            role="status"
+                            aria-label={host.monitoring === false ? 'Monitoramento pausado' : (effectiveIsOnline ? 'Host online' : 'Host offline')}
+                        />
                     </div>
                 </div>
 
@@ -335,25 +347,12 @@ export const HostCard = memo(function HostCard({
                             {/* Subtle background pulse */}
                             <div className="absolute inset-0 bg-blue-500/5 animate-pulse" />
                         </div>
-                    ) : (!stats.has_ever_been_online) ? (
+                    ) : (!stats.has_ever_been_online || stats.packet_loss_pct > 60) ? (
                         <div className="flex flex-col items-center justify-center py-2 text-red-500 gap-2 bg-red-500/5 rounded-lg border border-red-500/20 h-[74px]">
                             <div className="flex items-center gap-2">
                                 <AlertTriangle className="animate-pulse" size={18} />
                                 <span className="text-sm font-bold tracking-wide">HOST OFFLINE</span>
                             </div>
-                            <span className="text-[10px] text-red-400/60 font-mono">
-                                Sem resposta
-                            </span>
-                        </div>
-                    ) : (stats.packet_loss_pct > 60) ? (
-                        <div className="flex flex-col items-center justify-center py-2 text-red-500 gap-2 bg-red-500/5 rounded-lg border border-red-500/20 h-[74px]">
-                            <div className="flex items-center gap-2">
-                                <AlertTriangle className="animate-pulse" size={18} />
-                                <span className="text-sm font-bold tracking-wide">HOST OFFLINE</span>
-                            </div>
-                            <span className="text-[10px] text-red-400/60 font-mono">
-                                {stats.packet_loss_pct.toFixed(1)}% de perda
-                            </span>
                         </div>
                     ) : (
                         <div className="relative h-[74px]">

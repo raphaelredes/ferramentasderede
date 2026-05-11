@@ -1,8 +1,53 @@
 import os
+import json
+import logging
 from pathlib import Path
 import platform
 
-APP_VERSION = "1.2.3"
+
+def _read_app_version() -> str:
+    """Resolve APP_VERSION from electron/package.json — the single source of truth.
+
+    Search order (first hit wins):
+      1. Env override `NT_APP_VERSION` (lets CI inject a tagged build version
+         without touching files).
+      2. `electron/package.json` relative to this file in dev checkouts.
+      3. PyInstaller bundle: `_MEIPASS/package.json` (we ship it in the spec).
+      4. `_MEIPASS/electron/package.json` for the dev layout inside a frozen bundle.
+
+    Returns "0.0.0-dev" if nothing is found rather than crashing — the version
+    is informational, not load-bearing.
+    """
+    override = os.environ.get("NT_APP_VERSION")
+    if override:
+        return override.strip()
+
+    candidates = []
+    here = Path(__file__).resolve()
+    # Dev checkout: <repo>/python/src/config/settings.py -> <repo>/electron/package.json
+    candidates.append(here.parents[3] / "electron" / "package.json")
+    # PyInstaller one-file/one-folder bundles unpack to sys._MEIPASS
+    import sys
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        candidates.append(Path(meipass) / "package.json")
+        candidates.append(Path(meipass) / "electron" / "package.json")
+
+    for path in candidates:
+        try:
+            if path.is_file():
+                with path.open("r", encoding="utf-8") as f:
+                    data = json.load(f)
+                v = data.get("version")
+                if isinstance(v, str) and v:
+                    return v
+        except Exception as e:
+            logging.debug(f"settings._read_app_version: failed to read {path}: {e}")
+
+    return "0.0.0-dev"
+
+
+APP_VERSION = _read_app_version()
 
 # --- Diretórios e Arquivos ---
 # Definir diretório de dados do usuário (AppData/Roaming para persistência correta)
