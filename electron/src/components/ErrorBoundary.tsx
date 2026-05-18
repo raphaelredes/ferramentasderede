@@ -44,11 +44,14 @@ export class ErrorBoundary extends Component<Props, State> {
                         {this.state.error && (
                             <div className="bg-black/50 rounded-lg p-4 mb-6 overflow-auto max-h-48 border border-zinc-800">
                                 <p className="text-red-400 font-mono text-sm break-words">
-                                    {this.state.error.toString()}
+                                    {/* Cap to defend against a future code path that
+                                        slips a credential or other sensitive string
+                                        into an Error message. */}
+                                    {this.state.error.toString().slice(0, 500)}
                                 </p>
                                 {this.state.errorInfo && (
                                     <pre className="text-zinc-500 text-xs mt-2 whitespace-pre-wrap">
-                                        {this.state.errorInfo.componentStack}
+                                        {(this.state.errorInfo.componentStack ?? '').slice(0, 2000)}
                                     </pre>
                                 )}
                             </div>

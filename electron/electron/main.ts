@@ -328,9 +328,13 @@ function registerIpcHandlers() {
           "[" + (Get-Date -Format o) + "] Get-Credential cancelled by user" | Out-File -FilePath $logPath -Append -Encoding utf8
         }
       `
+      // NOTE: -NonInteractive is deliberately omitted here. The whole point of
+      // this branch is the Get-Credential prompt below, which throws a
+      // PromptingException in non-interactive mode (PS 5.1). Other PS spawns
+      // can use -NonInteractive freely; this one can't.
       const child = spawn(
         PS_EXECUTABLE,
-        ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
+        ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script],
         {
           env: { ...process.env, NT_MSRA_TARGET: ip as string, NT_MSRA_BIN: msraPath },
           windowsHide: false,
@@ -424,12 +428,18 @@ app.whenReady().then(() => {
   // to 127.0.0.1 generally); everything else stays self-origin. Without this
   // header, any reflected/injected content in the renderer could pull JS or
   // styles from arbitrary origins.
+  // In dev mode Vite's HMR client uses eval() for module replacement; without
+  // 'unsafe-eval' in script-src the renderer console floods with CSP errors
+  // and hot reload stops working. The prod build bundles everything ahead of
+  // time, so we drop 'unsafe-eval' there.
+  const isDev = Boolean(VITE_DEV_SERVER_URL)
+  const scriptSrc = isDev ? "script-src 'self' 'unsafe-eval'" : "script-src 'self'"
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     const csp = [
       "default-src 'self'",
       // Tailwind/Vite emits inline style attributes; allow 'unsafe-inline' for styles only.
       "style-src 'self' 'unsafe-inline'",
-      "script-src 'self'",
+      scriptSrc,
       "img-src 'self' data: blob:",
       "font-src 'self' data:",
       "connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:* http://localhost:* ws://localhost:*",
