@@ -32,14 +32,18 @@ def get_mac_from_arp(ip_address=None):
         output = result.stdout
         
         if ip_address:
-            # Comportamento original: retorna apenas o MAC do IP específico
+            # Comportamento original: retorna apenas o MAC do IP específico.
+            # Se a busca por IP específico não retornar nada, cair no fallback
+            # de tabela completa abaixo — `arp -a IP` às vezes vem vazio em
+            # Windows mesmo com o IP presente na tabela geral. O `return`
+            # original tornava o fallback inalcançável.
             mac_regex = r"([0-9a-fA-F]{2}[:-]){5}([0-9a-fA-F]{2})"
             matches = re.finditer(mac_regex, output)
             for match in matches:
                 mac = match.group(0).replace('-', ':').upper()
                 if mac != "FF:FF:FF:FF:FF:FF":
                     return mac
-            return None
+            # Falhou na busca específica — vai para o fallback de tabela cheia.
         else:
             # Novo comportamento: retorna lista de entradas
             entries = []

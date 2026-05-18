@@ -612,7 +612,8 @@ def discover_network(request: DiscoveryRequest):
             )
             for host in iterator:
                 yield json.dumps(host).encode('utf-8') + b"\n"
-                time.sleep(0.01)
+                # No artificial 10ms sleep; back-pressure on the streaming
+                # response is the right flow-control mechanism.
         except Exception as e:
             yield json.dumps({"error": str(e)}).encode('utf-8') + b"\n"
 
@@ -655,7 +656,8 @@ def run_ping(request: ToolRequest):
                 line = item[0] if isinstance(item, tuple) else str(item)
                 if line:
                     yield line.encode('utf-8')
-                    time.sleep(0.01)
+                    # No artificial 10ms sleep; back-pressure on the streaming
+                # response is the right flow-control mechanism.
         except Exception as e:
             yield f"Erro ao executar ping: {str(e)}\n".encode('utf-8')
     return StreamingResponse(event_generator(), media_type="text/plain")
@@ -675,7 +677,8 @@ def run_traceroute(request: ToolRequest):
                 line = item[0] if isinstance(item, tuple) else str(item)
                 if line:
                     yield line.encode('utf-8')
-                    time.sleep(0.01)
+                    # No artificial 10ms sleep; back-pressure on the streaming
+                # response is the right flow-control mechanism.
         except Exception as e:
             yield f"Erro ao executar traceroute: {str(e)}\n".encode('utf-8')
     return StreamingResponse(event_generator(), media_type="text/plain")

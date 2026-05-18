@@ -39,8 +39,13 @@ class LocalHandler:
             # PowerShell -EncodedCommand has a documented ~32KB cap on the
             # encoded argument. Refuse oversized scripts up front instead of
             # hitting a cryptic "command line too long" error from CreateProcess.
+            #
+            # All error returns include `success: False` so callers can branch
+            # on a single field. Earlier the error returns omitted `success`
+            # which forced every consumer to check `result.get("success")`
+            # AND `"error" in result` separately.
             if len(encoded_script) > 32000:
-                return {"error": "Script muito longo para -EncodedCommand."}
+                return {"success": False, "error": "Script muito longo para -EncodedCommand."}
 
             cmd = ["powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded_script]
 
@@ -57,16 +62,16 @@ class LocalHandler:
                     timeout=300,
                 )
             except subprocess.TimeoutExpired:
-                return {"error": "Local Execution Error: timeout after 300s."}
+                return {"success": False, "error": "Local Execution Error: timeout after 300s."}
 
             output_lines = process.stdout.splitlines()
 
             if process.returncode != 0:
                 error_msg = process.stderr or "Unknown error"
-                return {"error": f"Local Execution Error: {error_msg}"}
+                return {"success": False, "error": f"Local Execution Error: {error_msg}"}
 
             return {"success": True, "output": output_lines}
 
         except Exception as e:
             logging.error(f"Local execution failed: {e}")
-            return {"error": str(e)}
+            return {"success": False, "error": str(e)}
