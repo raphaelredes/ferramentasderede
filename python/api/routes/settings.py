@@ -145,9 +145,33 @@ def get_trusted_hosts():
         return ["*"]
     return [h.strip() for h in hosts.split(',') if h.strip()]
 
+def _validate_trusted_host_value(host: str) -> bool:
+    """TrustedHosts entries are IPs, hostnames, or `*` (wildcard).
+    Reject anything that could be passed as a registry value injection."""
+    if not isinstance(host, str) or not host:
+        return False
+    if len(host) > 253:
+        return False
+    if host == "*":
+        return True
+    import re
+    # Accept IPv4, single hostname, or comma-separated list of either.
+    parts = [p.strip() for p in host.split(",") if p.strip()]
+    if not parts:
+        return False
+    for part in parts:
+        if part == "*":
+            continue
+        if not re.fullmatch(r"[A-Za-z0-9._\-]+", part):
+            return False
+    return True
+
+
 @router.post("/settings/trusted-hosts")
 def add_trusted_host(host: str):
     """Add a host to TrustedHosts (requires Admin)."""
+    if not _validate_trusted_host_value(host):
+        raise HTTPException(status_code=400, detail="Valor de host inválido para TrustedHosts.")
     from src.system.core.winrm_handler import WinRMHandler
     if WinRMHandler.add_trusted_host(host):
         return {"status": "success", "message": f"Added {host} to TrustedHosts."}
@@ -159,6 +183,8 @@ def remove_trusted_host_endpoint(host: Optional[str] = None):
     """Remove a single TrustedHost or clear all."""
     from src.system.core.winrm_handler import WinRMHandler
     if host:
+        if not _validate_trusted_host_value(host):
+            raise HTTPException(status_code=400, detail="Valor de host inválido para TrustedHosts.")
         if WinRMHandler.remove_trusted_host(host):
             return {"status": "success", "message": f"Removed {host} from TrustedHosts."}
         else:

@@ -36,18 +36,22 @@ class SecureVault:
                 # New vault
                 logging.info("Creating new vault...")
                 self.salt = secrets.token_bytes(32)
-                with open(SALT_FILE, 'wb') as f:
+                # Atomic write so a crash mid-save can't leave a half-written
+                # salt that locks the operator out of their own vault.
+                tmp_salt = SALT_FILE + ".tmp"
+                with open(tmp_salt, 'wb') as f:
                     f.write(self.salt)
-                
+                os.replace(tmp_salt, SALT_FILE)
+
                 self.master_key = self._derive_key(password, self.salt)
                 self.credentials = {}
                 self.is_unlocked = True
                 self.save()
-                
+
                 # Save hint if provided
                 if hint:
                     self.set_hint(hint)
-                    
+
                 return True
 
             # Existing vault
@@ -97,10 +101,16 @@ class SecureVault:
             aesgcm = AESGCM(self.master_key)
             nonce = secrets.token_bytes(12)
             ciphertext = aesgcm.encrypt(nonce, data_json, None)
-            
-            with open(CRED_FILE, 'wb') as f:
+
+            # Atomic write: a power loss or crash mid-write previously left
+            # CRED_FILE truncated/corrupt, locking the operator out of every
+            # credential they had stored. Write to a sibling tmp first, then
+            # atomically swap.
+            tmp_path = CRED_FILE + ".tmp"
+            with open(tmp_path, 'wb') as f:
                 f.write(nonce + ciphertext)
-                
+            os.replace(tmp_path, CRED_FILE)
+
             logging.info("Vault saved successfully.")
         except Exception as e:
             logging.error(f"Error saving vault: {e}")
@@ -127,9 +137,22 @@ class SecureVault:
             del self.credentials[entry_id]
             self.save()
 
-    def get_all_credentials(self):
-        if not self.is_unlocked: return []
-        return list(self.credentials.values())
+    def get_all_credentials(self, include_passwords: bool = False):
+        """Returns the credential list. Passwords are stripped by default so the
+        list can travel over the wire to the renderer without exposing secrets;
+        the renderer must call /security/credentials/decrypt to retrieve one
+        password at a time when the operator clicks "show". An accidental XSS
+        or DevTools peek would previously have leaked every password at once."""
+        if not self.is_unlocked:
+            return []
+        creds = list(self.credentials.values())
+        if include_passwords:
+            return creds
+        sanitized = []
+        for cred in creds:
+            safe = {k: v for k, v in cred.items() if k != "password"}
+            sanitized.append(safe)
+        return sanitized
 
     def set_hint(self, hint: str):
         """Saves a password hint to a separate JSON file."""

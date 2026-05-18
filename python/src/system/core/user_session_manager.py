@@ -93,22 +93,36 @@ class UserSessionManager:
             yield f"Erro ao listar usuários: {str(e)}\n", []
 
     def disconnect_user(self, session_id):
-        logging.info(f"Executing 'disconnect_user' for session ID {session_id}")
+        # session_id MUST be a positive integer — Windows session IDs are small
+        # ints (typically 1..65535). Interpolating arbitrary strings here was a
+        # command injection vector (e.g. "1; Remove-Item C:\\* -Recurse" would
+        # execute on the remote host with admin privileges).
+        try:
+            sid_int = int(str(session_id).strip())
+            if sid_int < 0 or sid_int > 65535:
+                raise ValueError("session_id out of range")
+        except (TypeError, ValueError):
+            logging.warning(f"disconnect_user: rejected invalid session_id={session_id!r}")
+            yield "Falha ao desconectar: ID de sessão inválido."
+            return
+
+        sid = str(sid_int)
+        logging.info(f"Executing 'disconnect_user' for session ID {sid}")
         ps_script = f"""
         $ErrorActionPreference = 'Stop'
-        try {{ msg {session_id} /TIME:5 "Você será desconectado em 5 segundos pelo administrador." 2>&1 | Out-Null; Write-Output "Aviso enviado." }} catch {{ Write-Output "Aviso falhou." }}
+        try {{ msg {sid} /TIME:5 "Você será desconectado em 5 segundos pelo administrador." 2>&1 | Out-Null; Write-Output "Aviso enviado." }} catch {{ Write-Output "Aviso falhou." }}
         Start-Sleep -Seconds 5
-        try {{ Write-Output "Tentando rwinsta..."; rwinsta {session_id} 2>&1 | Out-Null; if ($LASTEXITCODE -eq 0) {{ Write-Output "Sucesso rwinsta."; exit 0 }} }} catch {{}}
-        try {{ Write-Output "Tentando logoff..."; logoff {session_id} 2>&1 | Out-Null; if ($LASTEXITCODE -eq 0) {{ Write-Output "Sucesso logoff."; exit 0 }} }} catch {{}}
+        try {{ Write-Output "Tentando rwinsta..."; rwinsta {sid} 2>&1 | Out-Null; if ($LASTEXITCODE -eq 0) {{ Write-Output "Sucesso rwinsta."; exit 0 }} }} catch {{}}
+        try {{ Write-Output "Tentando logoff..."; logoff {sid} 2>&1 | Out-Null; if ($LASTEXITCODE -eq 0) {{ Write-Output "Sucesso logoff."; exit 0 }} }} catch {{}}
         Write-Output "Falha ao desconectar."
         exit 1
         """
         result = self.handler.execute_script(ps_script)
         output_msg = "\\n".join(result.get("output", []))
         if result.get("success") and ("Sucesso" in output_msg or "desconectada" in output_msg):
-             yield f"Sessão {session_id} desconectada com sucesso."
+             yield f"Sessão {sid} desconectada com sucesso."
         else:
-             yield f"Falha ao desconectar sessão {session_id}. Detalhes:\\n{output_msg}"
+             yield f"Falha ao desconectar sessão {sid}. Detalhes:\\n{output_msg}"
 
     def get_user_activity_events(self, start_time, end_time):
         logging.info(f"Executing 'get_user_activity_events' for period {start_time} to {end_time}")
