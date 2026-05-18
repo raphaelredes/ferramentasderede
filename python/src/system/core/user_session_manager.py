@@ -3,6 +3,8 @@ import logging
 import sys
 from pathlib import Path
 
+from .ps_safety import validate_iso_datetime
+
 class UserSessionManager:
     def __init__(self, handler):
         self.handler = handler
@@ -99,7 +101,10 @@ class UserSessionManager:
         # execute on the remote host with admin privileges).
         try:
             sid_int = int(str(session_id).strip())
-            if sid_int < 0 or sid_int > 65535:
+            # Session 0 is the non-interactive Services session — operators
+            # never want to disconnect it (and `rwinsta 0` has bluescreened
+            # older builds). Cap min at 1.
+            if sid_int < 1 or sid_int > 65535:
                 raise ValueError("session_id out of range")
         except (TypeError, ValueError):
             logging.warning(f"disconnect_user: rejected invalid session_id={session_id!r}")
@@ -125,6 +130,16 @@ class UserSessionManager:
              yield f"Falha ao desconectar sessão {sid}. Detalhes:\\n{output_msg}"
 
     def get_user_activity_events(self, start_time, end_time):
+        # start_time / end_time previously substituted raw into
+        # `Get-Date -Date '...'` — a value with `'` could close the literal
+        # and inject PS. Now validated as ISO 8601 strings.
+        try:
+            start_time = validate_iso_datetime(start_time)
+            end_time = validate_iso_datetime(end_time)
+        except ValueError as e:
+            yield {"error": str(e)}
+            return
+
         logging.info(f"Executing 'get_user_activity_events' for period {start_time} to {end_time}")
         script = self._load_script("get_user_activity", {"__START_TIME__": start_time, "__END_TIME__": end_time})
         result = self.handler.execute_script(script)
