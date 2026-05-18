@@ -21,7 +21,20 @@ declare namespace NodeJS {
   }
 }
 
-// Used in Renderer process, expose in `preload.ts`
+// Used in Renderer process, expose in `preload.ts`.
+// The renderer no longer receives a generic `ipcRenderer` — preload exposes the
+// `electron` bridge below with a narrow, named surface.
+interface ElectronBridge {
+  launchRdp: (ip: string) => Promise<boolean>
+  launchMsra: (ip: string, askCredentials?: boolean) => Promise<boolean>
+  launchTeamViewer: (id?: string) => Promise<boolean>
+  openExternal: (url: string) => Promise<boolean>
+  getLocalDomain: () => Promise<string>
+  showItemInFolder: (path: string) => Promise<boolean>
+  saveFileAs: (filename: string, content: string) => Promise<string | null>
+  onWindowFocusChange: (callback: (focused: boolean) => void) => () => void
+}
+
 interface Window {
-  ipcRenderer: import('electron').IpcRenderer
+  electron: ElectronBridge
 }
