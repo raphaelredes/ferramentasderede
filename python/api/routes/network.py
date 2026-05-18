@@ -382,9 +382,14 @@ def get_hosts_list():
         net_id, net_name = _match_network(ip, configured)
         resolved_hostname = item.get("name")          # DNS-resolved
         nickname = item.get("nickname")               # operator label (DB description)
-        display_name = nickname or resolved_hostname  # what UI shows as title
+        # Display name fallback chain:
+        #   nickname → resolved hostname → IP literal
+        # Never "Unknown". Operators want the card to show *something useful*
+        # at a glance even before the monitor has resolved DNS; the IP is the
+        # least-bad fallback and is always present.
+        display_name = nickname or resolved_hostname or ip
         hosts.append(Host(
-            name=display_name or "Unknown",
+            name=display_name,
             address=ip,
             type=item.get("type", "generic"),
             mac=item.get("mac"),
@@ -420,7 +425,18 @@ def save_hosts_list(hosts_list):
     for h in hosts_list:
         resolved = h.hostname
         display = h.name
-        nickname = display if (display and display != resolved and display != 'Unknown') else None
+        # Only persist `display` as nickname if it's a true operator label —
+        # not the resolved hostname, not the IP fallback we now use when no
+        # hostname is known, and not the literal "Unknown" from legacy data.
+        # Otherwise nicknames would get frozen as "10.0.0.5" after the first
+        # save and never update when DNS later resolves the real name.
+        is_meaningful = (
+            display
+            and display != resolved
+            and display != h.address
+            and display != 'Unknown'
+        )
+        nickname = display if is_meaningful else None
         updated_list.append({
             'name': resolved,
             'ip': h.address,

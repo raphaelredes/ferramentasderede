@@ -136,6 +136,18 @@ class DatabaseManager:
                 'system_disk_free_gb': 'REAL',
             }
             
+            # One-time cleanup: hosts created by older versions persisted the
+            # literal "Unknown" as the description (= UI nickname) when no
+            # operator label was given. The new code uses IP / hostname as the
+            # display fallback and never writes "Unknown" — but legacy rows
+            # still carry it. Clear so the UI shows the IP/hostname fallback.
+            try:
+                cursor.execute(
+                    "UPDATE hosts SET description = NULL WHERE description = 'Unknown'"
+                )
+            except Exception as _e:
+                logging.debug(f"Unknown-nickname migration skipped: {_e}")
+
             # SQLite DDL can't parameter-bind identifiers, so we f-string. The
             # values come from the hardcoded dict above — never user input —
             # but guard with asserts so a future caller who adds a column from
