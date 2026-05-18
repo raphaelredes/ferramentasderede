@@ -31,21 +31,36 @@ export const MonitoringProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     // Refs for polling control
     const pollingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const isFirstLoad = useRef(true);
+    // Mounted guard so awaited setState calls bail out after unmount. The
+    // previous version created an AbortController in the effect but never
+    // plumbed `signal` into the actual fetch() calls — so cleanup did nothing
+    // about in-flight requests. This ref is set false in the effect cleanup
+    // and read after every `await` here.
+    const isMountedRef = useRef(true);
+    // AbortController per fetchHosts call so cleanup can actually cancel a
+    // request in flight (saves network + avoids racing against the next poll).
+    const inflightAbortRef = useRef<AbortController | null>(null);
 
     const fetchHosts = useCallback(async (silent = false) => {
         if (!silent) setIsLoading(true);
+        // Cancel any prior in-flight fetch (e.g. operator hits Refresh while
+        // the previous /hosts request is still pending).
+        inflightAbortRef.current?.abort();
+        const controller = new AbortController();
+        inflightAbortRef.current = controller;
         try {
             // Fetch hosts and monitor stats in parallel
             const [hostsResponse, monitorResponse] = await Promise.all([
-                fetch(`${API_BASE}/hosts`),
-                fetch(`${API_BASE}/network/monitor`)
+                fetch(`${API_BASE}/hosts`, { signal: controller.signal }),
+                fetch(`${API_BASE}/network/monitor`, { signal: controller.signal })
             ]);
 
             if (!hostsResponse.ok) throw new Error('Failed to fetch hosts');
-            // monitorResponse might fail if monitor is not running, but usually it returns empty dict
+            if (!isMountedRef.current) return false;
 
             const hostsData: Host[] = await hostsResponse.json();
             const monitorData: Record<string, HostStatistics> = monitorResponse.ok ? await monitorResponse.json() : {};
+            if (!isMountedRef.current) return false;
 
             // Merge stats into hosts
             const mergedHosts = hostsData.map(h => {
@@ -99,12 +114,19 @@ export const MonitoringProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             setStats({ total, online, offline, avgLatency });
             return true; // Success
 
-        } catch (error) {
+        } catch (error: unknown) {
+            // AbortError on unmount / new fetch — not a real failure, don't toast.
+            if ((error as { name?: string })?.name === 'AbortError') {
+                return false;
+            }
             console.error('Error fetching hosts:', error);
-            if (!silent) showToast('Erro ao carregar hosts', 'error');
+            if (!silent && isMountedRef.current) showToast('Erro ao carregar hosts', 'error');
             return false; // Failure
         } finally {
-            if (!silent) setIsLoading(false);
+            if (inflightAbortRef.current === controller) {
+                inflightAbortRef.current = null;
+            }
+            if (!silent && isMountedRef.current) setIsLoading(false);
             isFirstLoad.current = false;
         }
     }, [showToast]);
@@ -112,26 +134,23 @@ export const MonitoringProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     // Initial load and polling with exponential backoff on failure.
     // Healthy state: poll every 2s. On failure: 2s -> 4s -> 8s -> ... cap 30s.
     useEffect(() => {
-        let isMounted = true;
+        isMountedRef.current = true;
         let retryCount = 0;
         const maxInitialRetries = 20;
         const baseInterval = 2000;
         const maxInterval = 30000;
         let currentInterval = baseInterval;
         let warnedDisconnected = false;
-        // AbortController so in-flight fetchHosts requests don't resolve and
-        // call setState after the provider unmounts (route change / HMR).
-        const abortController = new AbortController();
 
         const scheduleNext = () => {
-            if (!isMounted) return;
+            if (!isMountedRef.current) return;
             pollingTimeoutRef.current = setTimeout(poll, currentInterval);
         };
 
         const poll = async () => {
-            if (!isMounted) return;
+            if (!isMountedRef.current) return;
             const success = await fetchHosts(true);
-            if (!isMounted) return;
+            if (!isMountedRef.current) return;
             if (success) {
                 if (warnedDisconnected) {
                     showToast('Conexão com o servidor restaurada.', 'success');
@@ -149,16 +168,16 @@ export const MonitoringProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         };
 
         const initialFetch = async () => {
-            while (retryCount < maxInitialRetries && isMounted) {
+            while (retryCount < maxInitialRetries && isMountedRef.current) {
                 const success = await fetchHosts(retryCount > 0);
                 if (success) {
-                    if (isMounted) scheduleNext();
+                    if (isMountedRef.current) scheduleNext();
                     return;
                 }
                 retryCount++;
                 await new Promise(resolve => setTimeout(resolve, 1000));
             }
-            if (isMounted && retryCount >= maxInitialRetries) {
+            if (isMountedRef.current && retryCount >= maxInitialRetries) {
                 showToast('Não foi possível conectar ao servidor local.', 'error');
             }
         };
@@ -166,8 +185,10 @@ export const MonitoringProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         initialFetch();
 
         return () => {
-            isMounted = false;
-            abortController.abort();
+            isMountedRef.current = false;
+            // Cancel the request currently in flight (if any) so the awaited
+            // setState calls bail via the AbortError catch branch.
+            inflightAbortRef.current?.abort();
             if (pollingTimeoutRef.current) {
                 clearTimeout(pollingTimeoutRef.current);
                 pollingTimeoutRef.current = null;

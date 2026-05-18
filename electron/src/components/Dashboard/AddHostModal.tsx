@@ -34,15 +34,51 @@ export function AddHostModal({ isOpen, onClose, onAdd, isAdding, existingHosts, 
         };
     }, [wrapperRef]);
 
+    // IPv4 strict: 4 octets each 0..255. Hostname: letters/digits/dot/hyphen,
+    // first char alphanumeric, max 253 chars. Same shape backend uses.
+    const isValidAddress = (v: string): boolean => {
+        const trimmed = v.trim();
+        if (!trimmed || trimmed.length > 253) return false;
+        const ipMatch = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(trimmed);
+        if (ipMatch) {
+            return ipMatch.slice(1, 5).every(o => {
+                const n = parseInt(o, 10);
+                return n >= 0 && n <= 255;
+            });
+        }
+        return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(trimmed);
+    };
+
+    // MAC: optional. If provided, must be 6 hex pairs with `:` or `-` or
+    // none. Reject anything that wouldn't survive WoL's wakeonlan.
+    const isValidMac = (v: string): boolean => {
+        const t = v.trim();
+        if (!t) return true;
+        return /^([0-9A-Fa-f]{2}([:-])?){5}[0-9A-Fa-f]{2}$/.test(t);
+    };
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+        // Block re-entry: a fast double-Enter could fire before the parent
+        // sets isAdding=true, so guard locally too.
+        if (isAdding) return;
         setError(null);
+
+        const cleanAddress = address.trim();
+        if (!isValidAddress(cleanAddress)) {
+            setError('Endereço inválido. Use um IPv4 ou hostname (letras, dígitos, ponto, hífen).');
+            return;
+        }
+        if (!isValidMac(mac)) {
+            setError('MAC inválido. Use o formato 00:11:22:33:44:55 (ou deixe vazio).');
+            return;
+        }
 
         // Check for duplicates
         const isDuplicate = existingHosts.some(h =>
-            h.address.toLowerCase() === address.toLowerCase() ||
-            (h.hostname && h.hostname.toLowerCase() === address.toLowerCase()) ||
-            (h.ip && h.ip === address)
+            h.address?.toLowerCase() === cleanAddress.toLowerCase() ||
+            (h.hostname && h.hostname.toLowerCase() === cleanAddress.toLowerCase()) ||
+            (h.ip && h.ip === cleanAddress)
         );
 
         if (isDuplicate) {
@@ -54,7 +90,7 @@ export function AddHostModal({ isOpen, onClose, onAdd, isAdding, existingHosts, 
             .map(p => parseInt(p.trim()))
             .filter(p => !isNaN(p) && p > 0 && p <= 65535);
 
-        await onAdd(name, address, mac, ports, group);
+        await onAdd(name.trim(), cleanAddress, mac.trim(), ports, group.trim());
         setName('');
         setAddress('');
         setGroup('');

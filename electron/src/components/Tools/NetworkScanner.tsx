@@ -37,7 +37,8 @@ export const NetworkScanner: React.FC<NetworkScannerProps> = ({ onAddHost, exist
         closeScanSession,
         updateScanSession,
         setActiveSessionId,
-        runScanSession
+        runScanSession,
+        stopTool
     } = useTools();
 
     const { networks } = useNetworks();
@@ -95,8 +96,15 @@ export const NetworkScanner: React.FC<NetworkScannerProps> = ({ onAddHost, exist
         closeScanSession(id);
     };
 
-    const startScan = (sessionId: string) => {
-        runScanSession(sessionId);
+    const toggleScan = (session: { id: string; isRunning: boolean }) => {
+        // Explicit branch instead of relying on runScanSession's internal
+        // re-entry detection. A double click here used to be able to spawn
+        // a second pass before the first stop took effect.
+        if (session.isRunning) {
+            stopTool('scanner', session.id);
+        } else {
+            runScanSession(session.id);
+        }
     };
 
     const getVendorIcon = (vendor: string, hostname: string) => {
@@ -270,7 +278,7 @@ export const NetworkScanner: React.FC<NetworkScannerProps> = ({ onAddHost, exist
                                 placeholder="Ex: 192.168.1.0/24"
                                 className="bg-transparent border-none outline-none text-zinc-200 text-sm w-full placeholder-zinc-600"
                                 disabled={activeSession.isRunning}
-                                onKeyDown={(e) => e.key === 'Enter' && startScan(activeSession.id)}
+                                onKeyDown={(e) => e.key === 'Enter' && !activeSession.isRunning && toggleScan(activeSession)}
                             />
                         </div>
 
@@ -335,7 +343,7 @@ export const NetworkScanner: React.FC<NetworkScannerProps> = ({ onAddHost, exist
                         </button>
 
                         <button
-                            onClick={() => startScan(activeSession.id)}
+                            onClick={() => toggleScan(activeSession)}
                             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all border ${activeSession.isRunning
                                 ? 'bg-red-500/10 text-red-400 border-red-500/20 hover:bg-red-500/20'
                                 : 'bg-zinc-800 hover:bg-zinc-700 text-blue-400 border-blue-900/30 hover:border-blue-500/50'
