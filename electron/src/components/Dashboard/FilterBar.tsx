@@ -34,7 +34,7 @@ export function FilterBar({
                     <Filter className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" size={16} />
                     <select
                         value={filterStatus}
-                        onChange={(e) => setFilterStatus(e.target.value as any)}
+                        onChange={(e) => setFilterStatus(e.target.value as 'all' | 'monitored' | 'unmonitored')}
                         className="bg-zinc-900/50 border border-zinc-800 text-zinc-300 pl-9 pr-8 py-2 rounded-lg focus:outline-none focus:border-blue-500/50 appearance-none cursor-pointer hover:bg-zinc-800/50 transition-colors"
                     >
                         <option value="all">Todos os Status</option>
@@ -46,7 +46,7 @@ export function FilterBar({
                     <ArrowUpDown className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" size={16} />
                     <select
                         value={sortBy}
-                        onChange={(e) => setSortBy(e.target.value as any)}
+                        onChange={(e) => setSortBy(e.target.value as 'name' | 'status' | 'ip' | 'manual')}
                         className="bg-zinc-900/50 border border-zinc-800 text-zinc-300 pl-9 pr-8 py-2 rounded-lg focus:outline-none focus:border-blue-500/50 appearance-none cursor-pointer hover:bg-zinc-800/50 transition-colors"
                     >
                         <option value="manual">Manual (Arrastar)</option>
