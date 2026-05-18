@@ -119,14 +119,19 @@ _default_origins = [
     f"http://localhost:{_webview_port}",
 ]
 _cors_env = os.environ.get("NT_CORS_ORIGINS", "").strip()
-_allowed_origins = [o.strip() for o in _cors_env.split(",") if o.strip()] if _cors_env else _default_origins
+ALLOWED_ORIGINS = [o.strip() for o in _cors_env.split(",") if o.strip()] if _cors_env else _default_origins
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_allowed_origins,
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    # Tightened from "*" to the actual verbs and headers we use. Wildcards
+    # combined with allow_credentials=True are a defense-in-depth smell: any
+    # future compromise of one of the allowed origins (the static webview port
+    # has no auth and could be replaced by a malicious local process) gets to
+    # speak any verb with any header. Keep the surface narrow.
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "X-Temp-Auth", "Authorization"],
 )
 
 # Incluir Routers

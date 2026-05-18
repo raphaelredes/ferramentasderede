@@ -23,16 +23,48 @@ net_tools = NetworkTools()
 host_monitor = HostMonitor()
 
 # --- WebSocket Manager ---
+def _ws_origin_allowed(websocket: WebSocket) -> bool:
+    """Reject WebSocket connections whose Origin isn't in the same allow-list
+    used for CORS. Browser CORS does NOT cover WebSockets, so without this
+    guard any page in the user's default browser could open ws://127.0.0.1
+    and receive the live host inventory.
+
+    A missing Origin header (e.g. a non-browser ws client) is also rejected —
+    legitimate Electron renderers always send one."""
+    try:
+        from api.server import ALLOWED_ORIGINS
+    except Exception:
+        # Fallback if the server module isn't importable here for some reason.
+        ALLOWED_ORIGINS = []  # type: ignore[assignment]
+    origin = websocket.headers.get("origin")
+    if not origin:
+        return False
+    return origin in ALLOWED_ORIGINS
+
+
 class ConnectionManager:
     def __init__(self):
         self.active_connections: List[WebSocket] = []
 
-    async def connect(self, websocket: WebSocket):
+    async def connect(self, websocket: WebSocket) -> bool:
+        if not _ws_origin_allowed(websocket):
+            logging.warning(
+                f"WS connect rejected: origin={websocket.headers.get('origin')!r} not in allow-list"
+            )
+            try:
+                await websocket.close(code=1008)  # 1008 = Policy Violation
+            except Exception:
+                pass
+            return False
         await websocket.accept()
         self.active_connections.append(websocket)
+        return True
 
     def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
+        try:
+            self.active_connections.remove(websocket)
+        except ValueError:
+            pass
 
     async def broadcast(self, message: dict):
         # Snapshot before iterating: a disconnect() during broadcast mutates
@@ -447,7 +479,8 @@ def get_monitor_stats():
 
 @router.websocket("/ws/monitor")
 async def websocket_monitor(websocket: WebSocket):
-    await manager.connect(websocket)
+    if not await manager.connect(websocket):
+        return  # Origin rejected; close was already sent.
     try:
         while True:
             # Keep connection alive and handle incoming messages if needed
@@ -502,6 +535,12 @@ def discover_network(request: DiscoveryRequest):
     max_workers = request.max_workers or 50
     source_ip = request.source_ip
 
+    # Cap CIDR size BEFORE spinning up worker threads. A misclick on
+    # 10.0.0.0/8 used to spawn 16M scan tasks, fill the threadpool for
+    # hours, and pollute the DB with junk hosts. /16 = 64K addresses is
+    # already a long scan; anything wider should be an explicit batch.
+    _MAX_DISCOVERY_ADDRESSES = 65536  # /16
+
     def event_generator():
         try:
             import ipaddress
@@ -509,6 +548,16 @@ def discover_network(request: DiscoveryRequest):
                 network = ipaddress.ip_network(cidr, strict=False)
             except ValueError:
                 yield json.dumps({"error": "CIDR inválido."}).encode('utf-8') + b"\n"
+                return
+
+            if network.num_addresses > _MAX_DISCOVERY_ADDRESSES:
+                yield json.dumps({
+                    "error": (
+                        f"CIDR muito amplo ({network.num_addresses} endereços). "
+                        f"Limite máximo: {_MAX_DISCOVERY_ADDRESSES} (/16). "
+                        "Divida em sub-redes menores."
+                    )
+                }).encode('utf-8') + b"\n"
                 return
 
             iterator = net_tools.discover_hosts(
@@ -664,6 +713,15 @@ def open_external_terminal(request: ExternalTerminalRequest):
 
 @router.websocket("/ws/terminal")
 async def websocket_terminal(websocket: WebSocket):
+    if not _ws_origin_allowed(websocket):
+        logging.warning(
+            f"WS /ws/terminal connect rejected: origin={websocket.headers.get('origin')!r}"
+        )
+        try:
+            await websocket.close(code=1008)
+        except Exception:
+            pass
+        return
     await websocket.accept()
     winrm_session = None
     try:
@@ -703,7 +761,15 @@ async def websocket_terminal(websocket: WebSocket):
                     return handler, result
 
                 winrm_session, result = await asyncio.to_thread(connect_winrm)
-                
+
+                # Whatever the outcome, drop the local plaintext copy. The
+                # handler kept its own copy of `password` until we changed it
+                # to zero on success; in the failure path it lived in this
+                # closure until the next "connect" message arrived. WinRMHandler
+                # itself now nulls self.password on success.
+                password = None
+                data["password"] = None
+
                 if result.get("success"):
                     await websocket.send_json({"type": "status", "message": "Conectado com sucesso!"})
                     await websocket.send_json({"type": "ready"})

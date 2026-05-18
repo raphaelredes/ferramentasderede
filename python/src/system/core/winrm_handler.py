@@ -68,6 +68,29 @@ class WinRMHandler:
             logging.debug(f"_domain_for_target_ip failed: {e}")
         return None
 
+    @staticmethod
+    def _mask_username(username):
+        """Mask a username for log / error messages.
+
+        Multi-domain operators see DOMAIN\\user (or user@domain). The full
+        string used to be echoed into the response `error` field and the log,
+        which is an info-disclosure for anyone with read access to either.
+        Keep the domain (operationally useful) and last 2 chars of the user
+        for sanity — drop the rest."""
+        if not username or not isinstance(username, str):
+            return "???"
+        # Split off domain prefix/suffix so we keep that part visible.
+        if "@" in username:
+            user_part, domain_part = username.split("@", 1)
+            tail = user_part[-2:] if len(user_part) >= 2 else "*"
+            return f"***{tail}@{domain_part}"
+        if "\\" in username:
+            domain_part, user_part = username.split("\\", 1)
+            tail = user_part[-2:] if len(user_part) >= 2 else "*"
+            return f"{domain_part}\\***{tail}"
+        tail = username[-2:] if len(username) >= 2 else "*"
+        return f"***{tail}"
+
     def _username_variants(self):
         """Build the ordered list of username variants to try.
 
@@ -114,14 +137,27 @@ class WinRMHandler:
         return variants
 
     def connect(self):
-        """Estabelece a conexão e abre um RunspacePool e PowerShell persistentes."""
+        """Estabelece a conexão e abre um RunspacePool e PowerShell persistentes.
+
+        On success, the password is purged from this handler's attributes —
+        pypsrp keeps its own copy internally, so subsequent execute_script
+        calls still work, but the value is no longer sitting on `self` for
+        the lifetime of the websocket / handler instance.
+        """
         last_result = None
         for variant in self._username_variants():
             if variant != self.username:
-                logging.info(f"Tentando variante de username: {variant}")
+                # Demoted from info to debug: every variant attempt used to
+                # land in the logfile with the full DOMAIN\user string.
+                logging.debug(f"Tentando variante de username: {self._mask_username(variant)}")
             result = self._try_connect(variant, self.password)
             if result.get("success"):
                 self.username = variant
+                # Zero the password reference. Best-effort: Python strings are
+                # immutable and may still live in the interning table, but the
+                # primary leak path (handler held by /ws/terminal for the full
+                # session) is closed.
+                self.password = None
                 return result
             last_result = result
             # Don't keep retrying variants if the failure isn't auth-related.
@@ -163,13 +199,15 @@ class WinRMHandler:
                     f"Falha Kerberos contra {self.target_ip}. Provável domínio diferente do seu sem relação de confiança. "
                     f"Tente usuário no formato DOMINIO\\usuario ou usuario@dominio.")
         if any(t in msg for t in ("0x80090308", "logon failure", "the user name or password", "unauthorized", "401", "access is denied", "access denied")):
-            # Could be wrong password OR wrong domain — give a hint
+            # Could be wrong password OR wrong domain — give a hint. Username
+            # in the response is masked so a transcript / screenshot doesn't
+            # leak the full DOMAIN\user the operator typed.
             if "@" not in self.username and "\\" not in self.username:
                 return ("AUTH_FAILED",
                         f"Credenciais recusadas por {self.target_ip}. Em ambiente multi-domínio, "
                         f"informe o usuário como DOMINIO\\usuario ou usuario@dominio.")
             return ("AUTH_FAILED",
-                    f"Credenciais recusadas por {self.target_ip} (usuário: {self.username}).")
+                    f"Credenciais recusadas por {self.target_ip} (usuário: {self._mask_username(self.username)}).")
         return ("UNKNOWN", f"{exc_name}: {exc}")
 
     def _try_connect(self, username, password):
@@ -180,7 +218,7 @@ class WinRMHandler:
 
         for method in auth_methods:
             try:
-                logging.info(f"Tentando conexão WinRM com método: {method} para {self.target_ip} (User: {username})")
+                logging.info(f"Tentando conexão WinRM com método: {method} para {self.target_ip} (User: {self._mask_username(username)})")
 
                 wsman = WSMan(
                     server=self.target_ip, username=username, password=password,
@@ -212,19 +250,11 @@ class WinRMHandler:
                 errors.append(f"{method}: {friendly}")
                 codes.append(code)
             self.pool = None
-        
-        if self.wsman:
-            try:
-                ps = PowerShell(pool)
-                
-                self.wsman = wsman
-                self.pool = pool
-                self.ps = ps
-                logging.info("Conexão fallback localhost bem sucedida!")
-                return {"success": True}
-            except Exception as e:
-                logging.warning(f"Fallback localhost falhou: {e}")
-                errors.append(f"localhost_fallback: {e}")
+
+        # NOTE: a dead "fallback localhost" block used to live here. It
+        # referenced `pool` and `wsman` from the prior loop iteration which
+        # had already been closed and garbage-collected, so it could never
+        # succeed. Removed to stop confusing future readers.
 
         # Se falhou e não é localhost, verifica se é problema de TrustedHosts
         if self.target_ip not in ["127.0.0.1", "localhost"]:
@@ -254,7 +284,7 @@ class WinRMHandler:
             "TRUSTED_HOSTS_REQUIRED": f"{self.target_ip} não está em TrustedHosts.",
             "CROSS_DOMAIN_AUTH": (f"Autenticação Kerberos falhou contra {self.target_ip}. "
                                   f"Provável domínio diferente sem relação de confiança — tente DOMINIO\\usuario ou usuario@dominio."),
-            "AUTH_FAILED": (f"Credenciais recusadas por {self.target_ip} (usuário: {self.username}). "
+            "AUTH_FAILED": (f"Credenciais recusadas por {self.target_ip} (usuário: {self._mask_username(self.username)}). "
                             f"Em multi-domínio, informe DOMINIO\\usuario ou usuario@dominio."),
             "UNKNOWN": f"Falha em todos os métodos de autenticação para {self.target_ip}.",
         }

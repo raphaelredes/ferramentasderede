@@ -156,44 +156,113 @@ class BackupManager:
             logging.error(f"Failed to delete backup {filename}: {e}")
             return {"status": "error", "message": str(e)}
 
+    # Hard caps to keep a malicious / corrupted backup from blowing up the
+    # process. 50 MB total uncompressed is way more than legitimate backups
+    # need (network_tools.db + a few JSON files); 8 MB per file is room for
+    # the DB to grow.
+    _MAX_TOTAL_UNCOMPRESSED = 50 * 1024 * 1024
+    _MAX_FILE_UNCOMPRESSED = 8 * 1024 * 1024
+
+    def _is_safe_zip_member(self, member: str) -> bool:
+        """Return True iff `member` is a safe leaf filename that, when resolved
+        against APP_DATA_DIR, lands strictly inside it.
+
+        The previous check only rejected `..` / slash / backslash substrings —
+        on Windows, `C:\\evil` has no slashes and went through. Now we resolve
+        the candidate and compare prefixes."""
+        # Refuse anything that looks like an absolute path or device path.
+        if not member or member.startswith(("/", "\\")):
+            return False
+        if len(member) >= 2 and member[1] == ":":  # C:..., D:..., etc.
+            return False
+        if member.startswith("\\\\?\\") or member.startswith("//?/"):
+            return False
+        if ".." in member.split("/") or ".." in member.split("\\"):
+            return False
+        try:
+            base = os.path.realpath(APP_DATA_DIR)
+            target = os.path.realpath(os.path.join(APP_DATA_DIR, member))
+            # `target` must be APP_DATA_DIR or live strictly under it.
+            if target == base:
+                return False
+            return target.startswith(base + os.sep)
+        except Exception:
+            return False
+
     def restore_backup(self, filename: str) -> Dict[str, str]:
-        """Restores files from a specific backup file (.bkp)."""
+        """Restores files from a specific backup file (.bkp).
+
+        Hardened against three previously-latent issues:
+        - zip slip on Windows (`C:\\evil` slipped past the old substring check
+          because it has no slashes). Now resolves each member against
+          APP_DATA_DIR and rejects anything outside it.
+        - zip bomb / oversized restore. Per-file and total caps are enforced
+          BEFORE extraction by reading the zip directory's `file_size` field.
+        - vault aliasing. If the operator restores a backup that contains a
+          different `credentials.enc` / `key.salt` while the vault is unlocked,
+          the in-memory master key no longer matches what's on disk. Force a
+          lock before restoring so the next read goes through unlock().
+        """
         backup_path = os.path.join(self.backup_dir, filename)
-        
+
         if not os.path.exists(backup_path):
             return {"status": "error", "message": "Backup file not found."}
-            
+
+        # Force the vault to lock if any of the restored files would replace
+        # its on-disk state. Easier and safer to always lock than to peek
+        # into the zip for membership first.
+        try:
+            from api.routes.security import vault as _vault
+            if _vault.is_unlocked:
+                logging.info("restore_backup: locking vault before restore (vault was unlocked)")
+                _vault.lock()
+        except Exception as e:
+            logging.debug(f"restore_backup: vault lock attempt failed: {e}")
+
         try:
             # Decrypt first
             from src.core.security import SecurityManager
             sec_manager = SecurityManager(APP_DATA_DIR)
-            
+
             with open(backup_path, "rb") as f:
                 encrypted_data = f.read()
-            
+
             zip_data = sec_manager.decrypt_data(encrypted_data)
-            
+
             # Save to temporary zip
             temp_zip_path = os.path.join(self.backup_dir, "temp_restore.zip")
             with open(temp_zip_path, "wb") as f:
                 f.write(zip_data)
-            
+
             restored_files = []
             try:
                 with zipfile.ZipFile(temp_zip_path, 'r') as zipf:
-                    # Security check: ensure filenames don't contain paths
+                    # Pre-flight: enforce caps from the central directory
+                    # before reading any bytes. Bails out without touching
+                    # APP_DATA_DIR if the archive is malformed/oversized.
+                    total = 0
+                    for info in zipf.infolist():
+                        if info.file_size > self._MAX_FILE_UNCOMPRESSED:
+                            raise ValueError(
+                                f"Arquivo do backup excede limite: {info.filename} "
+                                f"({info.file_size} bytes > {self._MAX_FILE_UNCOMPRESSED})"
+                            )
+                        total += info.file_size
+                    if total > self._MAX_TOTAL_UNCOMPRESSED:
+                        raise ValueError(
+                            f"Backup excede tamanho total ({total} bytes > {self._MAX_TOTAL_UNCOMPRESSED})"
+                        )
+
                     for member in zipf.namelist():
-                        if ".." in member or "/" in member or "\\" in member:
-                             logging.warning(f"Skipping suspicious file in backup: {member}")
-                             continue
-                        
-                        # Extract to APP_DATA_DIR
+                        if not self._is_safe_zip_member(member):
+                            logging.warning(f"Skipping suspicious file in backup: {member!r}")
+                            continue
                         zipf.extract(member, APP_DATA_DIR)
                         restored_files.append(member)
             finally:
                 if os.path.exists(temp_zip_path):
                     os.remove(temp_zip_path)
-            
+
             # If hosts.json was restored, we need to re-import it into the DB and restore Trusted Hosts
             if os.path.basename(HOSTS_FILE) in restored_files:
                 try:
@@ -209,7 +278,7 @@ class BackupManager:
 
             logging.info(f"Restored backup {filename}")
             return {"status": "success", "restored_files": restored_files}
-            
+
         except Exception as e:
             logging.error(f"Restore failed: {e}")
             return {"status": "error", "message": str(e)}
