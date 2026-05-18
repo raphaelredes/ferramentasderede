@@ -91,16 +91,16 @@ async def lifespan(app: FastAPI):
         # Run in thread to not block startup
         await asyncio.to_thread(backup_manager.run_daily_backup_check)
     except Exception as e:
-        print(f"Warning: Backup check failed: {e}")
+        logging.warning(f"Backup check failed: {e}")
 
     # Carregar hosts e iniciar monitoramento
     hosts = get_hosts_list()
     hosts_dicts = [h.model_dump() for h in hosts]
     host_monitor.start_monitoring(hosts_dicts, on_update_callback=handle_host_update)
-    print("Monitoramento de hosts iniciado.")
+    logging.info("Monitoramento de hosts iniciado.")
     yield
     host_monitor.stop_monitoring()
-    print("Monitoramento de hosts parado.")
+    logging.info("Monitoramento de hosts parado.")
 
 app = FastAPI(title="Network Tools API", lifespan=lifespan)
 

@@ -1,10 +1,11 @@
 from fastapi import APIRouter, HTTPException, UploadFile, File
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import Optional, List
 import json
 import os
 import shutil
+import logging
 from datetime import datetime
 import sys
 
@@ -46,7 +47,14 @@ class GeneralSettings(BaseModel):
 class NetworkConfig(BaseModel):
     """A configured network (subnet/VLAN). Used for multi-domain environments
     where the analyst's machine sits on more than one network and discovery /
-    ping / DNS need to be steered through a specific NIC and DNS server."""
+    ping / DNS need to be steered through a specific NIC and DNS server.
+
+    NOTE on Pydantic v2: do NOT override `model_validate` as a classmethod —
+    Pydantic v2 wires `__init__` and FastAPI request-body validation through
+    `__pydantic_validator__`, which bypasses any subclass override. The
+    `@field_validator` decorator is the supported hook and runs on both the
+    constructor path and `model_validate(dict)`.
+    """
     id: str
     name: str
     cidr: str
@@ -55,27 +63,22 @@ class NetworkConfig(BaseModel):
     domain: Optional[str] = None        # AD domain associated with this network
     enabled: bool = True
 
+    @field_validator("dns_server", "source_ip")
     @classmethod
-    def model_validate(cls, obj, *args, **kwargs):
-        # dns_server must be a plain IP literal — see /network/dns/resolve for
-        # the reasoning. Validated on save so a hand-edited preferences file
-        # can't smuggle a hostname in either.
-        if isinstance(obj, dict):
-            ds = obj.get("dns_server")
-            if ds:
-                import ipaddress
-                try:
-                    ipaddress.ip_address(ds)
-                except ValueError:
-                    raise ValueError(f"dns_server deve ser um endereço IP: {ds!r}")
-            sip = obj.get("source_ip")
-            if sip:
-                import ipaddress
-                try:
-                    ipaddress.ip_address(sip)
-                except ValueError:
-                    raise ValueError(f"source_ip deve ser um endereço IP: {sip!r}")
-        return super().model_validate(obj, *args, **kwargs)
+    def _must_be_ip(cls, v: Optional[str]):
+        # dns_server / source_ip must be plain IP literals. dns_server is
+        # particularly sensitive — a hostname here would let a malicious local
+        # process steer dnspython at an attacker-controlled resolver. source_ip
+        # is selected from local NICs anyway; rejecting non-IP shapes prevents
+        # a hand-edited preferences file from smuggling something weird in.
+        if v is None or v == "":
+            return v
+        import ipaddress
+        try:
+            ipaddress.ip_address(v)
+        except ValueError as e:
+            raise ValueError(f"deve ser um endereço IP: {v!r}") from e
+        return v
 
 class Settings(BaseModel):
     general: GeneralSettings = GeneralSettings()
@@ -120,13 +123,13 @@ def load_settings() -> Settings:
         settings = Settings(**data)
         try:
             save_settings_to_file(settings)
-            print("ui_preferences.json migrated from legacy encrypted format to plaintext.")
+            logging.info("ui_preferences.json migrated from legacy encrypted format to plaintext.")
         except Exception as e:
-            print(f"Warning: failed to rewrite ui_preferences.json as plaintext: {e}")
+            logging.warning(f"failed to rewrite ui_preferences.json as plaintext: {e}")
         return settings
 
     except Exception as e:
-        print(f"Error loading settings: {e}")
+        logging.exception(f"Error loading settings: {e}")
         return Settings()
 
 def save_settings_to_file(settings: Settings):
@@ -139,8 +142,8 @@ def save_settings_to_file(settings: Settings):
             f.write(json_str)
         os.replace(tmp_path, SETTINGS_FILE)
     except Exception as e:
-        print(f"Error saving settings: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to save settings: {str(e)}")
+        logging.exception(f"Error saving settings: {e}")
+        raise HTTPException(status_code=500, detail="Failed to save settings.")
 
 # --- Endpoints ---
 
@@ -238,12 +241,46 @@ def export_hosts():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
 
+# Cap import payload at 5 MB. A real hosts.json with even 10k entries is well
+# under 500 KB; anything bigger is either a backup corrupted on upload or a
+# DoS attempt. Without the cap, `await file.read()` could OOM the backend on
+# an arbitrarily large upload.
+_MAX_IMPORT_BYTES = 5 * 1024 * 1024
+
+
 @router.post("/settings/import")
 async def import_hosts(file: UploadFile = File(...)):
     """Upload and replace hosts (supports encrypted and legacy plain JSON)."""
+    # Content-Type is advisory; reject the obviously wrong cases (binary
+    # blobs, executables). Genuine JSON uploads from the renderer arrive with
+    # either "application/json" or "application/octet-stream" (for encrypted
+    # backups, which are raw bytes).
+    if file.content_type and file.content_type not in (
+        "application/json",
+        "application/octet-stream",
+        "text/plain",
+        "",
+    ):
+        raise HTTPException(status_code=400, detail="Tipo de arquivo não suportado.")
+
     try:
-        contents = await file.read()
-        
+        # Streaming-read with cap to avoid OOM. UploadFile.read accepts an int
+        # but doesn't enforce a hard limit on its own across all FastAPI
+        # versions, so we read in chunks and bail if we exceed the cap.
+        contents = bytearray()
+        chunk_size = 64 * 1024
+        while True:
+            chunk = await file.read(chunk_size)
+            if not chunk:
+                break
+            contents.extend(chunk)
+            if len(contents) > _MAX_IMPORT_BYTES:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"Arquivo maior que {_MAX_IMPORT_BYTES // (1024 * 1024)} MB.",
+                )
+        contents = bytes(contents)
+
         data = None
         # Try to decrypt first
         try:
@@ -254,11 +291,13 @@ async def import_hosts(file: UploadFile = File(...)):
             decrypted_bytes = sec_manager.decrypt_data(contents)
             data = json.loads(decrypted_bytes.decode('utf-8'))
         except Exception:
-            # Fallback to plain text (legacy support)
+            # Fallback to plain text (legacy support). Sanitize the error path
+            # — the previous code echoed the raw parse exception, which can
+            # include attacker-controlled bytes near the parse failure.
             try:
                 data = json.loads(contents.decode('utf-8'))
-            except Exception as e:
-                raise HTTPException(status_code=400, detail=f"Invalid file format (not JSON or encrypted): {e}")
+            except Exception:
+                raise HTTPException(status_code=400, detail="Formato inválido. Esperado JSON ou backup cifrado.")
 
         if data is None:
              raise HTTPException(status_code=400, detail="Failed to parse file data.")
@@ -308,7 +347,7 @@ def factory_reset():
         db_success = db_manager.reset_database()
         
         if not db_success:
-            print("Warning: Failed to reset database tables.")
+            logging.warning("Failed to reset database tables.")
 
         # 2. Clear Trusted Hosts
         from src.system.winrm import clear_trusted_hosts
@@ -335,7 +374,7 @@ def factory_reset():
                     os.remove(file_path)
                     deleted_count += 1
             except Exception as e:
-                print(f"Failed to delete {file_path}: {e}")
+                logging.warning(f"Failed to delete {file_path}: {e}")
 
         return {"status": "success", "message": f"Factory reset complete. Database cleared, Trusted Hosts cleared, and {deleted_count} files deleted."}
     except Exception as e:

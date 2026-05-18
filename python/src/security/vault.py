@@ -3,6 +3,7 @@ import json
 import base64
 import secrets
 import logging
+import threading
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives import hashes
@@ -14,10 +15,17 @@ class SecureVault:
         self.master_key = None
         self.is_unlocked = False
         self.salt = None
-        
+
         # Constants
         self.ITERATIONS = 600000 # High iteration count for security
         self.KEY_LENGTH = 32 # AES-256
+
+        # Serialize add/save/unlock so two concurrent FastAPI threads can't
+        # race on `os.replace(tmp, CRED_FILE)`. The previous design used a
+        # shared `CRED_FILE + ".tmp"` path — two writers both opening that
+        # collided on Windows with [WinError 32] (file in use by another
+        # process), and the loser's mutation to `self.credentials` was lost.
+        self._save_lock = threading.RLock()
 
     def _derive_key(self, password: str, salt: bytes) -> bytes:
         """Derives a 32-byte key from the password using PBKDF2HMAC."""
@@ -96,25 +104,26 @@ class SecureVault:
         if not self.is_unlocked or not self.master_key:
             raise Exception("Vault is locked.")
 
-        try:
-            data_json = json.dumps(self.credentials).encode('utf-8')
-            aesgcm = AESGCM(self.master_key)
-            nonce = secrets.token_bytes(12)
-            ciphertext = aesgcm.encrypt(nonce, data_json, None)
+        with self._save_lock:
+            try:
+                data_json = json.dumps(self.credentials).encode('utf-8')
+                aesgcm = AESGCM(self.master_key)
+                nonce = secrets.token_bytes(12)
+                ciphertext = aesgcm.encrypt(nonce, data_json, None)
 
-            # Atomic write: a power loss or crash mid-write previously left
-            # CRED_FILE truncated/corrupt, locking the operator out of every
-            # credential they had stored. Write to a sibling tmp first, then
-            # atomically swap.
-            tmp_path = CRED_FILE + ".tmp"
-            with open(tmp_path, 'wb') as f:
-                f.write(nonce + ciphertext)
-            os.replace(tmp_path, CRED_FILE)
+                # Atomic write with a UNIQUE tmp filename per call. The single
+                # shared `.tmp` path used previously raced under concurrent
+                # add_credential / save calls (Windows [WinError 32]). Each
+                # writer now has its own tmp; os.replace is still atomic.
+                tmp_path = f"{CRED_FILE}.tmp.{secrets.token_hex(4)}"
+                with open(tmp_path, 'wb') as f:
+                    f.write(nonce + ciphertext)
+                os.replace(tmp_path, CRED_FILE)
 
-            logging.info("Vault saved successfully.")
-        except Exception as e:
-            logging.error(f"Error saving vault: {e}")
-            raise
+                logging.info("Vault saved successfully.")
+            except Exception as e:
+                logging.error(f"Error saving vault: {e}")
+                raise
 
     def add_credential(self, entry):
         """Adds or updates a credential entry."""

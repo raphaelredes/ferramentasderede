@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 import json
 import asyncio
 import logging
@@ -110,23 +110,37 @@ class Host(BaseModel):
     network_id: Optional[str] = None
     network_name: Optional[str] = None
 
+    # NOTE: this used to live in a `model_validate` classmethod override, but
+    # Pydantic v2 routes the constructor through `__pydantic_validator__`,
+    # which bypasses subclass overrides. The normalization was running only
+    # when callers explicitly invoked `Host.model_validate(...)`, never on the
+    # `Host(**dict)` and FastAPI request-body paths. Field validators run on
+    # both, which is what we want.
+
+    @field_validator("teamviewer_id", mode="before")
     @classmethod
-    def model_validate(cls, obj, *args, **kwargs):
-        # Pre-process to handle non-string fields
-        if isinstance(obj, dict):
-            if 'teamviewer_id' in obj and obj['teamviewer_id'] is not None:
-                obj['teamviewer_id'] = str(obj['teamviewer_id']).replace('.0', '')
-            
-            if 'last_checked' in obj and obj['last_checked'] is not None:
-                val = obj['last_checked']
-                if isinstance(val, (float, int)):
-                    try:
-                        from datetime import datetime
-                        obj['last_checked'] = datetime.fromtimestamp(val).isoformat()
-                    except (ValueError, OSError, OverflowError):
-                        obj['last_checked'] = str(val)
-                        
-        return super().model_validate(obj, *args, **kwargs)
+    def _normalize_teamviewer_id(cls, v):
+        # The DB stores `teamviewer_id` as a string, but old rows occasionally
+        # come back as float (legacy import). Coerce to string and strip the
+        # trailing ".0" that float-formatted IDs pick up.
+        if v is None:
+            return v
+        return str(v).replace(".0", "")
+
+    @field_validator("last_checked", mode="before")
+    @classmethod
+    def _normalize_last_checked(cls, v):
+        # Some legacy rows store last_checked as a float epoch; convert to ISO
+        # for the renderer. Bad floats fall back to str() rather than 500.
+        if v is None or isinstance(v, str):
+            return v
+        if isinstance(v, (int, float)):
+            try:
+                from datetime import datetime
+                return datetime.fromtimestamp(v).isoformat()
+            except (ValueError, OSError, OverflowError):
+                return str(v)
+        return v
 
 # ... (omitted lines)
 
@@ -829,7 +843,10 @@ async def websocket_terminal(websocket: WebSocket):
     except WebSocketDisconnect:
         if winrm_session: winrm_session.close()
     except Exception as e:
-        print(f"Erro no WebSocket: {e}")
+        # logging.exception, not print: the Electron temp log used to capture
+        # stdout/stderr from this child process, which could leak exception
+        # context (URLs, partial credentials) to disk.
+        logging.exception(f"Erro no WebSocket terminal: {e}")
         if winrm_session: winrm_session.close()
 
 # --- Status Check (Legacy/Compat) ---
@@ -885,6 +902,6 @@ def check_status(ip: str):
             save_hosts_list(current_hosts)
             
     except Exception as e:
-        print(f"Erro ao persistir status: {e}")
+        logging.exception(f"Erro ao persistir status: {e}")
 
     return result

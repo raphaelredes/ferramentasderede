@@ -228,7 +228,7 @@ def system_info(request: SystemInfoRequest, x_temp_auth: str = Header(default=No
                     save_hosts_list(current_hosts)
                     
         except Exception as e:
-            print(f"Erro ao atualizar informações do host: {e}")
+            logging.exception(f"Erro ao atualizar informações do host: {e}")
 
     return result
 
