@@ -1,61 +1,75 @@
-# Build Instructions - Ferramentas de Rede v1.1
+# Build Instructions — Ferramentas de Rede (Portátil)
 
-## Como criar o executável
+## Como criar o portátil
 
 ### Método 1: Script Automático (Recomendado)
-Execute o arquivo `build_exe.bat` que irá:
-1. Limpar builds anteriores
-2. Criar o executável
-3. Verificar o resultado
+
+Na **raiz do projeto** (não dentro de `python/`):
+
+```cmd
+.\build_system.bat
+```
+
+Faz tudo na ordem certa: `npm install` → `vite build` → `pyinstaller build_webview.spec`.
 
 ### Método 2: Manual
-```bash
-# Limpar builds anteriores
-rmdir /s /q build
-rmdir /s /q dist
 
-# Criar executável
-pyinstaller build_config.spec --clean --noconfirm
+```cmd
+:: 1. Frontend (gera electron/dist/)
+cd electron
+npm install
+npx vite build
+
+:: 2. Backend + bundle portátil
+cd ..\python
+pyinstaller build_webview.spec --clean --noconfirm
 ```
 
-## Localização do Executável
-Após o build, o executável estará em:
+## Localização do executável
+
 ```
-dist/FerramentasDeRede_v1.1.exe
+python\dist\Ferramentas.de.Rede.v<versão>.exe
 ```
+
+A versão vem de `electron/package.json` (fonte única). Tamanho típico: **~40 MB**.
+
+## ⚠️ Não use os outros caminhos
+
+| Caminho | Por que não |
+|---|---|
+| `npm run build` no electron | Invoca `electron-builder --target portable` → gera um "portátil" de **400 MB** com Chromium dentro. Não é portátil. |
+| `pyinstaller build_config.spec` | Spec antigo — foi removido. Construía um `server.exe` headless para o caminho Electron, que não usamos mais. |
+
+O **único** spec PyInstaller que importa é `build_webview.spec`. Ele empaca:
+- `main_webview.py` (entry FastAPI + pywebview)
+- `electron/dist/` → pasta `gui/` dentro do exe
+- `python/src/system/scripts/*.ps1` → scripts WinRM
+- Dependências (cryptography, pypsrp, dnspython, etc.)
 
 ## Requisitos
-- Python 3.8 ou superior
-- PyInstaller instalado: `pip install pyinstaller`
-- Todas as dependências do projeto instaladas
 
-## Ícone
-O executável usa o ícone PNG de alta qualidade localizado em:
-```
-assets/icon.png
-```
-**Nota**: O ícone é carregado em resolução 256x256 usando o algoritmo LANCZOS para máxima qualidade na barra de tarefas.
+- Python 3.13+
+- `pip install -r requirements.txt` (em `python/`)
+- Node 18+ e `npm install` (em `electron/`)
+- PyInstaller (`pip install pyinstaller`)
 
-## Tamanho Esperado
-O executável único tem aproximadamente **27 MB**.
+## Por que o portátil é assim
 
-## Arquivos Importantes
-- `build_config.spec` - Configuração do PyInstaller
-- `assets/icon.ico` - Ícone da aplicação
-- `languages/*.json` - Arquivos de tradução (incluídos no executável)
+Em vez de empacotar Chromium (Electron), o portátil usa **WebView2** do próprio Windows para renderizar o frontend React. Isso reduz ~360 MB para ~40 MB e melhora muito o tempo de boot (~1s vs ~5s).
 
-## Solução de Problemas
+## Solução de problemas
+
+### "Frontend não encontrado em ../electron/dist/"
+Você esqueceu de rodar `vite build` antes. Use `build_system.bat` da raiz, que faz a ordem certa automaticamente.
 
 ### Erro de permissão durante o build
-- Feche qualquer instância do executável que esteja rodando
-- Desabilite temporariamente o antivírus
-- Execute o build novamente
+- Feche qualquer instância do executável rodando
+- Pare o `python main.py` se estiver rodando em dev mode
 
-### Executável não inicia
-- Verifique se todas as dependências estão instaladas
-- Tente executar em modo de console alterando `console=False` para `console=True` no spec file
+### Executável não inicia ao dar duplo-clique
+- Verifique se o Windows tem o **Edge WebView2 Runtime** instalado (em Windows 11 já vem; em Windows 10 antigo pode precisar instalar)
+- Veja `%TEMP%\network_tools_debug.log` para erros do main process
+- Veja `%APPDATA%\FerramentasDeRede\errors.log` para erros do backend
 
-### Ícone aparece embaçado ou em baixa qualidade
-- O sistema agora usa `assets/icon.png` diretamente em resolução 256x256
-- Certifique-se de que o arquivo PNG existe e tem boa qualidade
-- O ícone é redimensionado usando interpolação LANCZOS para melhor qualidade
+### Aviso de SmartScreen "Fornecedor desconhecido"
+Esperado — o exe não está assinado. Tech-debt conhecida (precisa certificado EV ou OV). Clique em **Mais informações → Executar mesmo assim**.

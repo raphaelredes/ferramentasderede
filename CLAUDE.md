@@ -51,8 +51,20 @@ python python/main.py
 
 Atalhos úteis:
 - Backend isolado para debug: `cd python && python -m api.server`
-- Build de produção: `.\build_system.bat` na raiz
+- Build do portátil: `.\build_system.bat` na raiz (gera `python\dist\Ferramentas.de.Rede.v<versão>.exe`, ~40 MB)
 - Smoke test: `curl http://127.0.0.1:8000/` deve retornar `{"status":"online","version":"..."}`
+
+### Como buildar o portátil (LEIA SE FOR FAZER BUILD)
+
+O portátil é **single-file ~40 MB** via `python/build_webview.spec` (FastAPI + pywebview num exe só, usa WebView2 do Windows para a UI). Pipeline correto, do `build_system.bat`:
+
+1. `cd electron && npm install`
+2. `cd electron && npx vite build` (gera `electron/dist/`)
+3. `cd python && pyinstaller build_webview.spec --clean --noconfirm`
+
+Artefato: `python\dist\Ferramentas.de.Rede.v<versão>.exe`.
+
+**NUNCA** rode `npm run build` inteiro nem `electron-builder`. Eles geram um "portátil" de **400 MB** com Chromium inteiro empacotado — isso **não é portátil** e foi explicitamente rejeitado. Existe um `electron-builder.yml` no repo só por inércia; se for refatorar o build, remova-o em vez de chamá-lo.
 
 ## Validação obrigatória antes de commitar
 
