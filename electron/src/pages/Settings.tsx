@@ -274,6 +274,20 @@ export function Settings() {
                 setStatus('Configurações salvas com sucesso!');
                 setInitialSettings(settings);
                 setTimeout(() => setStatus(''), 3000);
+            } else if (res.status === 422) {
+                // FastAPI request-body validation failed. The body looks like
+                // {"detail": [{"loc": [...], "msg": "...", "type": "..."}, ...]}.
+                // Surface the first field-level error so the operator knows
+                // which value (e.g. a malformed dns_server) was rejected.
+                try {
+                    const body = await res.json();
+                    const first = Array.isArray(body?.detail) ? body.detail[0] : null;
+                    const loc = first?.loc?.slice(1).join('.') ?? '';
+                    const msg = first?.msg ?? 'campo inválido';
+                    setStatus(`Erro de validação${loc ? ` em ${loc}` : ''}: ${msg}`);
+                } catch {
+                    setStatus('Erro de validação ao salvar.');
+                }
             } else {
                 setStatus('Erro ao salvar.');
             }

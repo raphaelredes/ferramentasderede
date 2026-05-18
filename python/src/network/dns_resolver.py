@@ -34,11 +34,28 @@ except Exception as _dns_init_err:
 
 
 def _make_resolver(dns_server: Optional[str], timeout: float):
-    """Build a dns.resolver.Resolver pointing at `dns_server` (or system default)."""
+    """Build a dns.resolver.Resolver pointing at `dns_server` (or system default).
+
+    `timeout` bounds each individual DNS attempt; `lifetime` bounds the total
+    time spent on retries against a slow/dead server. Without these the
+    monitor hot-path could stall on a misconfigured DNS — observed during
+    multi-VLAN testing when an operator typed a wrong DNS server IP.
+    """
     resolver = dns.resolver.Resolver(configure=dns_server is None)
     if dns_server:
+        # Validate as a literal IP so a misconfigured value can't trigger
+        # additional resolution (which would defeat the purpose of choosing
+        # an explicit server).
+        import ipaddress
+        try:
+            ipaddress.ip_address(dns_server)
+        except ValueError as e:
+            raise ValueError(f"dns_server inválido: {dns_server!r}") from e
         resolver.nameservers = [dns_server]
     resolver.timeout = timeout
+    # Cap lifetime at timeout (no second-attempt budget) so the monitor never
+    # blocks for more than `timeout` seconds per name lookup. dnspython's
+    # default lifetime is 5.0s — too generous for our 1Hz poll.
     resolver.lifetime = timeout
     return resolver
 

@@ -120,6 +120,28 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const abortControllers = useRef<{ [key: string]: AbortController | null }>({});
     const { showToast } = useToast();
 
+    // Cap on the streamed output buffers. A continuous ping running for hours
+    // would otherwise grow these arrays without bound — not a hard leak
+    // (operator can clear), but every appended line triggers a render that
+    // re-concats the full array. 2000 lines is ~33 minutes of 1Hz ping output,
+    // well past anyone's debugging horizon.
+    const OUTPUT_CAP = 2000;
+    const trimOutput = (arr: string[]) =>
+        arr.length > OUTPUT_CAP ? arr.slice(-OUTPUT_CAP) : arr;
+
+    // On provider unmount (Electron close, HMR reload), abort every in-flight
+    // fetch so their `.then` chains don't fire setState on a dead component.
+    // The cleanup runs once because the deps array is empty; abortControllers
+    // is a ref so it doesn't need to be in deps.
+    useEffect(() => {
+        return () => {
+            for (const key of Object.keys(abortControllers.current)) {
+                try { abortControllers.current[key]?.abort(); } catch { /* noop */ }
+                abortControllers.current[key] = null;
+            }
+        };
+    }, []);
+
     const setPingTarget = (target: string) => setPingState(prev => ({ ...prev, target }));
     const setTraceTarget = (target: string) => setTraceState(prev => ({ ...prev, target }));
 
@@ -219,9 +241,9 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 '\n[Cancelado pelo usuário]'
             ].join('\n');
 
-            setPingState(prev => ({ ...prev, isRunning: false, output: [...prev.output, summary] }));
+            setPingState(prev => ({ ...prev, isRunning: false, output: trimOutput([...prev.output, summary]) }));
         }
-        if (tool === 'traceroute') setTraceState(prev => ({ ...prev, isRunning: false, output: [...prev.output, '\n[Cancelado pelo usuário]'] }));
+        if (tool === 'traceroute') setTraceState(prev => ({ ...prev, isRunning: false, output: trimOutput([...prev.output, '\n[Cancelado pelo usuário]']) }));
         if (tool === 'scanner' && sessionId) {
             updateScanSession(sessionId, { isRunning: false, status: 'Cancelado pelo usuário.' });
         }
@@ -336,14 +358,14 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 // We use a functional update to access the *current* state value inside the loop
                 setPingState(prev => {
                     if (prev.isOffline) return prev; // Don't append lines while offline
-                    return { ...prev, output: [...prev.output, text] };
+                    return { ...prev, output: trimOutput([...prev.output, text]) };
                 });
             }
             markToolAsCompleted('ping');
         } catch (error: any) {
             if (error.name !== 'AbortError') {
                 console.error('Ping error:', error);
-                setPingState(prev => ({ ...prev, output: [...prev.output, `\nErro: ${error.message}`] }));
+                setPingState(prev => ({ ...prev, output: trimOutput([...prev.output, `\nErro: ${error.message}`]) }));
             }
         } finally {
             setPingState(prev => ({ ...prev, isRunning: false }));
@@ -374,13 +396,13 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 const { done, value } = await reader.read();
                 if (done) break;
                 const text = decoder.decode(value);
-                setTraceState(prev => ({ ...prev, output: [...prev.output, text] }));
+                setTraceState(prev => ({ ...prev, output: trimOutput([...prev.output, text]) }));
             }
             markToolAsCompleted('traceroute');
         } catch (error: any) {
             if (error.name !== 'AbortError') {
                 console.error('Traceroute error:', error);
-                setTraceState(prev => ({ ...prev, output: [...prev.output, `\nErro: ${error.message}`] }));
+                setTraceState(prev => ({ ...prev, output: trimOutput([...prev.output, `\nErro: ${error.message}`]) }));
             }
         } finally {
             setTraceState(prev => ({ ...prev, isRunning: false }));

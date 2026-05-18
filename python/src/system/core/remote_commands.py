@@ -9,6 +9,15 @@ import os
 import sys
 from pathlib import Path
 from .winrm_handler import WinRMHandler, WinRMError, ConnectionError, ConnectTimeout
+from .ps_safety import (
+    validate_service_name,
+    validate_log_name,
+    validate_service_action,
+    validate_service_startup_type,
+    validate_event_count,
+    validate_spooler_action,
+    escape_ps_single_quoted,
+)
 
 class RemoteCommands:
     def __init__(self, target_ip, username, password):
@@ -94,22 +103,36 @@ class RemoteCommands:
         return []
 
     def manage_service(self, service_name, action, startup_type=None):
-        """Gerencia um serviço (start, stop, restart, set-startup)."""
+        """Gerencia um serviço (start, stop, restart, set-startup).
+
+        Inputs are validated as strict enums/identifiers before substitution into
+        the PS template; a value containing `'` previously closed the quoted
+        literal in the script and ran arbitrary PowerShell on the remote host.
+        """
+        try:
+            service_name = validate_service_name(service_name)
+            action = validate_service_action(action)
+            if startup_type is not None:
+                startup_type = validate_service_startup_type(startup_type)
+        except ValueError as e:
+            yield {"status": "error", "message": str(e)}
+            return
+
         logging.info(f"Executing 'manage_service' for '{service_name}' (Action: {action}) on {self.target_ip}")
-        
+
         replacements = {
             "__SERVICE_NAME__": service_name,
-            "__ACTION__": action
+            "__ACTION__": action,
         }
-        
+
         if startup_type:
              replacements["__STARTUP_TYPE__"] = startup_type
              script = self._load_script("manage_service_startup", replacements)
         else:
              script = self._load_script("manage_service", replacements)
-             
+
         result = self.handler.execute_script(script)
-        
+
         # Check for specific error output even if exit code was 0 (PowerShell sometimes swallows errors)
         output_str = "".join(result.get("output", [])).lower()
         if "acesso negado" in output_str or "access is denied" in output_str:
@@ -123,13 +146,18 @@ class RemoteCommands:
 
     def get_single_service(self, service_name):
         """Obtém detalhes de um único serviço."""
+        try:
+            service_name = validate_service_name(service_name)
+        except ValueError as e:
+            return {"error": str(e)}
+
         logging.info(f"Executing 'get_single_service' for '{service_name}' on {self.target_ip}")
         script = self._load_script("get_single_service", {
             "__SERVICE_NAME__": service_name
         })
         result = self.handler.execute_script(script)
         output = result.get("output", [])
-        
+
         if output:
             try:
                 full_json = "".join(output)
@@ -139,19 +167,34 @@ class RemoteCommands:
         return {"error": f"Serviço '{service_name}' não encontrado."}
 
     def execute_shutdown_command(self, action_flag, message, delay_seconds):
-        """Executa comando de shutdown/restart remoto com múltiplos fallbacks."""
+        """Executa comando de shutdown/restart remoto com múltiplos fallbacks.
+
+        `action_flag` is built upstream from an enum; `delay_seconds` is an int.
+        The free-text `message` is the only attacker-influenceable field — it
+        used to be naively `.replace('"', "'")` which doesn't neutralize
+        backtick, $(...), or whitespace tricks. Now passed via a single-quoted
+        PS literal with `'` -> `''` escape.
+        """
         action_type = "restart" if "-r" in action_flag else "shutdown"
         logging.info(f"Executing {action_type} command on {self.target_ip}")
-        
+
         # 1. Tentar shutdown.exe (Nativo, suporta mensagens)
         cmd_native = f"shutdown {action_flag}"
         if "-l" not in action_flag:
-            cmd_native += f" -t {delay_seconds}"
+            cmd_native += f" -t {int(delay_seconds)}"
         if message and "-l" not in action_flag:
-            safe_message = message.replace('"', "'")
-            cmd_native += f' -c "{safe_message}"'
-            
-        logging.debug(f"Attempt 1: Native shutdown command: {cmd_native}")
+            try:
+                # shutdown -c caps at 512 chars per Microsoft docs; we cap the
+                # escaped form similarly to leave room for the escape.
+                safe = escape_ps_single_quoted(str(message), max_length=512)
+            except ValueError as e:
+                yield {"status": "error", "message": f"Mensagem inválida: {e}"}
+                return
+            # Pass through a PS variable that is itself a single-quoted literal,
+            # then invoke shutdown.exe — keeps PS as the only parser involved.
+            cmd_native = f"$msg = '{safe}'; & shutdown.exe {action_flag} -t {int(delay_seconds)} -c $msg"
+
+        logging.debug(f"Attempt 1: Native shutdown command (sanitized): shutdown {action_flag}")
         result = self.handler.execute_script(cmd_native)
         
         if result.get("success") and not any(err in "".join(result.get("output", [])).lower() for err in ["acesso negado", "access is denied", "falha", "failed"]):
@@ -207,25 +250,36 @@ class RemoteCommands:
         yield {"status": "error", "message": f"Falha ao cancelar agendamento: {output_str}"}
 
     def send_message(self, message):
-        """Envia uma mensagem para o usuário logado usando msg.exe."""
+        """Envia uma mensagem para o usuário logado usando msg.exe.
+
+        Same injection class as execute_shutdown_command: the previous code did
+        `.replace('"', "'")` and embedded inside a double-quoted PS literal,
+        which is interpolated — `$()`, `` ` ``, etc. still executed. Now the
+        message goes through a single-quoted PS variable.
+        """
         logging.info(f"Executing 'send_message' on {self.target_ip}")
-        
+
         check_cmd = "Get-Command msg.exe -ErrorAction SilentlyContinue"
         check_result = self.handler.execute_script(check_cmd)
-        
+
         if not check_result.get("output"):
             logging.warning(f"msg.exe not found on {self.target_ip}")
             yield {"status": "error", "message": "O comando 'msg' não está disponível neste host (comum em versões Home)."}
             return
 
-        safe_message = message.replace('"', "'")
-        cmd = f'msg * "{safe_message}"'
-        
-        logging.debug(f"Message command: {cmd}")
-        
+        try:
+            safe = escape_ps_single_quoted(str(message), max_length=512)
+        except ValueError as e:
+            yield {"status": "error", "message": f"Mensagem inválida: {e}"}
+            return
+
+        cmd = f"$msg = '{safe}'; & msg.exe * $msg"
+
+        logging.debug("Message command (sanitized): msg.exe * <message>")
+
         result = self.handler.execute_script(cmd)
         output = result.get("output", [])
-        
+
         if result.get("success") and not any("erro" in line.lower() or "error" in line.lower() for line in output):
             yield f"Mensagem enviada com sucesso."
         else:
@@ -292,10 +346,67 @@ class RemoteCommands:
             logging.error(f"JSON decode error in get_pre_power_check: {e}")
             return {"error": "Falha ao decodificar JSON de resposta."}
 
+    def manage_spooler(self, action):
+        """Restart (and optionally purge) the Windows print spooler.
+
+        The route /system/spooler/manage was wired to SystemTools.manage_spooler
+        -> cmd.manage_spooler(action), but that method didn't exist on
+        RemoteCommands at all — every invocation crashed with AttributeError.
+        Same class of bug that hit `manage_remote_service` previously. This
+        adds the missing builder; action is validated as one of
+        {"restart", "clear_and_restart"}.
+        """
+        try:
+            action = validate_spooler_action(action)
+        except ValueError as e:
+            yield {"status": "error", "message": str(e)}
+            return
+
+        logging.info(f"Executing 'manage_spooler' ({action}) on {self.target_ip}")
+
+        if action == "restart":
+            ps = (
+                "$ErrorActionPreference = 'Stop'; "
+                "Restart-Service -Name 'Spooler' -Force; "
+                "Write-Output 'OK'"
+            )
+        else:  # clear_and_restart
+            # Stop spooler, purge queued jobs, start again. The PRINTERS dir
+            # path is constant on every supported Windows.
+            ps = (
+                "$ErrorActionPreference = 'Stop'; "
+                "Stop-Service -Name 'Spooler' -Force; "
+                "$dir = Join-Path $env:SystemRoot 'System32\\spool\\PRINTERS'; "
+                "if (Test-Path $dir) { Get-ChildItem $dir -Force -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue }; "
+                "Start-Service -Name 'Spooler'; "
+                "Write-Output 'OK'"
+            )
+
+        result = self.handler.execute_script(ps)
+        output_str = "".join(result.get("output", []))
+        if result.get("success") and "OK" in output_str:
+            yield {"status": "success", "message": f"Spooler: ação '{action}' concluída."}
+        else:
+            yield {"status": "error", "message": f"Falha no spooler: {output_str.strip() or 'sem detalhes'}."}
+
     def get_remote_event_logs(self, log_name, level, count):
-        """Obtém logs de eventos do Windows."""
+        """Obtém logs de eventos do Windows.
+
+        `log_name` is the only attacker-influenceable string. Previously
+        substituted raw into `Get-WinEvent -LogName '...'` — a value like
+        `Application'); Invoke-Expression 'evil'; ('` closed the literal and
+        ran on the remote host. Now validated against a strict allowlist
+        regex; `count` is bounded; `level_id` is an int lookup.
+        """
+        try:
+            log_name = validate_log_name(log_name)
+            count = validate_event_count(count, max_count=1000)
+        except ValueError as e:
+            yield {"error": str(e)}
+            return
+
         logging.info(f"Executing 'get_remote_event_logs' on {self.target_ip}")
-        
+
         # Map level string to ID for Get-WinEvent
         # Critical=1, Error=2, Warning=3, Information=4, Verbose=5
         level_map = {
@@ -305,13 +416,13 @@ class RemoteCommands:
             "Information": 4,
             "Verbose": 5
         }
-        
+
         level_id = level_map.get(level, 2) # Default to Error (2)
-        
+
         script = self._load_script("get_event_logs", {
             "__LOG_NAME__": log_name,
-            "__LEVEL_ID__": level_id,
-            "__COUNT__": count
+            "__LEVEL_ID__": str(level_id),
+            "__COUNT__": str(count),
         })
         
         result = self.handler.execute_script(script)

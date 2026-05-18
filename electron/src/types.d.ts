@@ -1,17 +1,11 @@
 export { };
 
+// Renderer-side type declarations. The `electron` bridge surface itself is
+// declared in `electron/electron-env.d.ts` (ElectronBridge); here we only add
+// the optional pywebview fallback the renderer still probes for some legacy
+// flows.
 declare global {
     interface Window {
-        electron: {
-            launchRdp(ip: string): Promise<void>;
-            launchMsra(ip: string, askCredentials?: boolean): Promise<void>;
-            launchTeamViewer(id?: string): Promise<void>;
-            openExternal(url: string): Promise<void>;
-            getLocalDomain(): Promise<string>;
-            showItemInFolder(path: string): Promise<void>;
-            saveFileAs(filename: string, content: string): Promise<string | null>;
-            onWindowFocusChange(callback: (focused: boolean) => void): () => void;
-        };
         pywebview?: {
             api: {
                 open_url: (url: string) => void;
@@ -115,7 +109,6 @@ export interface Service {
     Name: string;
     DisplayName: string;
     Status: string;
-    StartType: string;
     StartType: string;
 }
 

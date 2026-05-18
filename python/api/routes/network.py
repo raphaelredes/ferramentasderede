@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 import json
 import asyncio
 import logging
@@ -23,19 +23,57 @@ net_tools = NetworkTools()
 host_monitor = HostMonitor()
 
 # --- WebSocket Manager ---
+def _ws_origin_allowed(websocket: WebSocket) -> bool:
+    """Reject WebSocket connections whose Origin isn't in the same allow-list
+    used for CORS. Browser CORS does NOT cover WebSockets, so without this
+    guard any page in the user's default browser could open ws://127.0.0.1
+    and receive the live host inventory.
+
+    A missing Origin header (e.g. a non-browser ws client) is also rejected —
+    legitimate Electron renderers always send one."""
+    try:
+        from api.server import ALLOWED_ORIGINS
+    except Exception:
+        # Fallback if the server module isn't importable here for some reason.
+        ALLOWED_ORIGINS = []  # type: ignore[assignment]
+    origin = websocket.headers.get("origin")
+    if not origin:
+        return False
+    return origin in ALLOWED_ORIGINS
+
+
 class ConnectionManager:
     def __init__(self):
         self.active_connections: List[WebSocket] = []
 
-    async def connect(self, websocket: WebSocket):
+    async def connect(self, websocket: WebSocket) -> bool:
+        if not _ws_origin_allowed(websocket):
+            logging.warning(
+                f"WS connect rejected: origin={websocket.headers.get('origin')!r} not in allow-list"
+            )
+            try:
+                await websocket.close(code=1008)  # 1008 = Policy Violation
+            except Exception:
+                pass
+            return False
         await websocket.accept()
         self.active_connections.append(websocket)
+        return True
 
     def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
+        try:
+            self.active_connections.remove(websocket)
+        except ValueError:
+            # Double-disconnect — current code paths don't trigger it, but if
+            # a future path adds one we want a breadcrumb instead of silence.
+            logging.debug("ConnectionManager.disconnect: websocket already removed")
 
     async def broadcast(self, message: dict):
-        for connection in self.active_connections:
+        # Snapshot before iterating: a disconnect() during broadcast mutates
+        # self.active_connections (list.remove) and can skip an element on the
+        # next index advance. Cheap to copy — connection list is small (1-2 in
+        # practice).
+        for connection in list(self.active_connections):
             try:
                 await connection.send_json(message)
             except Exception as e:
@@ -72,23 +110,37 @@ class Host(BaseModel):
     network_id: Optional[str] = None
     network_name: Optional[str] = None
 
+    # NOTE: this used to live in a `model_validate` classmethod override, but
+    # Pydantic v2 routes the constructor through `__pydantic_validator__`,
+    # which bypasses subclass overrides. The normalization was running only
+    # when callers explicitly invoked `Host.model_validate(...)`, never on the
+    # `Host(**dict)` and FastAPI request-body paths. Field validators run on
+    # both, which is what we want.
+
+    @field_validator("teamviewer_id", mode="before")
     @classmethod
-    def model_validate(cls, obj, *args, **kwargs):
-        # Pre-process to handle non-string fields
-        if isinstance(obj, dict):
-            if 'teamviewer_id' in obj and obj['teamviewer_id'] is not None:
-                obj['teamviewer_id'] = str(obj['teamviewer_id']).replace('.0', '')
-            
-            if 'last_checked' in obj and obj['last_checked'] is not None:
-                val = obj['last_checked']
-                if isinstance(val, (float, int)):
-                    try:
-                        from datetime import datetime
-                        obj['last_checked'] = datetime.fromtimestamp(val).isoformat()
-                    except (ValueError, OSError, OverflowError):
-                        obj['last_checked'] = str(val)
-                        
-        return super().model_validate(obj, *args, **kwargs)
+    def _normalize_teamviewer_id(cls, v):
+        # The DB stores `teamviewer_id` as a string, but old rows occasionally
+        # come back as float (legacy import). Coerce to string and strip the
+        # trailing ".0" that float-formatted IDs pick up.
+        if v is None:
+            return v
+        return str(v).replace(".0", "")
+
+    @field_validator("last_checked", mode="before")
+    @classmethod
+    def _normalize_last_checked(cls, v):
+        # Some legacy rows store last_checked as a float epoch; convert to ISO
+        # for the renderer. Bad floats fall back to str() rather than 500.
+        if v is None or isinstance(v, str):
+            return v
+        if isinstance(v, (int, float)):
+            try:
+                from datetime import datetime
+                return datetime.fromtimestamp(v).isoformat()
+            except (ValueError, OSError, OverflowError):
+                return str(v)
+        return v
 
 # ... (omitted lines)
 
@@ -443,7 +495,8 @@ def get_monitor_stats():
 
 @router.websocket("/ws/monitor")
 async def websocket_monitor(websocket: WebSocket):
-    await manager.connect(websocket)
+    if not await manager.connect(websocket):
+        return  # Origin rejected; close was already sent.
     try:
         while True:
             # Keep connection alive and handle incoming messages if needed
@@ -480,7 +533,19 @@ def resolve_via_specific_dns(req: DnsResolveRequest):
 
     Useful when the same hostname exists in multiple AD domains and the
     system resolver picks the wrong one.
+
+    `dns_server` must be a plain IP address. Accepting hostnames here is
+    pointless (we'd need DNS to look up DNS) and lets a malicious local
+    process steer the resolver at an attacker-controlled server to exfiltrate
+    which internal hostnames the operator is investigating.
     """
+    import ipaddress
+    if req.dns_server:
+        try:
+            ipaddress.ip_address(req.dns_server)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="dns_server deve ser um endereço IP.")
+
     from src.network import dns_resolver
     if req.name:
         ip = dns_resolver.resolve_hostname(req.name, req.dns_server, req.domain)
@@ -495,8 +560,31 @@ def discover_network(request: DiscoveryRequest):
     cidr = request.cidr
     task_id = request.task_id or f"scanner_{time.time()}"
     timeout = request.timeout or 200
-    max_workers = request.max_workers or 50
+    # Cap max_workers too. The CIDR is already capped at /16 below, but the
+    # `max_workers` field was unbounded — a request with `max_workers: 100000`
+    # would spawn 100k threads regardless of CIDR size and exhaust file
+    # descriptors. 256 covers any legitimate scanning rate.
+    try:
+        requested_workers = int(request.max_workers or 50)
+    except (TypeError, ValueError):
+        requested_workers = 50
+    max_workers = max(1, min(requested_workers, 256))
+
+    # Validate source_ip if provided (must be a literal IP, see
+    # /network/dns/resolve for the reasoning — same threat model).
     source_ip = request.source_ip
+    if source_ip:
+        import ipaddress as _ip
+        try:
+            _ip.ip_address(source_ip)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="source_ip deve ser um endereço IP.")
+
+    # Cap CIDR size BEFORE spinning up worker threads. A misclick on
+    # 10.0.0.0/8 used to spawn 16M scan tasks, fill the threadpool for
+    # hours, and pollute the DB with junk hosts. /16 = 64K addresses is
+    # already a long scan; anything wider should be an explicit batch.
+    _MAX_DISCOVERY_ADDRESSES = 65536  # /16
 
     def event_generator():
         try:
@@ -507,6 +595,16 @@ def discover_network(request: DiscoveryRequest):
                 yield json.dumps({"error": "CIDR inválido."}).encode('utf-8') + b"\n"
                 return
 
+            if network.num_addresses > _MAX_DISCOVERY_ADDRESSES:
+                yield json.dumps({
+                    "error": (
+                        f"CIDR muito amplo ({network.num_addresses} endereços). "
+                        f"Limite máximo: {_MAX_DISCOVERY_ADDRESSES} (/16). "
+                        "Divida em sub-redes menores."
+                    )
+                }).encode('utf-8') + b"\n"
+                return
+
             iterator = net_tools.discover_hosts(
                 network, task_id,
                 timeout=timeout, max_workers=max_workers,
@@ -514,15 +612,40 @@ def discover_network(request: DiscoveryRequest):
             )
             for host in iterator:
                 yield json.dumps(host).encode('utf-8') + b"\n"
-                time.sleep(0.01)
+                # No artificial 10ms sleep; back-pressure on the streaming
+                # response is the right flow-control mechanism.
         except Exception as e:
             yield json.dumps({"error": str(e)}).encode('utf-8') + b"\n"
 
     return StreamingResponse(event_generator(), media_type="application/x-ndjson")
 
+def _validate_tool_target(target: str) -> None:
+    """Reject targets that look like CLI flags or contain shell metacharacters.
+
+    The /tools/ping and /tools/traceroute endpoints pass `target` as an argv
+    element (no shell), so this isn't RCE — but a value starting with `-` is
+    interpreted as an option by ping.exe/tracert.exe and triggers help output
+    instead of a real probe, and arbitrary strings exfiltrate via the system
+    DNS resolver. Use the same shape as `_is_safe_remote_target`."""
+    if not _is_safe_remote_target(target):
+        raise HTTPException(status_code=400, detail="Endereço de destino inválido.")
+
+
+def _validate_optional_source_ip(value):
+    if not value:
+        return
+    import ipaddress as _ip
+    try:
+        _ip.ip_address(value)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="source_ip deve ser um endereço IP.")
+
+
 @router.post("/tools/ping")
 def run_ping(request: ToolRequest):
     target = request.target
+    _validate_tool_target(target)
+    _validate_optional_source_ip(request.source_ip)
     task_id = request.task_id or f"ping_{time.time()}"
     source_ip = request.source_ip
 
@@ -533,7 +656,8 @@ def run_ping(request: ToolRequest):
                 line = item[0] if isinstance(item, tuple) else str(item)
                 if line:
                     yield line.encode('utf-8')
-                    time.sleep(0.01)
+                    # No artificial 10ms sleep; back-pressure on the streaming
+                # response is the right flow-control mechanism.
         except Exception as e:
             yield f"Erro ao executar ping: {str(e)}\n".encode('utf-8')
     return StreamingResponse(event_generator(), media_type="text/plain")
@@ -541,6 +665,8 @@ def run_ping(request: ToolRequest):
 @router.post("/tools/traceroute")
 def run_traceroute(request: ToolRequest):
     target = request.target
+    _validate_tool_target(target)
+    _validate_optional_source_ip(request.source_ip)
     task_id = request.task_id or f"traceroute_{time.time()}"
     source_ip = request.source_ip
 
@@ -551,7 +677,8 @@ def run_traceroute(request: ToolRequest):
                 line = item[0] if isinstance(item, tuple) else str(item)
                 if line:
                     yield line.encode('utf-8')
-                    time.sleep(0.01)
+                    # No artificial 10ms sleep; back-pressure on the streaming
+                # response is the right flow-control mechanism.
         except Exception as e:
             yield f"Erro ao executar traceroute: {str(e)}\n".encode('utf-8')
     return StreamingResponse(event_generator(), media_type="text/plain")
@@ -660,6 +787,15 @@ def open_external_terminal(request: ExternalTerminalRequest):
 
 @router.websocket("/ws/terminal")
 async def websocket_terminal(websocket: WebSocket):
+    if not _ws_origin_allowed(websocket):
+        logging.warning(
+            f"WS /ws/terminal connect rejected: origin={websocket.headers.get('origin')!r}"
+        )
+        try:
+            await websocket.close(code=1008)
+        except Exception:
+            pass
+        return
     await websocket.accept()
     winrm_session = None
     try:
@@ -699,7 +835,15 @@ async def websocket_terminal(websocket: WebSocket):
                     return handler, result
 
                 winrm_session, result = await asyncio.to_thread(connect_winrm)
-                
+
+                # Whatever the outcome, drop the local plaintext copy. The
+                # handler kept its own copy of `password` until we changed it
+                # to zero on success; in the failure path it lived in this
+                # closure until the next "connect" message arrived. WinRMHandler
+                # itself now nulls self.password on success.
+                password = None
+                data["password"] = None
+
                 if result.get("success"):
                     await websocket.send_json({"type": "status", "message": "Conectado com sucesso!"})
                     await websocket.send_json({"type": "ready"})
@@ -745,7 +889,10 @@ async def websocket_terminal(websocket: WebSocket):
     except WebSocketDisconnect:
         if winrm_session: winrm_session.close()
     except Exception as e:
-        print(f"Erro no WebSocket: {e}")
+        # logging.exception, not print: the Electron temp log used to capture
+        # stdout/stderr from this child process, which could leak exception
+        # context (URLs, partial credentials) to disk.
+        logging.exception(f"Erro no WebSocket terminal: {e}")
         if winrm_session: winrm_session.close()
 
 # --- Status Check (Legacy/Compat) ---
@@ -801,6 +948,6 @@ def check_status(ip: str):
             save_hosts_list(current_hosts)
             
     except Exception as e:
-        print(f"Erro ao persistir status: {e}")
+        logging.exception(f"Erro ao persistir status: {e}")
 
     return result

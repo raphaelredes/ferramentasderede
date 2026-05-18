@@ -2,11 +2,64 @@ from fastapi import APIRouter, HTTPException, Body
 from pydantic import BaseModel
 from typing import List, Optional
 import os
+import time
+import threading
 from src.config.settings import SALT_FILE
 from src.security.vault import SecureVault
 
 router = APIRouter(tags=["security"])
 vault = SecureVault()
+
+# In-process unlock throttle. The backend binds to 127.0.0.1, so the realistic
+# attacker is a malicious local process brute-forcing the PBKDF2 master key.
+# PBKDF2 with 600k iterations already costs ~250ms per try; this caps things
+# further to 5 failures / 60s before forcing a cooldown.
+#
+# Concurrency model: a single in-flight gate guards the "check + reserve a
+# slot" sequence so N concurrent unlock attempts can't all pass the gate at
+# `4 failures recorded` and then each add a 5th — the previous design had
+# exactly that TOCTOU. The full PBKDF2 derivation still runs OUTSIDE the
+# lock; the lock only sequences the bookkeeping.
+_UNLOCK_FAILURES: list = []
+_UNLOCK_INFLIGHT: int = 0
+_UNLOCK_LOCK = threading.Lock()
+_UNLOCK_MAX_FAILS = 5
+_UNLOCK_WINDOW_S = 60.0
+_UNLOCK_COOLDOWN_S = 30.0
+
+
+def _reserve_unlock_slot():
+    """Atomically check the throttle and reserve an in-flight slot.
+
+    Counts recorded failures + currently-running unlock attempts together so
+    the cap of 5 can't be exceeded by stacking concurrent requests on top of
+    4 already-failed ones."""
+    global _UNLOCK_INFLIGHT
+    with _UNLOCK_LOCK:
+        now = time.time()
+        recent = [t for t in _UNLOCK_FAILURES if now - t < _UNLOCK_WINDOW_S]
+        _UNLOCK_FAILURES.clear()
+        _UNLOCK_FAILURES.extend(recent)
+        total = len(recent) + _UNLOCK_INFLIGHT
+        if total >= _UNLOCK_MAX_FAILS:
+            wait = _UNLOCK_COOLDOWN_S - (now - recent[-1]) if recent else _UNLOCK_COOLDOWN_S
+            if wait > 0:
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"Muitas tentativas de desbloqueio. Aguarde {int(wait) + 1}s.",
+                )
+        _UNLOCK_INFLIGHT += 1
+
+
+def _release_unlock_slot(success: bool):
+    global _UNLOCK_INFLIGHT
+    with _UNLOCK_LOCK:
+        _UNLOCK_INFLIGHT = max(0, _UNLOCK_INFLIGHT - 1)
+        if success:
+            _UNLOCK_FAILURES.clear()
+        else:
+            _UNLOCK_FAILURES.append(time.time())
+
 
 class UnlockRequest(BaseModel):
     password: str
@@ -21,7 +74,18 @@ class CredentialEntry(BaseModel):
 
 @router.post("/security/unlock")
 def unlock_vault(req: UnlockRequest):
-    success = vault.unlock(req.password, req.hint)
+    _reserve_unlock_slot()
+    success = False
+    try:
+        success = vault.unlock(req.password, req.hint)
+    finally:
+        # The previous design always released as failure, then cleared
+        # _UNLOCK_FAILURES outside the lock on success. Between the false
+        # record and the clear, a concurrent unlock attempt could read the
+        # inflated count and get an unjustified 429. Now the release is told
+        # the actual outcome — clear-on-success happens inside the same lock
+        # as the in-flight bookkeeping.
+        _release_unlock_slot(success)
     if not success:
         raise HTTPException(status_code=401, detail="Senha incorreta ou falha ao desbloquear.")
     return {"status": "success", "message": "Cofre desbloqueado."}

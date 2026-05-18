@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Lock, Unlock, Eye, EyeOff, Trash2, Plus, Copy, Check, Shield, Key, Settings, Clock, Pencil } from 'lucide-react';
 import { useVault } from '../contexts/VaultContext';
 import { useToast } from '../contexts/ToastContext';
@@ -40,6 +40,22 @@ export function Security() {
     const [revealedId, setRevealedId] = useState<string | null>(null);
     const [revealedPassword, setRevealedPassword] = useState<string>('');
     const [copiedId, setCopiedId] = useState<string | null>(null);
+
+    // Clear any decrypted password from React state the moment the vault locks
+    // (manual lock, auto-lock timeout, or app shutdown). Without this, the last
+    // revealed password was sitting in state until the route unmounted — visible
+    // in DevTools / React DevTools the whole time the vault was supposedly safe.
+    useEffect(() => {
+        if (!isUnlocked) {
+            setRevealedId(null);
+            setRevealedPassword('');
+            setCopiedId(null);
+            // Also flush the add/edit form so a half-typed password doesn't
+            // sit around for the next session.
+            setNewPassword('');
+            setEditingCredential(null);
+        }
+    }, [isUnlocked]);
 
     // Recovery State
     const [passwordHint, setPasswordHint] = useState('');

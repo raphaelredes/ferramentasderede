@@ -4,12 +4,14 @@ import { clsx } from 'clsx';
 import { NetworkScanner } from '../components/Tools/NetworkScanner';
 import { Host } from '../types';
 import { useTools } from '../contexts/ToolsContext';
+import { useToast } from '../contexts/ToastContext';
 import { useNetworks } from '../hooks/useNetworks';
 import { API_BASE } from '../config/api';
 import type { NetworkConfig } from './Settings';
 
 export function Tools() {
     const [activeTab, setActiveTab] = useState<'ping' | 'traceroute' | 'scanner'>('ping');
+    const { showToast } = useToast();
 
     // Use Global Context
     const {
@@ -93,7 +95,7 @@ export function Tools() {
 
         } catch (error) {
             console.error('Failed to add host:', error);
-            alert('Erro ao adicionar host: ' + (error as Error).message);
+            showToast('Erro ao adicionar host: ' + (error as Error).message, 'error');
         }
     };
 

@@ -17,7 +17,18 @@ _BUSY_TIMEOUT_MS = 10_000
 
 
 def _retry_on_locked(max_retries: int = 5, base_delay: float = 0.1):
-    """Retry on `database is locked` errors. Other errors propagate."""
+    """Retry on `database is locked` / SQLITE_BUSY errors. Other errors propagate.
+
+    Uses `sqlite_errorcode` (Python 3.11+) when available — 5 = SQLITE_BUSY,
+    6 = SQLITE_LOCKED. Falls back to a string match for older interpreters,
+    but the string is locale-dependent in some builds so prefer the code.
+    """
+    def _is_locked(exc: sqlite3.OperationalError) -> bool:
+        code = getattr(exc, "sqlite_errorcode", None)
+        if code in (5, 6):
+            return True
+        return "locked" in str(exc).lower() or "busy" in str(exc).lower()
+
     def decorator(fn):
         @wraps(fn)
         def wrapper(*args, **kwargs):
@@ -25,7 +36,7 @@ def _retry_on_locked(max_retries: int = 5, base_delay: float = 0.1):
                 try:
                     return fn(*args, **kwargs)
                 except sqlite3.OperationalError as e:
-                    if "locked" in str(e).lower() and attempt < max_retries - 1:
+                    if _is_locked(e) and attempt < max_retries - 1:
                         delay = base_delay * (2 ** attempt)
                         logging.warning(
                             f"Database locked in {fn.__name__}, retry {attempt + 1}/{max_retries} after {delay:.2f}s"
@@ -125,8 +136,15 @@ class DatabaseManager:
                 'system_disk_free_gb': 'REAL',
             }
             
+            # SQLite DDL can't parameter-bind identifiers, so we f-string. The
+            # values come from the hardcoded dict above — never user input —
+            # but guard with asserts so a future caller who adds a column from
+            # a config file can't smuggle SQL.
+            allowed_dtypes = {'TEXT', 'BOOLEAN', 'REAL', 'INTEGER'}
             for col, dtype in new_columns.items():
                 if col not in columns:
+                    assert col.isidentifier(), f"unsafe column name: {col!r}"
+                    assert dtype in allowed_dtypes, f"unsafe dtype: {dtype!r}"
                     logging.info(f"Adicionando coluna {col} à tabela hosts...")
                     cursor.execute(f"ALTER TABLE hosts ADD COLUMN {col} {dtype}")
             
@@ -318,6 +336,22 @@ class DatabaseManager:
                     return True
             except Exception as e:
                 logging.exception(f"Erro ao substituir todos os hosts: {e}")
+                return False
+
+    @_retry_on_locked()
+    def clear_all_hosts(self) -> bool:
+        """Apaga todos os hosts. Respeita write_lock + retry decorator —
+        bypass-direto via `_get_connection()` (como o legado em HostManager)
+        contornava a serialização e podia causar `database is locked` quando
+        outra task estava no meio de um INSERT."""
+        with self._write_lock:
+            try:
+                with self._get_connection() as conn:
+                    conn.execute("DELETE FROM hosts")
+                    conn.commit()
+                return True
+            except Exception as e:
+                logging.exception(f"Erro ao limpar hosts: {e}")
                 return False
 
     @_retry_on_locked()

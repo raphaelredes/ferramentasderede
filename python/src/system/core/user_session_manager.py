@@ -3,6 +3,8 @@ import logging
 import sys
 from pathlib import Path
 
+from .ps_safety import validate_iso_datetime
+
 class UserSessionManager:
     def __init__(self, handler):
         self.handler = handler
@@ -93,24 +95,51 @@ class UserSessionManager:
             yield f"Erro ao listar usuários: {str(e)}\n", []
 
     def disconnect_user(self, session_id):
-        logging.info(f"Executing 'disconnect_user' for session ID {session_id}")
+        # session_id MUST be a positive integer — Windows session IDs are small
+        # ints (typically 1..65535). Interpolating arbitrary strings here was a
+        # command injection vector (e.g. "1; Remove-Item C:\\* -Recurse" would
+        # execute on the remote host with admin privileges).
+        try:
+            sid_int = int(str(session_id).strip())
+            # Session 0 is the non-interactive Services session — operators
+            # never want to disconnect it (and `rwinsta 0` has bluescreened
+            # older builds). Cap min at 1.
+            if sid_int < 1 or sid_int > 65535:
+                raise ValueError("session_id out of range")
+        except (TypeError, ValueError):
+            logging.warning(f"disconnect_user: rejected invalid session_id={session_id!r}")
+            yield "Falha ao desconectar: ID de sessão inválido."
+            return
+
+        sid = str(sid_int)
+        logging.info(f"Executing 'disconnect_user' for session ID {sid}")
         ps_script = f"""
         $ErrorActionPreference = 'Stop'
-        try {{ msg {session_id} /TIME:5 "Você será desconectado em 5 segundos pelo administrador." 2>&1 | Out-Null; Write-Output "Aviso enviado." }} catch {{ Write-Output "Aviso falhou." }}
+        try {{ msg {sid} /TIME:5 "Você será desconectado em 5 segundos pelo administrador." 2>&1 | Out-Null; Write-Output "Aviso enviado." }} catch {{ Write-Output "Aviso falhou." }}
         Start-Sleep -Seconds 5
-        try {{ Write-Output "Tentando rwinsta..."; rwinsta {session_id} 2>&1 | Out-Null; if ($LASTEXITCODE -eq 0) {{ Write-Output "Sucesso rwinsta."; exit 0 }} }} catch {{}}
-        try {{ Write-Output "Tentando logoff..."; logoff {session_id} 2>&1 | Out-Null; if ($LASTEXITCODE -eq 0) {{ Write-Output "Sucesso logoff."; exit 0 }} }} catch {{}}
+        try {{ Write-Output "Tentando rwinsta..."; rwinsta {sid} 2>&1 | Out-Null; if ($LASTEXITCODE -eq 0) {{ Write-Output "Sucesso rwinsta."; exit 0 }} }} catch {{}}
+        try {{ Write-Output "Tentando logoff..."; logoff {sid} 2>&1 | Out-Null; if ($LASTEXITCODE -eq 0) {{ Write-Output "Sucesso logoff."; exit 0 }} }} catch {{}}
         Write-Output "Falha ao desconectar."
         exit 1
         """
         result = self.handler.execute_script(ps_script)
         output_msg = "\\n".join(result.get("output", []))
         if result.get("success") and ("Sucesso" in output_msg or "desconectada" in output_msg):
-             yield f"Sessão {session_id} desconectada com sucesso."
+             yield f"Sessão {sid} desconectada com sucesso."
         else:
-             yield f"Falha ao desconectar sessão {session_id}. Detalhes:\\n{output_msg}"
+             yield f"Falha ao desconectar sessão {sid}. Detalhes:\\n{output_msg}"
 
     def get_user_activity_events(self, start_time, end_time):
+        # start_time / end_time previously substituted raw into
+        # `Get-Date -Date '...'` — a value with `'` could close the literal
+        # and inject PS. Now validated as ISO 8601 strings.
+        try:
+            start_time = validate_iso_datetime(start_time)
+            end_time = validate_iso_datetime(end_time)
+        except ValueError as e:
+            yield {"error": str(e)}
+            return
+
         logging.info(f"Executing 'get_user_activity_events' for period {start_time} to {end_time}")
         script = self._load_script("get_user_activity", {"__START_TIME__": start_time, "__END_TIME__": end_time})
         result = self.handler.execute_script(script)

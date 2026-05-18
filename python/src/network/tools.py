@@ -27,15 +27,21 @@ class NetworkTools:
         self._status_cache = {}
         self._cache_timestamp = {}
         self._cache_timeout = 30  # Cache válido por 30 segundos
-        
+        # The caches are mutated from the monitor pool, discover_hosts threads,
+        # and the FastAPI request handlers concurrently. dict get/set is
+        # technically atomic in CPython, but `_cleanup_cache` iterates and
+        # mutates — without this lock, a concurrent insert raised
+        # `RuntimeError: dictionary changed size during iteration` in the wild.
+        self._cache_lock = threading.RLock()
+
         # Pool de conexões para reutilização
         self._socket_pool = []
         self._max_socket_pool = 10
-        
+
         # Controle de execução de comandos (Multi-Task)
         self._active_tasks = {} # { task_id: process }
         self._tasks_lock = threading.RLock()
-        
+
         # Executor dedicado para resoluções DNS para evitar bloqueio
         self._resolver_executor = concurrent.futures.ThreadPoolExecutor(max_workers=10)
 
@@ -63,19 +69,19 @@ class NetworkTools:
     def resolve_and_check_status(self, hostname):
         """Resolve o hostname para um IP e então verifica o status desse IP com cache."""
         try:
-            # Verificar cache de DNS primeiro
             current_time = time.time()
-            if hostname in self._dns_cache:
-                cached_time, cached_ip = self._dns_cache[hostname]
-                if current_time - cached_time < self._cache_timeout:
-                    ip_address = cached_ip
-                else:
-                    ip_address = socket.gethostbyname(hostname)
-                    self._dns_cache[hostname] = (current_time, ip_address)
-            else:
+            ip_address = None
+            with self._cache_lock:
+                if hostname in self._dns_cache:
+                    cached_time, cached_ip = self._dns_cache[hostname]
+                    if current_time - cached_time < self._cache_timeout:
+                        ip_address = cached_ip
+
+            if ip_address is None:
                 ip_address = socket.gethostbyname(hostname)
-                self._dns_cache[hostname] = (current_time, ip_address)
-            
+                with self._cache_lock:
+                    self._dns_cache[hostname] = (current_time, ip_address)
+
             is_online = self.check_host_status(ip_address)
             return is_online, ip_address
         except socket.gaierror: # Falha na resolução DNS
@@ -86,23 +92,22 @@ class NetworkTools:
     def _cleanup_cache(self):
         """Limpa entradas antigas do cache."""
         current_time = time.time()
-        expired_keys = []
-        
-        for key, (timestamp, _) in self._status_cache.items():
-            if current_time - timestamp > self._cache_timeout:
-                expired_keys.append(key)
-        
-        for key in expired_keys:
-            del self._status_cache[key]
-        
-        # Limpar cache DNS também
-        expired_dns_keys = []
-        for key, (timestamp, _) in self._dns_cache.items():
-            if current_time - timestamp > self._cache_timeout:
-                expired_dns_keys.append(key)
-        
-        for key in expired_dns_keys:
-            del self._dns_cache[key]
+        with self._cache_lock:
+            # Snapshot of expired keys before mutation — iterating while
+            # deleting from the same dict raises in CPython.
+            status_expired = [
+                key for key, (timestamp, _) in self._status_cache.items()
+                if current_time - timestamp > self._cache_timeout
+            ]
+            for key in status_expired:
+                del self._status_cache[key]
+
+            dns_expired = [
+                key for key, (timestamp, _) in self._dns_cache.items()
+                if current_time - timestamp > self._cache_timeout
+            ]
+            for key in dns_expired:
+                del self._dns_cache[key]
 
     def start_ping(self, packet_size, output_widget, entry_widget=None, target_ip=None):
         """Inicia um comando ping real, emitindo linhas incrementais via textbox (compat)."""
@@ -255,11 +260,34 @@ class NetworkTools:
 
     def initiate_rdp(self, target_ip):
         if os.name == 'nt':
+            if not self._safe_target(target_ip):
+                logging.warning(f"initiate_rdp: rejected unsafe target {target_ip!r}")
+                return
             subprocess.Popen(["mstsc.exe", "/v:" + target_ip])
-    
+
     def initiate_msra(self, target_ip):
-        if os.name == 'nt':
-            subprocess.Popen(f'msra.exe /offerra {target_ip}', shell=True)
+        if os.name != 'nt':
+            return
+        # Used to be `Popen(f'msra.exe /offerra {target_ip}', shell=True)` — a
+        # value like "1.2.3.4; calc.exe" would have run calc. We now validate
+        # and use a list argv so the shell never parses anything.
+        if not self._safe_target(target_ip):
+            logging.warning(f"initiate_msra: rejected unsafe target {target_ip!r}")
+            return
+        subprocess.Popen(["msra.exe", "/offerra", target_ip])
+
+    @staticmethod
+    def _safe_target(value: str) -> bool:
+        """Conservative IP/hostname validator for local subprocess launches."""
+        import re as _re
+        if not isinstance(value, str) or not value or len(value) > 253:
+            return False
+        if _re.fullmatch(r"(?:\d{1,3}\.){3}\d{1,3}", value):
+            try:
+                return all(0 <= int(o) <= 255 for o in value.split("."))
+            except ValueError:
+                return False
+        return bool(_re.fullmatch(r"[A-Za-z0-9._-]+", value))
 
     def get_local_network_info(self):
         """Obtém informações da rede local (IP, Máscara, Gateway)."""
@@ -487,6 +515,11 @@ class NetworkTools:
         
         return found_host
 
+    # Defense in depth: the route layer also caps at /16, but we apply the
+    # same cap here so any future internal caller (DiscoveryScanner legacy,
+    # CLI script, future feature) can't bypass it.
+    _MAX_DISCOVERY_ADDRESSES = 65536  # /16
+
     def discover_hosts(self, network, task_id, timeout=200, max_workers=50, source_ip=None):
         """
         Realiza a descoberta de hosts na rede especificada.
@@ -507,10 +540,20 @@ class NetworkTools:
 
         # Notificar início
         yield {"status": "progress", "message": f"Iniciando varredura em {network}...", "progress": 0}
-        
+
+        if network.num_addresses > self._MAX_DISCOVERY_ADDRESSES:
+            yield {
+                "status": "error",
+                "message": (
+                    f"CIDR muito amplo ({network.num_addresses} endereços). "
+                    f"Limite máximo: {self._MAX_DISCOVERY_ADDRESSES} (/16)."
+                ),
+            }
+            return
+
         hosts_to_scan = list(network.hosts())
         total_hosts = len(hosts_to_scan)
-        
+
         if total_hosts == 0:
             yield {"status": "completed", "message": "Nenhum host para varrer na rede especificada."}
             return

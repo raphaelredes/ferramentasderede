@@ -228,7 +228,7 @@ def system_info(request: SystemInfoRequest, x_temp_auth: str = Header(default=No
                     save_hosts_list(current_hosts)
                     
         except Exception as e:
-            print(f"Erro ao atualizar informações do host: {e}")
+            logging.exception(f"Erro ao atualizar informações do host: {e}")
 
     return result
 
@@ -272,7 +272,9 @@ def manage_service(request: ServiceManageRequest, x_temp_auth: str = Header(defa
                             yield json.dumps(item).encode('utf-8') + b"\n"
                     else:
                             yield json.dumps({"status": "info", "message": str(item)}).encode('utf-8') + b"\n"
-                    time.sleep(0.01)
+                    # No artificial sleep — back-pressure on the WS socket
+                    # is the right flow-control mechanism; the 10ms sleep was
+                    # adding 2s/200 events of pure latency.
 
         except Exception as e:
             # Para streaming, não podemos levantar HTTPException, temos que enviar JSON de erro
@@ -307,7 +309,9 @@ def manage_spooler(request: SpoolerManageRequest, x_temp_auth: str = Header(defa
                             yield json.dumps(item).encode('utf-8') + b"\n"
                     else:
                             yield json.dumps({"status": "info", "message": str(item)}).encode('utf-8') + b"\n"
-                    time.sleep(0.01)
+                    # No artificial sleep — back-pressure on the WS socket
+                    # is the right flow-control mechanism; the 10ms sleep was
+                    # adding 2s/200 events of pure latency.
 
         except Exception as e:
             error_msg = str(e)
@@ -334,7 +338,9 @@ def get_logs(request: LogsRequest, x_temp_auth: str = Header(default=None)):
                 )
                 for item in iterator:
                     yield json.dumps(item).encode('utf-8') + b"\n"
-                    time.sleep(0.01)
+                    # No artificial sleep — back-pressure on the WS socket
+                    # is the right flow-control mechanism; the 10ms sleep was
+                    # adding 2s/200 events of pure latency.
                 
         except Exception as e:
             error_msg = str(e)
@@ -471,7 +477,9 @@ def get_teamviewer_id(request: SystemInfoRequest, x_temp_auth: str = Header(defa
                             yield json.dumps(item).encode('utf-8') + b"\n"
                     else:
                         yield json.dumps({"status": "info", "message": str(item)}).encode('utf-8') + b"\n"
-                    time.sleep(0.01)
+                    # No artificial sleep — back-pressure on the WS socket
+                    # is the right flow-control mechanism; the 10ms sleep was
+                    # adding 2s/200 events of pure latency.
 
         except Exception as e:
             error_msg = str(e)
@@ -501,7 +509,9 @@ def list_sessions(request: SystemInfoRequest, x_temp_auth: str = Header(default=
                             yield json.dumps(item).encode('utf-8') + b"\n"
                     else:
                         yield json.dumps({"status": "info", "message": str(item)}).encode('utf-8') + b"\n"
-                    time.sleep(0.01)
+                    # No artificial sleep — back-pressure on the WS socket
+                    # is the right flow-control mechanism; the 10ms sleep was
+                    # adding 2s/200 events of pure latency.
 
         except Exception as e:
             error_msg = str(e)
@@ -526,7 +536,9 @@ def disconnect_session(request: DisconnectRequest, x_temp_auth: str = Header(def
                 )
                 for item in iterator:
                     yield json.dumps(item).encode('utf-8') + b"\n"
-                    time.sleep(0.01)
+                    # No artificial sleep — back-pressure on the WS socket
+                    # is the right flow-control mechanism; the 10ms sleep was
+                    # adding 2s/200 events of pure latency.
 
         except Exception as e:
             error_msg = str(e)
@@ -556,7 +568,9 @@ def power_action(request: PowerRequest, x_temp_auth: str = Header(default=None))
                                 yield json.dumps(item).encode('utf-8') + b"\n"
                         else:
                                 yield json.dumps({"status": "info", "message": str(item)}).encode('utf-8') + b"\n"
-                        time.sleep(0.01)
+                        # No artificial sleep — back-pressure on the WS socket
+                    # is the right flow-control mechanism; the 10ms sleep was
+                    # adding 2s/200 events of pure latency.
             except Exception as e:
                 error_msg = str(e)
                 if "TRUSTED_HOSTS_REQUIRED" in error_msg:
@@ -586,7 +600,9 @@ def power_action(request: PowerRequest, x_temp_auth: str = Header(default=None))
                                 yield json.dumps(item).encode('utf-8') + b"\n"
                         else:
                                 yield json.dumps({"status": "info", "message": str(item)}).encode('utf-8') + b"\n"
-                        time.sleep(0.01)
+                        # No artificial sleep — back-pressure on the WS socket
+                    # is the right flow-control mechanism; the 10ms sleep was
+                    # adding 2s/200 events of pure latency.
             except Exception as e:
                 error_msg = str(e)
                 if "TRUSTED_HOSTS_REQUIRED" in error_msg:
@@ -616,7 +632,9 @@ def power_action(request: PowerRequest, x_temp_auth: str = Header(default=None))
                             yield json.dumps(item).encode('utf-8') + b"\n"
                     else:
                             yield json.dumps({"status": "info", "message": str(item)}).encode('utf-8') + b"\n"
-                    time.sleep(0.01)
+                    # No artificial sleep — back-pressure on the WS socket
+                    # is the right flow-control mechanism; the 10ms sleep was
+                    # adding 2s/200 events of pure latency.
                 
         except Exception as e:
             error_msg = str(e)
@@ -641,7 +659,6 @@ def configure_trusted_hosts():
     success = WinRMHandler.set_trusted_hosts("*")
     if not success:
         raise HTTPException(status_code=500, detail="Falha ao configurar TrustedHosts.")
-    return {"success": True}
     return {"success": True}
 
 @router.post("/test-connection")

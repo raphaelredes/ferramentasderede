@@ -9,33 +9,41 @@ def get_mac_from_arp(ip_address=None):
     Se ip_address for None, retorna uma lista de dicionários {'ip': ip, 'mac': mac} com toda a tabela ARP.
     """
     try:
+        # Previously the `subprocess.run` call lived INSIDE the `else:` (Linux)
+        # branch — Windows fell through with `result` unbound and `output =
+        # result.stdout` raised NameError. Hoisted out so both OS branches
+        # actually execute the command.
         if os.name == 'nt':
-            # No Windows, arp -a exibe a tabela
-            if ip_address:
-                cmd = ["arp", "-a", ip_address]
-            else:
-                cmd = ["arp", "-a"]
+            cmd = ["arp", "-a", ip_address] if ip_address else ["arp", "-a"]
             encoding = 'cp850'
         else:
-            if ip_address:
-                cmd = ["arp", "-n", ip_address]
-            else:
-                cmd = ["arp", "-n"]
+            cmd = ["arp", "-n", ip_address] if ip_address else ["arp", "-n"]
             encoding = 'utf-8'
 
-            # Executa o comando arp
-            result = subprocess.run(cmd, capture_output=True, text=True, encoding=encoding, errors='replace', creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0, timeout=2)
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding=encoding,
+            errors='replace',
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0,
+            timeout=2,
+        )
         output = result.stdout
         
         if ip_address:
-            # Comportamento original: retorna apenas o MAC do IP específico
+            # Comportamento original: retorna apenas o MAC do IP específico.
+            # Se a busca por IP específico não retornar nada, cair no fallback
+            # de tabela completa abaixo — `arp -a IP` às vezes vem vazio em
+            # Windows mesmo com o IP presente na tabela geral. O `return`
+            # original tornava o fallback inalcançável.
             mac_regex = r"([0-9a-fA-F]{2}[:-]){5}([0-9a-fA-F]{2})"
             matches = re.finditer(mac_regex, output)
             for match in matches:
                 mac = match.group(0).replace('-', ':').upper()
                 if mac != "FF:FF:FF:FF:FF:FF":
                     return mac
-            return None
+            # Falhou na busca específica — vai para o fallback de tabela cheia.
         else:
             # Novo comportamento: retorna lista de entradas
             entries = []

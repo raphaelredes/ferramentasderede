@@ -113,7 +113,6 @@ def check_host_status_detailed(ip_address, count=1, is_wan=False, resolve_names=
                     'packet_loss': int(host.packet_loss * host.packets_sent), # icmplib retorna float 0.0-1.0
                     'packet_loss_pct': host.packet_loss * 100,
                     'total_packets': host.packets_sent,
-                    'total_packets': host.packets_sent,
                     'resolved_hostname': None,
                     'domain': None
                 }
@@ -185,7 +184,6 @@ def check_host_status_detailed(ip_address, count=1, is_wan=False, resolve_names=
                 'packet_loss': total_lost,
                 'packet_loss_pct': packet_loss_pct,
                 'total_packets': total_sent,
-                'total_packets': total_sent,
                 'resolved_hostname': None,
                 'domain': None
             }
@@ -220,11 +218,10 @@ def check_host_status_detailed(ip_address, count=1, is_wan=False, resolve_names=
             )
         except subprocess.TimeoutExpired:
             return {
-                'online': False, 
+                'online': False,
                 'latency': None,
                 'packet_loss': count,
                 'packet_loss_pct': 100,
-                'total_packets': count,
                 'total_packets': count,
                 'resolved_hostname': None,
                 'domain': None
@@ -304,7 +301,12 @@ def check_host_status_detailed(ip_address, count=1, is_wan=False, resolve_names=
         if not online and count == 1 and not fast_mode:
             if check_arp_table(ip_address):
                 online = True
-                latency = 0 # Latência desprezível na rede local
+                # `None` instead of `0`: ARP says "this MAC was on the wire
+                # recently" but doesn't measure RTT. Returning 0 made the UI
+                # paint a healthy "0 ms" badge for hosts that hadn't actually
+                # replied — misleading. None is rendered as "—" by the front-
+                # end.
+                latency = None
 
     # Fallback 3: Tentar via PowerShell (Test-Connection) se tudo falhar
         # REMOVIDO: PowerShell é muito lento (3-5s) e causa atraso no monitoramento em tempo real.
@@ -316,11 +318,10 @@ def check_host_status_detailed(ip_address, count=1, is_wan=False, resolve_names=
         #         latency = ps_latency
         
         return {
-            'online': online, 
+            'online': online,
             'latency': latency,
             'packet_loss': packet_loss,
             'packet_loss_pct': packet_loss_pct,
-            'total_packets': total_packets,
             'total_packets': total_packets,
             'resolved_hostname': resolved_hostname,
             'domain': domain
@@ -464,8 +465,18 @@ def generate_ping_statistics_from_output(output_lines, target):
                 if time_match:
                     response_times.append(int(time_match.group(1)))
                     
-            # Contar timeouts/perdas
-            elif "tempo esgotado" in line or "timeout" in line or "time=" in line and "ms" not in line or "Esgotado o tempo limite" in line or "Request timed out" in line:
+            # Contar timeouts/perdas. Antes a expressão era
+            # `"timeout" in line or "time=" in line and "ms" not in line ...`
+            # — sem parênteses, `and` precede `or`, então o agrupamento real
+            # era `(timeout) OR (time= AND NOT ms) OR ...`, perdendo casos de
+            # "tempo esgotado" + "Esgotado..." em algumas combinações.
+            elif (
+                "tempo esgotado" in line
+                or "timeout" in line
+                or ("time=" in line and "ms" not in line)
+                or "Esgotado o tempo limite" in line
+                or "Request timed out" in line
+            ):
                 lost_count += 1
                 
         # Calcular estatísticas

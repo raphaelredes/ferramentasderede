@@ -31,11 +31,25 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         return () => unsubscribe?.();
     }, [addToast]);
 
+    // Cap on the queue so a long monitoring session with the window
+    // minimized doesn't accumulate hundreds of "host online"/"offline" toasts
+    // that all fire at once on refocus. 20 entries is enough to communicate
+    // "something happened while you were away" without spam.
+    const TOAST_QUEUE_CAP = 20;
+
     const showToast = useCallback((message: string, type: ToastType) => {
         if (isWindowFocused) {
             addToast(message, type);
         } else {
+            // Collapse consecutive identical toasts so e.g. 50 ping flaps
+            // collapse to a single entry.
+            const last = toastQueue.current[toastQueue.current.length - 1];
+            if (last && last.message === message && last.type === type) return;
             toastQueue.current.push({ message, type });
+            if (toastQueue.current.length > TOAST_QUEUE_CAP) {
+                // Drop oldest — newest entries are more relevant on refocus.
+                toastQueue.current.splice(0, toastQueue.current.length - TOAST_QUEUE_CAP);
+            }
         }
     }, [isWindowFocused, addToast]);
 

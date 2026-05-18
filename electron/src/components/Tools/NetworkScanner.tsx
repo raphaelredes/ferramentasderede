@@ -37,7 +37,8 @@ export const NetworkScanner: React.FC<NetworkScannerProps> = ({ onAddHost, exist
         closeScanSession,
         updateScanSession,
         setActiveSessionId,
-        runScanSession
+        runScanSession,
+        stopTool
     } = useTools();
 
     const { networks } = useNetworks();
@@ -95,8 +96,15 @@ export const NetworkScanner: React.FC<NetworkScannerProps> = ({ onAddHost, exist
         closeScanSession(id);
     };
 
-    const startScan = (sessionId: string) => {
-        runScanSession(sessionId);
+    const toggleScan = (session: { id: string; isRunning: boolean }) => {
+        // Explicit branch instead of relying on runScanSession's internal
+        // re-entry detection. A double click here used to be able to spawn
+        // a second pass before the first stop took effect.
+        if (session.isRunning) {
+            stopTool('scanner', session.id);
+        } else {
+            runScanSession(session.id);
+        }
     };
 
     const getVendorIcon = (vendor: string, hostname: string) => {
@@ -123,26 +131,34 @@ export const NetworkScanner: React.FC<NetworkScannerProps> = ({ onAddHost, exist
         return [...hosts].sort((a, b) => {
             let comparison = 0;
             switch (sortBy) {
-                case 'ip':
-                    const ipA = a.ip.split('.').map(Number);
-                    const ipB = b.ip.split('.').map(Number);
+                case 'ip': {
+                    // Coalesce ip to a known-good value before split — defensive
+                    // against the same null-IP corner that crashed host sort
+                    // elsewhere.
+                    const ipA = (a.ip ?? '0.0.0.0').split('.').map(Number);
+                    const ipB = (b.ip ?? '0.0.0.0').split('.').map(Number);
                     for (let i = 0; i < 4; i++) {
-                        if (ipA[i] !== ipB[i]) {
-                            comparison = ipA[i] - ipB[i];
+                        const av = Number.isFinite(ipA[i]) ? ipA[i] : 0;
+                        const bv = Number.isFinite(ipB[i]) ? ipB[i] : 0;
+                        if (av !== bv) {
+                            comparison = av - bv;
                             break;
                         }
                     }
                     break;
-                case 'name':
-                    const nameA = (a.hostname || a.ip).toLowerCase();
-                    const nameB = (b.hostname || b.ip).toLowerCase();
+                }
+                case 'name': {
+                    const nameA = (a.hostname || a.ip || '').toLowerCase();
+                    const nameB = (b.hostname || b.ip || '').toLowerCase();
                     comparison = nameA.localeCompare(nameB);
                     break;
-                case 'vendor':
+                }
+                case 'vendor': {
                     const vendorA = (a.vendor || '').toLowerCase();
                     const vendorB = (b.vendor || '').toLowerCase();
                     comparison = vendorA.localeCompare(vendorB);
                     break;
+                }
             }
             return sortDirection === 'asc' ? comparison : -comparison;
         });
@@ -262,7 +278,7 @@ export const NetworkScanner: React.FC<NetworkScannerProps> = ({ onAddHost, exist
                                 placeholder="Ex: 192.168.1.0/24"
                                 className="bg-transparent border-none outline-none text-zinc-200 text-sm w-full placeholder-zinc-600"
                                 disabled={activeSession.isRunning}
-                                onKeyDown={(e) => e.key === 'Enter' && startScan(activeSession.id)}
+                                onKeyDown={(e) => e.key === 'Enter' && !activeSession.isRunning && toggleScan(activeSession)}
                             />
                         </div>
 
@@ -296,7 +312,7 @@ export const NetworkScanner: React.FC<NetworkScannerProps> = ({ onAddHost, exist
                                     <ArrowUpDown className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" size={16} />
                                     <select
                                         value={sortBy}
-                                        onChange={(e) => setSortBy(e.target.value as any)}
+                                        onChange={(e) => setSortBy(e.target.value as 'ip' | 'name' | 'vendor')}
                                         className="bg-zinc-900/50 border border-zinc-800 text-zinc-300 pl-9 pr-8 py-2 rounded-lg focus:outline-none focus:border-blue-500/50 appearance-none cursor-pointer hover:bg-zinc-800/50 transition-colors text-sm"
                                     >
                                         <option value="ip">IP</option>
@@ -327,7 +343,7 @@ export const NetworkScanner: React.FC<NetworkScannerProps> = ({ onAddHost, exist
                         </button>
 
                         <button
-                            onClick={() => startScan(activeSession.id)}
+                            onClick={() => toggleScan(activeSession)}
                             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all border ${activeSession.isRunning
                                 ? 'bg-red-500/10 text-red-400 border-red-500/20 hover:bg-red-500/20'
                                 : 'bg-zinc-800 hover:bg-zinc-700 text-blue-400 border-blue-900/30 hover:border-blue-500/50'

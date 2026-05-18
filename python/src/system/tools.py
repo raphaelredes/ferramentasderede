@@ -116,8 +116,11 @@ class SystemTools:
             lambda cmd: cmd.cancel_shutdown_command())
 
     def manage_remote_service(self, target_ip, username, password, service_name, action, startup_type=None):
+         # RemoteCommands.manage_service is the actual method name — the old
+         # `cmd.manage_remote_service` reference would AttributeError at runtime,
+         # silently breaking /system/services/manage.
          return self._stream_winrm_command(target_ip, username, password,
-            lambda cmd: cmd.manage_remote_service(service_name, action, startup_type))
+            lambda cmd: cmd.manage_service(service_name, action, startup_type))
 
     def manage_spooler(self, target_ip, username, password, action):
          return self._stream_winrm_command(target_ip, username, password,

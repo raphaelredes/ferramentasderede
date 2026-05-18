@@ -1,10 +1,30 @@
 import socket
+import re as _re
 import concurrent.futures
 import time
 from src.config.settings import TOP_60_PORTS, ALL_PORTS, port_number_to_name
 
+
+def _safe_scan_target(value: str) -> bool:
+    """IPv4 / hostname allowlist for port-scan targets. Same shape as
+    `_is_safe_remote_target` in the route layer — defense in depth here so a
+    future caller that bypasses the route gate still can't ask the scanner to
+    open 65k sockets against an attacker-controlled hostname."""
+    if not isinstance(value, str) or not value or len(value) > 253:
+        return False
+    if _re.fullmatch(r"(?:\d{1,3}\.){3}\d{1,3}", value):
+        try:
+            return all(0 <= int(o) <= 255 for o in value.split("."))
+        except ValueError:
+            return False
+    return bool(_re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", value))
+
+
 def scan_top_ports(target_ip):
     """Escaneia as portas mais comuns usando threads paralelas para máxima velocidade."""
+    if not _safe_scan_target(target_ip):
+        yield "Endereço de destino inválido.\n"
+        return
     open_ports = []
     yield f"Iniciando varredura das portas mais comuns em {target_ip}...\n"
     
@@ -46,7 +66,10 @@ def scan_top_ports(target_ip):
 
 def scan_all_ports(target_ip):
     """Escaneia todas as portas TCP (1-65535) usando threads paralelas para máxima velocidade."""
-    
+    if not _safe_scan_target(target_ip):
+        yield "Endereço de destino inválido.\n"
+        return
+
     open_ports = []
     scanned_count = 0
     total_ports = len(ALL_PORTS)
@@ -68,8 +91,10 @@ def scan_all_ports(target_ip):
             # silencing here keeps the hot loop fast (logging 65535 misses would flood).
             return port, False
     
-    # Usar ThreadPoolExecutor para escaneamento paralelo
-    max_workers = min(200, total_ports)  # Aumentado para 200 threads simultâneas
+    # Usar ThreadPoolExecutor para escaneamento paralelo. 100 sockets em vôo
+    # é o teto seguro no Windows (FD limit padrão é 512, mas o conn-track do
+    # firewall corporativo derruba a velocidade real bem antes disso).
+    max_workers = min(100, total_ports)
     
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         # Submeter todas as portas para escaneamento

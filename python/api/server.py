@@ -6,6 +6,22 @@ import sys
 import os
 from contextlib import asynccontextmanager
 
+# Configure the root logger eagerly. Without this, `logging.info(...)` calls
+# in the route layer are silently dropped (root level defaults to WARNING).
+# Idempotent: if a downstream tool already configured the root, basicConfig
+# is a no-op.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+
+# Uvicorn configures its own handlers for these loggers; with `propagate=True`
+# (default) each log line would also fire the root handler installed by
+# basicConfig, double-printing every uvicorn message. Cut the propagation so
+# uvicorn's output stays single-emit.
+for _uvicorn_logger_name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+    logging.getLogger(_uvicorn_logger_name).propagate = False
+
 # Adicionar diretório pai ao path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -91,16 +107,16 @@ async def lifespan(app: FastAPI):
         # Run in thread to not block startup
         await asyncio.to_thread(backup_manager.run_daily_backup_check)
     except Exception as e:
-        print(f"Warning: Backup check failed: {e}")
+        logging.warning(f"Backup check failed: {e}")
 
     # Carregar hosts e iniciar monitoramento
     hosts = get_hosts_list()
     hosts_dicts = [h.model_dump() for h in hosts]
     host_monitor.start_monitoring(hosts_dicts, on_update_callback=handle_host_update)
-    print("Monitoramento de hosts iniciado.")
+    logging.info("Monitoramento de hosts iniciado.")
     yield
     host_monitor.stop_monitoring()
-    print("Monitoramento de hosts parado.")
+    logging.info("Monitoramento de hosts parado.")
 
 app = FastAPI(title="Network Tools API", lifespan=lifespan)
 
@@ -119,14 +135,19 @@ _default_origins = [
     f"http://localhost:{_webview_port}",
 ]
 _cors_env = os.environ.get("NT_CORS_ORIGINS", "").strip()
-_allowed_origins = [o.strip() for o in _cors_env.split(",") if o.strip()] if _cors_env else _default_origins
+ALLOWED_ORIGINS = [o.strip() for o in _cors_env.split(",") if o.strip()] if _cors_env else _default_origins
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_allowed_origins,
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    # Tightened from "*" to the actual verbs and headers we use. Wildcards
+    # combined with allow_credentials=True are a defense-in-depth smell: any
+    # future compromise of one of the allowed origins (the static webview port
+    # has no auth and could be replaced by a malicious local process) gets to
+    # speak any verb with any header. Keep the surface narrow.
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "X-Temp-Auth", "Authorization"],
 )
 
 # Incluir Routers
