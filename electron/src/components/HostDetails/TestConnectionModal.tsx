@@ -3,6 +3,7 @@ import { X, Terminal, CheckCircle, AlertCircle, Loader2 } from 'lucide-react';
 import { API_BASE } from '../../config/api';
 import { probeHost } from '../../utils/hostProbe';
 import { resolveTeamViewerId } from '../../utils/teamviewer';
+import { useEscapeToClose } from '../../hooks/useEscapeToClose';
 
 interface TestConnectionModalProps {
     isOpen: boolean;
@@ -74,18 +75,25 @@ export const TestConnectionModal: React.FC<TestConnectionModalProps> = ({ isOpen
         }
     };
 
+    useEscapeToClose(isOpen, onClose);
     if (!isOpen) return null;
 
     return (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-            <div className="bg-zinc-900 border border-zinc-800 rounded-xl w-full max-w-3xl flex flex-col max-h-[80vh] shadow-2xl">
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={onClose} role="presentation">
+            <div
+                className="bg-zinc-900 border border-zinc-800 rounded-xl w-full max-w-3xl flex flex-col max-h-[80vh] shadow-2xl"
+                onClick={e => e.stopPropagation()}
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="testconn-title"
+            >
                 <div className="flex items-center justify-between p-4 border-b border-zinc-800">
-                    <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-                        <Terminal size={20} className="text-blue-400" />
+                    <h2 id="testconn-title" className="text-lg font-semibold text-white flex items-center gap-2">
+                        <Terminal size={20} className="text-blue-400" aria-hidden="true" />
                         Teste de Conexão WinRM
                     </h2>
-                    <button onClick={onClose} className="text-zinc-400 hover:text-white transition-colors">
-                        <X size={20} />
+                    <button onClick={onClose} aria-label="Fechar" className="text-zinc-400 hover:text-white transition-colors">
+                        <X size={20} aria-hidden="true" />
                     </button>
                 </div>
 

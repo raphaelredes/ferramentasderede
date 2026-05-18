@@ -4,6 +4,7 @@ import { Host } from '../../types';
 import { useToast } from '../../contexts/ToastContext';
 import { resolveTeamViewerId, getDefaultCredentialIdIfAvailable } from '../../utils/teamviewer';
 import { probeHost } from '../../utils/hostProbe';
+import { useEscapeToClose } from '../../hooks/useEscapeToClose';
 
 interface RemoteAccessModalProps {
     isOpen: boolean;
@@ -19,6 +20,7 @@ type TvFetchState =
     | { kind: 'failed'; message: string };          // technical failure (TrustedHosts, TV not installed, etc.) — offer retry
 
 export const RemoteAccessModal: React.FC<RemoteAccessModalProps> = ({ isOpen, onClose, host }) => {
+    useEscapeToClose(isOpen, onClose);
     const { showToast } = useToast();
     const [localDomain, setLocalDomain] = React.useState<string>('');
     const [tvState, setTvState] = React.useState<TvFetchState>(() =>
@@ -159,14 +161,20 @@ export const RemoteAccessModal: React.FC<RemoteAccessModalProps> = ({ isOpen, on
     };
 
     return (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={onClose}>
-            <div className="bg-zinc-950 border border-zinc-800 rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={onClose} role="presentation">
+            <div
+                className="bg-zinc-950 border border-zinc-800 rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200"
+                onClick={e => e.stopPropagation()}
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="remoteaccess-title"
+            >
                 {/* Header */}
                 <div className="flex items-center justify-between p-6 border-b border-zinc-800 bg-zinc-900/30">
                     <div>
-                        <h2 className="text-xl font-semibold text-white flex items-center gap-3">
+                        <h2 id="remoteaccess-title" className="text-xl font-semibold text-white flex items-center gap-3">
                             <div className="p-2 bg-blue-500/10 rounded-lg">
-                                <Monitor size={24} className="text-blue-400" />
+                                <Monitor size={24} className="text-blue-400" aria-hidden="true" />
                             </div>
                             Acesso Remoto
                         </h2>

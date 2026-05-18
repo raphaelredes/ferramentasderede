@@ -69,10 +69,16 @@ export function Tools() {
     }, [pendingAction, setPendingAction, processedActionIds, markActionAsProcessed]);
 
     useEffect(() => {
+        // Best-effort: pre-load host list so the scanner can mark "already
+        // added" without flicker. Failure here just means new scan results
+        // won't be deduplicated against existing hosts — graceful degradation,
+        // so no toast. Intentionally silent.
         fetch(`${API_BASE}/hosts`)
             .then(res => res.json())
             .then(setExistingHosts)
-            .catch(console.error);
+            .catch(err => {
+                console.debug('Tools: pre-load /hosts failed (autocomplete dedupe will degrade gracefully):', err);
+            });
     }, []);
 
     const handleAddHost = async (host: Host) => {

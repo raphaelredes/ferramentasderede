@@ -188,8 +188,9 @@ export function NetworksSettings({ networks, onChange }: Props) {
                                         onClick={() => removeNetwork(net.id)}
                                         className="p-2 text-zinc-500 hover:text-red-400 transition-colors"
                                         title="Remover"
+                                        aria-label={`Remover rede ${net.name || net.cidr}`}
                                     >
-                                        <Trash2 size={14} />
+                                        <Trash2 size={14} aria-hidden="true" />
                                     </button>
                                 </div>
 

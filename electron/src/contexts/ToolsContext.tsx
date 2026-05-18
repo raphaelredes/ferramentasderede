@@ -125,9 +125,14 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     // (operator can clear), but every appended line triggers a render that
     // re-concats the full array. 2000 lines is ~33 minutes of 1Hz ping output,
     // well past anyone's debugging horizon.
+    //
+    // When the cap fires, prepend a marker line so the operator knows older
+    // entries were dropped. The marker itself gets dropped on the next
+    // overflow — that's fine, a fresh marker re-appears.
     const OUTPUT_CAP = 2000;
+    const TRIM_MARKER = '[... linhas mais antigas removidas — buffer limitado a 2000 ...]';
     const trimOutput = (arr: string[]) =>
-        arr.length > OUTPUT_CAP ? arr.slice(-OUTPUT_CAP) : arr;
+        arr.length > OUTPUT_CAP ? [TRIM_MARKER, ...arr.slice(-(OUTPUT_CAP - 1))] : arr;
 
     // On provider unmount (Electron close, HMR reload), abort every in-flight
     // fetch so their `.then` chains don't fire setState on a dead component.

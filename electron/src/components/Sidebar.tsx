@@ -123,24 +123,26 @@ export function Sidebar() {
                     <button
                         onClick={() => setIsAboutModalOpen(true)}
                         title="Sobre"
+                        aria-label="Sobre"
                         className={twMerge(
                             "flex-1 flex items-center justify-center gap-2 px-2 py-3 rounded-lg transition-colors text-sm font-medium border border-transparent relative text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200",
                             isCollapsed && "w-full"
                         )}
                     >
-                        <Info size={20} className="shrink-0" />
+                        <Info size={20} className="shrink-0" aria-hidden="true" />
                         {!isCollapsed && <span>Sobre</span>}
                     </button>
 
                     <button
                         onClick={() => setIsPixModalOpen(true)}
                         title="Faça um PIX"
+                        aria-label="Faça um PIX"
                         className={twMerge(
                             "flex-1 flex items-center justify-center gap-2 px-2 py-3 rounded-lg transition-colors text-sm font-medium border border-transparent relative text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200",
                             isCollapsed && "w-full"
                         )}
                     >
-                        <QrCode size={20} className="shrink-0" />
+                        <QrCode size={20} className="shrink-0" aria-hidden="true" />
                         {!isCollapsed && <span>PIX</span>}
                     </button>
                 </div>

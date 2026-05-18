@@ -60,7 +60,10 @@ export function RemoteSettings({ settings, onUpdateSettings, isChanged, setConfi
         fetch(`${API_BASE}/settings/trusted-hosts`)
             .then(res => res.json())
             .then(data => setTrustedHosts(data))
-            .catch(err => console.error("Failed to fetch trusted hosts", err));
+            .catch(err => {
+                console.error("Failed to fetch trusted hosts", err);
+                showToast('Não foi possível carregar hosts confiáveis.', 'error');
+            });
     };
 
     const handleAddTrustedHost = async (hostToAdd?: string) => {
@@ -139,14 +142,20 @@ export function RemoteSettings({ settings, onUpdateSettings, isChanged, setConfi
         fetch(`${API_BASE}/security/status`)
             .then(res => res.json())
             .then(data => setVaultStatus(data))
-            .catch(err => console.error("Failed to fetch vault status", err));
+            .catch(err => {
+                console.error("Failed to fetch vault status", err);
+                showToast('Não foi possível consultar o status do cofre.', 'error');
+            });
     };
 
     const fetchCredentials = () => {
         fetch(`${API_BASE}/security/credentials`)
             .then(res => res.json())
             .then(data => setCredentials(data))
-            .catch(err => console.error("Failed to fetch credentials", err));
+            .catch(err => {
+                console.error("Failed to fetch credentials", err);
+                showToast('Não foi possível carregar credenciais do cofre.', 'error');
+            });
     };
 
     const handleUnlockVault = async () => {
@@ -165,6 +174,7 @@ export function RemoteSettings({ settings, onUpdateSettings, isChanged, setConfi
             }
         } catch (e) {
             console.error(e);
+            showToast('Erro de conexão ao desbloquear cofre.', 'error');
         }
     };
 
@@ -179,9 +189,13 @@ export function RemoteSettings({ settings, onUpdateSettings, isChanged, setConfi
                 fetchCredentials();
                 setIsAddingCred(false);
                 setNewCred({ name: '', username: '', password: '', description: '' });
+                showToast('Credencial adicionada.', 'success');
+            } else {
+                showToast('Erro ao adicionar credencial.', 'error');
             }
         } catch (e) {
             console.error(e);
+            showToast('Erro de conexão ao adicionar credencial.', 'error');
         }
     };
 
