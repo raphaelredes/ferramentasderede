@@ -17,7 +17,11 @@ export function AddHostModal({ isOpen, onClose, onAdd, isAdding, existingHosts, 
     const [group, setGroup] = useState('');
     const [mac, setMac] = useState('');
     const [portsStr, setPortsStr] = useState('');
-    const [error, setError] = useState<string | null>(null);
+    // Field-level errors so screen readers (and sighted users) can tell which
+    // input was rejected. `generalError` is for the duplicate-host banner.
+    const [addressError, setAddressError] = useState<string | null>(null);
+    const [macError, setMacError] = useState<string | null>(null);
+    const [generalError, setGeneralError] = useState<string | null>(null);
 
     const [showSuggestions, setShowSuggestions] = useState(false);
     const wrapperRef = useRef<HTMLDivElement>(null);
@@ -62,15 +66,17 @@ export function AddHostModal({ isOpen, onClose, onAdd, isAdding, existingHosts, 
         // Block re-entry: a fast double-Enter could fire before the parent
         // sets isAdding=true, so guard locally too.
         if (isAdding) return;
-        setError(null);
+        setAddressError(null);
+        setMacError(null);
+        setGeneralError(null);
 
         const cleanAddress = address.trim();
         if (!isValidAddress(cleanAddress)) {
-            setError('Endereço inválido. Use um IPv4 ou hostname (letras, dígitos, ponto, hífen).');
+            setAddressError('Endereço inválido. Use IPv4 ou hostname (letras, dígitos, ponto, hífen).');
             return;
         }
         if (!isValidMac(mac)) {
-            setError('MAC inválido. Use o formato 00:11:22:33:44:55 (ou deixe vazio).');
+            setMacError('MAC inválido. Use o formato 00:11:22:33:44:55 (ou deixe vazio).');
             return;
         }
 
@@ -82,7 +88,7 @@ export function AddHostModal({ isOpen, onClose, onAdd, isAdding, existingHosts, 
         );
 
         if (isDuplicate) {
-            setError('Este host já existe no painel (IP ou Hostname duplicado).');
+            setGeneralError('Este host já existe no painel (IP ou Hostname duplicado).');
             return;
         }
 
@@ -96,7 +102,9 @@ export function AddHostModal({ isOpen, onClose, onAdd, isAdding, existingHosts, 
         setGroup('');
         setMac('');
         setPortsStr('');
-        setError(null);
+        setAddressError(null);
+        setMacError(null);
+        setGeneralError(null);
     };
 
     const filteredGroups = existingGroups.filter(g =>
@@ -139,17 +147,18 @@ export function AddHostModal({ isOpen, onClose, onAdd, isAdding, existingHosts, 
                     </button>
                 </div>
 
-                {error && (
-                    <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg flex items-center gap-2 text-red-400 text-sm">
-                        <AlertCircle size={16} />
-                        {error}
+                {generalError && (
+                    <div role="alert" className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg flex items-center gap-2 text-red-400 text-sm">
+                        <AlertCircle size={16} aria-hidden="true" />
+                        {generalError}
                     </div>
                 )}
 
-                <form onSubmit={handleSubmit} className="space-y-4">
+                <form onSubmit={handleSubmit} className="space-y-4" noValidate>
                     <div>
-                        <label className="block text-sm font-medium text-zinc-400 mb-1">Apelido</label>
+                        <label htmlFor="addhost-name" className="block text-sm font-medium text-zinc-400 mb-1">Apelido</label>
                         <input
+                            id="addhost-name"
                             type="text"
                             value={name}
                             onChange={e => setName(e.target.value)}
@@ -158,28 +167,48 @@ export function AddHostModal({ isOpen, onClose, onAdd, isAdding, existingHosts, 
                         />
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-zinc-400 mb-1">Endereço IP / Hostname</label>
+                        <label htmlFor="addhost-address" className="block text-sm font-medium text-zinc-400 mb-1">Endereço IP / Hostname</label>
                         <input
+                            id="addhost-address"
                             type="text"
                             required
                             value={address}
                             onChange={e => {
                                 setAddress(e.target.value);
-                                setError(null);
+                                setAddressError(null);
+                                setGeneralError(null);
                             }}
-                            className={`w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 focus:outline-none focus:border-blue-500 placeholder:text-zinc-500 ${address ? 'text-white' : 'text-zinc-500'}`}
+                            aria-invalid={!!addressError}
+                            aria-describedby={addressError ? 'addhost-address-error' : 'addhost-address-hint'}
+                            className={`w-full bg-zinc-950 border rounded-lg px-3 py-2 focus:outline-none focus:border-blue-500 placeholder:text-zinc-500 ${address ? 'text-white' : 'text-zinc-500'} ${addressError ? 'border-red-500/60' : 'border-zinc-700'}`}
                             placeholder="ex: 192.168.1.10"
                         />
+                        {addressError ? (
+                            <p id="addhost-address-error" role="alert" className="mt-1 text-xs text-red-400">{addressError}</p>
+                        ) : (
+                            <p id="addhost-address-hint" className="mt-1 text-xs text-zinc-600">IPv4 ou hostname (letras, dígitos, ponto, hífen).</p>
+                        )}
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-zinc-400 mb-1">Endereço MAC (Para WoL)</label>
+                        <label htmlFor="addhost-mac" className="block text-sm font-medium text-zinc-400 mb-1">Endereço MAC (Para WoL)</label>
                         <input
+                            id="addhost-mac"
                             type="text"
                             value={mac}
-                            onChange={e => setMac(e.target.value)}
-                            className={`w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 focus:outline-none focus:border-blue-500 placeholder:text-zinc-500 ${mac ? 'text-white' : 'text-zinc-500'}`}
+                            onChange={e => {
+                                setMac(e.target.value);
+                                setMacError(null);
+                            }}
+                            aria-invalid={!!macError}
+                            aria-describedby={macError ? 'addhost-mac-error' : 'addhost-mac-hint'}
+                            className={`w-full bg-zinc-950 border rounded-lg px-3 py-2 focus:outline-none focus:border-blue-500 placeholder:text-zinc-500 ${mac ? 'text-white' : 'text-zinc-500'} ${macError ? 'border-red-500/60' : 'border-zinc-700'}`}
                             placeholder="ex: 00:11:22:33:44:55"
                         />
+                        {macError ? (
+                            <p id="addhost-mac-error" role="alert" className="mt-1 text-xs text-red-400">{macError}</p>
+                        ) : (
+                            <p id="addhost-mac-hint" className="mt-1 text-xs text-zinc-600">Opcional. Formato 6 hex pares (`:` ou `-`).</p>
+                        )}
                     </div>
                     <div className="relative" ref={wrapperRef}>
                         <label className="block text-sm font-medium text-zinc-400 mb-1">Grupo (Opcional)</label>

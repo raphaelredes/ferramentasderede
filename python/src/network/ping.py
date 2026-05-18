@@ -395,14 +395,33 @@ def continuous_ping(target, packet_size=32, source_ip=None):
 
     encoding = 'cp850' if os.name == 'nt' else 'utf-8'
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding=encoding, errors='replace', creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
-    
+
     yield "", process
-    try: # Adicionado bloco try para garantir a limpeza
+    try:
         for line in iter(process.stdout.readline, ''):
             yield line, process
-    finally: # Garante que estas linhas sempre serão executadas
-        process.stdout.close()
-        process.wait()
+    finally:
+        # `ping -t` never terminates on its own. When the consumer closes the
+        # generator (StreamingResponse client disconnect, GC), Python sends
+        # GeneratorExit to this `finally`. The previous code called
+        # process.wait() with no terminate first → blocked forever, leaving
+        # an orphan ping.exe per client disconnect.
+        try:
+            process.stdout.close()
+        except Exception:
+            pass
+        try:
+            process.terminate()
+        except Exception:
+            pass
+        try:
+            process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            try:
+                process.kill()
+                process.wait(timeout=2)
+            except Exception:
+                pass
 
 def get_ping_statistics(target):
     """Executa um ping rápido para obter estatísticas."""

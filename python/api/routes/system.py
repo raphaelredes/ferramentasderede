@@ -1,15 +1,36 @@
 from fastapi import APIRouter, HTTPException, Header
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import Optional
 import json
 import asyncio
+import re
 import time
 import sys
 import os
 import contextlib
 import logging
 import io
+
+
+# Strict allowlist for target_ip. Accepts IPv4 literal OR a clean DNS
+# label/FQDN (letters, digits, dot, hyphen, leading alphanumeric, max 253).
+# Used by every /system/* Pydantic request — `target_ip` flows verbatim into
+# PowerShell templates (e.g. get_system_info.ps1: `__TARGET_IP__`) via
+# str.replace, so a value containing `$(...)` or `"` would interpolate into
+# the script. Validating the *shape* here closes that path without trusting
+# the PS author to remember to escape.
+_TARGET_IP_RE = re.compile(r"^(?:(?:\d{1,3}\.){3}\d{1,3}|[A-Za-z0-9][A-Za-z0-9._\-]{0,252})$")
+
+
+def _validate_target_ip(value: str) -> str:
+    if not isinstance(value, str) or not _TARGET_IP_RE.match(value):
+        raise ValueError(f"target_ip inválido: {value!r}")
+    # Extra octet check for IPv4 form
+    if re.fullmatch(r"(?:\d{1,3}\.){3}\d{1,3}", value):
+        if not all(0 <= int(o) <= 255 for o in value.split(".")):
+            raise ValueError(f"target_ip inválido (octeto fora de [0,255]): {value!r}")
+    return value
 
 # Adicionar diretório pai ao path para importar módulos do src
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -35,6 +56,11 @@ class SystemInfoRequest(BaseModel):
     # credential without ever exposing the password in the renderer.
     credential_id: Optional[str] = None
 
+    @field_validator("target_ip")
+    @classmethod
+    def _target_ip_must_be_safe(cls, v: str) -> str:
+        return _validate_target_ip(v)
+
 
 def _resolve_credentials(request: SystemInfoRequest):
     """Resolve effective (username, password) for a request, honoring credential_id.
@@ -58,6 +84,11 @@ class ServicesRequest(BaseModel):
     username: str
     password: str
 
+    @field_validator("target_ip")
+    @classmethod
+    def _target_ip_must_be_safe(cls, v: str) -> str:
+        return _validate_target_ip(v)
+
 class ServiceManageRequest(BaseModel):
     target_ip: str
     username: str
@@ -65,6 +96,11 @@ class ServiceManageRequest(BaseModel):
     service_name: str
     action: str # "start", "stop", "restart", "pause", "set_startup"
     startup_type: str | None = None
+
+    @field_validator("target_ip")
+    @classmethod
+    def _target_ip_must_be_safe(cls, v: str) -> str:
+        return _validate_target_ip(v)
 
 class LogsRequest(BaseModel):
     target_ip: str
@@ -74,11 +110,21 @@ class LogsRequest(BaseModel):
     level: str = "Error" # "Error", "Warning", "Information"
     count: int = 20
 
+    @field_validator("target_ip")
+    @classmethod
+    def _target_ip_must_be_safe(cls, v: str) -> str:
+        return _validate_target_ip(v)
+
 class DisconnectRequest(BaseModel):
     target_ip: str
     username: str
     password: str
     session_id: str
+
+    @field_validator("target_ip")
+    @classmethod
+    def _target_ip_must_be_safe(cls, v: str) -> str:
+        return _validate_target_ip(v)
 
 class PowerRequest(BaseModel):
     target_ip: str
@@ -89,10 +135,20 @@ class PowerRequest(BaseModel):
     timeout: int = 30
     force: bool = False
 
+    @field_validator("target_ip")
+    @classmethod
+    def _target_ip_must_be_safe(cls, v: str) -> str:
+        return _validate_target_ip(v)
+
 class TestConnectionRequest(BaseModel):
     target_ip: str
     username: str
     password: str
+
+    @field_validator("target_ip")
+    @classmethod
+    def _target_ip_must_be_safe(cls, v: str) -> str:
+        return _validate_target_ip(v)
 
 def get_trusted_hosts_context(ip: str, auth_header: str):
     """Retorna o context manager apropriado baseado no header."""
@@ -121,6 +177,11 @@ def _is_trusted_hosts_error(result):
 
 class DiagnoseRequest(BaseModel):
     target_ip: str
+
+    @field_validator("target_ip")
+    @classmethod
+    def _target_ip_must_be_safe(cls, v: str) -> str:
+        return _validate_target_ip(v)
 
 
 @router.post("/diagnose-target")
@@ -291,6 +352,11 @@ class SpoolerManageRequest(BaseModel):
     username: str
     password: str
     action: str # "restart", "clear_and_restart"
+
+    @field_validator("target_ip")
+    @classmethod
+    def _target_ip_must_be_safe(cls, v: str) -> str:
+        return _validate_target_ip(v)
 
 @router.post("/spooler/manage")
 def manage_spooler(request: SpoolerManageRequest, x_temp_auth: str = Header(default=None)):

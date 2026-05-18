@@ -49,7 +49,7 @@ try {
     }
 
     try {
-        $netConfig = Get-WmiObject Win32_NetworkAdapterConfiguration | Where-Object { $_.IPAddress -contains "__TARGET_IP__" } | Select-Object -First 1
+        $netConfig = Get-WmiObject Win32_NetworkAdapterConfiguration | Where-Object { $_.IPAddress -contains '__TARGET_IP__' } | Select-Object -First 1
     
         if ($netConfig) {
             $networkInfo.SubnetMask = if ($netConfig.IPSubnet) { $netConfig.IPSubnet[0] } else { "N/A" }

@@ -785,6 +785,29 @@ def open_external_terminal(request: ExternalTerminalRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro ao iniciar terminal: {str(e)}")
 
+# 1 MB cap per WS message. Legitimate `command` payloads are at most a few
+# KB; anything larger is either misuse or a local-process DoS attempt (the
+# origin check stops browser-driven abuse, but in-scope per threat model).
+_WS_MAX_MESSAGE_BYTES = 1 * 1024 * 1024
+
+
+async def _ws_receive_json_bounded(websocket: WebSocket) -> dict:
+    """Receive a JSON message with a hard byte cap; drops the connection on
+    overflow with WebSocket close code 1009 (Message Too Big)."""
+    message = await websocket.receive()
+    text = message.get("text")
+    if text is None:
+        data = message.get("bytes") or b""
+        if len(data) > _WS_MAX_MESSAGE_BYTES:
+            await websocket.close(code=1009)
+            raise WebSocketDisconnect()
+        text = data.decode("utf-8")
+    elif len(text.encode("utf-8")) > _WS_MAX_MESSAGE_BYTES:
+        await websocket.close(code=1009)
+        raise WebSocketDisconnect()
+    return json.loads(text)
+
+
 @router.websocket("/ws/terminal")
 async def websocket_terminal(websocket: WebSocket):
     if not _ws_origin_allowed(websocket):
@@ -800,7 +823,7 @@ async def websocket_terminal(websocket: WebSocket):
     winrm_session = None
     try:
         while True:
-            data = await websocket.receive_json()
+            data = await _ws_receive_json_bounded(websocket)
             msg_type = data.get("type")
             
             if msg_type == "connect":
