@@ -157,11 +157,18 @@ export const HostDetails: React.FC = () => {
         }
     };
 
+    // Re-fetch whenever the operator switches tabs (so each tab pulls its own
+    // payload on demand). `credentials` is intentionally in the dep list:
+    // omitting it left a stale closure that fired with whatever credentials
+    // existed on first tab change, even if they had been updated since.
+    // `handleFetchData` itself isn't memoized, but it only closes over `ip` and
+    // the setters above, so the stale closure risk is bounded.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     useEffect(() => {
         if (credentials) {
             handleFetchData(credentials.username, credentials.password);
         }
-    }, [activeTab]);
+    }, [activeTab, credentials]);
 
     const formatDate = (dateStr: string) => {
         if (!dateStr || dateStr === 'N/A') return 'N/A';

@@ -123,26 +123,34 @@ export const NetworkScanner: React.FC<NetworkScannerProps> = ({ onAddHost, exist
         return [...hosts].sort((a, b) => {
             let comparison = 0;
             switch (sortBy) {
-                case 'ip':
-                    const ipA = a.ip.split('.').map(Number);
-                    const ipB = b.ip.split('.').map(Number);
+                case 'ip': {
+                    // Coalesce ip to a known-good value before split — defensive
+                    // against the same null-IP corner that crashed host sort
+                    // elsewhere.
+                    const ipA = (a.ip ?? '0.0.0.0').split('.').map(Number);
+                    const ipB = (b.ip ?? '0.0.0.0').split('.').map(Number);
                     for (let i = 0; i < 4; i++) {
-                        if (ipA[i] !== ipB[i]) {
-                            comparison = ipA[i] - ipB[i];
+                        const av = Number.isFinite(ipA[i]) ? ipA[i] : 0;
+                        const bv = Number.isFinite(ipB[i]) ? ipB[i] : 0;
+                        if (av !== bv) {
+                            comparison = av - bv;
                             break;
                         }
                     }
                     break;
-                case 'name':
-                    const nameA = (a.hostname || a.ip).toLowerCase();
-                    const nameB = (b.hostname || b.ip).toLowerCase();
+                }
+                case 'name': {
+                    const nameA = (a.hostname || a.ip || '').toLowerCase();
+                    const nameB = (b.hostname || b.ip || '').toLowerCase();
                     comparison = nameA.localeCompare(nameB);
                     break;
-                case 'vendor':
+                }
+                case 'vendor': {
                     const vendorA = (a.vendor || '').toLowerCase();
                     const vendorB = (b.vendor || '').toLowerCase();
                     comparison = vendorA.localeCompare(vendorB);
                     break;
+                }
             }
             return sortDirection === 'asc' ? comparison : -comparison;
         });

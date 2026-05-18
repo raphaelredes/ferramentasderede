@@ -66,12 +66,17 @@ export const MonitoringProvider: React.FC<{ children: React.ReactNode }> = ({ ch
                 if (isOnlineA && !isOnlineB) return -1;
                 if (!isOnlineA && isOnlineB) return 1;
 
-                // IP sort
-                const ipA = (a.ip || a.address).split('.').map(Number);
-                const ipB = (b.ip || b.address).split('.').map(Number);
+                // IP sort. Backend can return null `ip`/`address` for hosts
+                // discovered without a resolved address yet — fall back to
+                // 0.0.0.0 so split('.') doesn't crash (same family as the
+                // null.localeCompare crash already fixed elsewhere).
+                const ipA = (a.ip ?? a.address ?? '0.0.0.0').split('.').map(Number);
+                const ipB = (b.ip ?? b.address ?? '0.0.0.0').split('.').map(Number);
                 for (let i = 0; i < 4; i++) {
-                    if (ipA[i] < ipB[i]) return -1;
-                    if (ipA[i] > ipB[i]) return 1;
+                    const av = Number.isFinite(ipA[i]) ? ipA[i] : 0;
+                    const bv = Number.isFinite(ipB[i]) ? ipB[i] : 0;
+                    if (av < bv) return -1;
+                    if (av > bv) return 1;
                 }
                 return 0;
             });

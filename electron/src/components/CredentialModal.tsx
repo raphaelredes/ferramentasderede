@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Lock, User, Key, Loader2, AlertCircle, Shield, Unlock, ChevronDown, Save, Plus, HelpCircle, RefreshCw } from 'lucide-react';
 import { useVault } from '../contexts/VaultContext';
+import { useToast } from '../contexts/ToastContext';
 import { ConfirmationModal } from './ConfirmationModal';
 import { API_BASE } from '../config/api';
 
@@ -40,6 +41,7 @@ export function CredentialModal({
         refreshCredentials,
         refreshStatus
     } = useVault();
+    const { showToast } = useToast();
 
     const [masterPassword, setMasterPassword] = useState('');
     const [passwordHint, setPasswordHint] = useState('');
@@ -163,16 +165,16 @@ export function CredentialModal({
         try {
             const res = await fetch(`${API_BASE}/security/reset`, { method: 'POST' });
             if (res.ok) {
-                alert('Cofre resetado com sucesso. Você pode criar uma nova senha agora.');
+                showToast('Cofre resetado com sucesso. Você pode criar uma nova senha agora.', 'success');
                 // Refresh vault state instead of reloading the whole app —
                 // preserves which page the user was on, scroll position,
                 // any unrelated unsaved state, etc.
                 await refreshStatus();
             } else {
-                alert('Erro ao resetar cofre.');
+                showToast('Erro ao resetar cofre.', 'error');
             }
         } catch (e) {
-            alert('Erro de conexão.');
+            showToast('Erro de conexão.', 'error');
         }
         setIsResetting(false);
         setIsResetModalOpen(false);

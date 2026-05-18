@@ -20,8 +20,11 @@ export function useHosts() {
             let sortedData = data;
             if (sortBy === 'manual' && hostOrder.length > 0) {
                 sortedData = [...data].sort((a: Host, b: Host) => {
-                    const indexA = hostOrder.indexOf(a.address);
-                    const indexB = hostOrder.indexOf(b.address);
+                    // Hosts may have null address right after discovery — fall
+                    // back to empty string so indexOf returns -1 consistently
+                    // instead of throwing.
+                    const indexA = hostOrder.indexOf(a.address ?? '');
+                    const indexB = hostOrder.indexOf(b.address ?? '');
                     if (indexA !== -1 && indexB !== -1) return indexA - indexB;
                     if (indexA !== -1) return -1;
                     if (indexB !== -1) return 1;
