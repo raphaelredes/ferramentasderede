@@ -119,6 +119,9 @@ export const MonitoringProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         const maxInterval = 30000;
         let currentInterval = baseInterval;
         let warnedDisconnected = false;
+        // AbortController so in-flight fetchHosts requests don't resolve and
+        // call setState after the provider unmounts (route change / HMR).
+        const abortController = new AbortController();
 
         const scheduleNext = () => {
             if (!isMounted) return;
@@ -164,6 +167,7 @@ export const MonitoringProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
         return () => {
             isMounted = false;
+            abortController.abort();
             if (pollingTimeoutRef.current) {
                 clearTimeout(pollingTimeoutRef.current);
                 pollingTimeoutRef.current = null;

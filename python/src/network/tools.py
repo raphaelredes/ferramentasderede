@@ -515,6 +515,11 @@ class NetworkTools:
         
         return found_host
 
+    # Defense in depth: the route layer also caps at /16, but we apply the
+    # same cap here so any future internal caller (DiscoveryScanner legacy,
+    # CLI script, future feature) can't bypass it.
+    _MAX_DISCOVERY_ADDRESSES = 65536  # /16
+
     def discover_hosts(self, network, task_id, timeout=200, max_workers=50, source_ip=None):
         """
         Realiza a descoberta de hosts na rede especificada.
@@ -535,10 +540,20 @@ class NetworkTools:
 
         # Notificar início
         yield {"status": "progress", "message": f"Iniciando varredura em {network}...", "progress": 0}
-        
+
+        if network.num_addresses > self._MAX_DISCOVERY_ADDRESSES:
+            yield {
+                "status": "error",
+                "message": (
+                    f"CIDR muito amplo ({network.num_addresses} endereços). "
+                    f"Limite máximo: {self._MAX_DISCOVERY_ADDRESSES} (/16)."
+                ),
+            }
+            return
+
         hosts_to_scan = list(network.hosts())
         total_hosts = len(hosts_to_scan)
-        
+
         if total_hosts == 0:
             yield {"status": "completed", "message": "Nenhum host para varrer na rede especificada."}
             return

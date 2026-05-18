@@ -64,7 +64,9 @@ class ConnectionManager:
         try:
             self.active_connections.remove(websocket)
         except ValueError:
-            pass
+            # Double-disconnect — current code paths don't trigger it, but if
+            # a future path adds one we want a breadcrumb instead of silence.
+            logging.debug("ConnectionManager.disconnect: websocket already removed")
 
     async def broadcast(self, message: dict):
         # Snapshot before iterating: a disconnect() during broadcast mutates
@@ -517,7 +519,19 @@ def resolve_via_specific_dns(req: DnsResolveRequest):
 
     Useful when the same hostname exists in multiple AD domains and the
     system resolver picks the wrong one.
+
+    `dns_server` must be a plain IP address. Accepting hostnames here is
+    pointless (we'd need DNS to look up DNS) and lets a malicious local
+    process steer the resolver at an attacker-controlled server to exfiltrate
+    which internal hostnames the operator is investigating.
     """
+    import ipaddress
+    if req.dns_server:
+        try:
+            ipaddress.ip_address(req.dns_server)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="dns_server deve ser um endereço IP.")
+
     from src.network import dns_resolver
     if req.name:
         ip = dns_resolver.resolve_hostname(req.name, req.dns_server, req.domain)

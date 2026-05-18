@@ -55,6 +55,28 @@ class NetworkConfig(BaseModel):
     domain: Optional[str] = None        # AD domain associated with this network
     enabled: bool = True
 
+    @classmethod
+    def model_validate(cls, obj, *args, **kwargs):
+        # dns_server must be a plain IP literal — see /network/dns/resolve for
+        # the reasoning. Validated on save so a hand-edited preferences file
+        # can't smuggle a hostname in either.
+        if isinstance(obj, dict):
+            ds = obj.get("dns_server")
+            if ds:
+                import ipaddress
+                try:
+                    ipaddress.ip_address(ds)
+                except ValueError:
+                    raise ValueError(f"dns_server deve ser um endereço IP: {ds!r}")
+            sip = obj.get("source_ip")
+            if sip:
+                import ipaddress
+                try:
+                    ipaddress.ip_address(sip)
+                except ValueError:
+                    raise ValueError(f"source_ip deve ser um endereço IP: {sip!r}")
+        return super().model_validate(obj, *args, **kwargs)
+
 class Settings(BaseModel):
     general: GeneralSettings = GeneralSettings()
     scanner: ScannerSettings = ScannerSettings()

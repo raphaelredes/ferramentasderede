@@ -75,15 +75,19 @@ class CredentialEntry(BaseModel):
 @router.post("/security/unlock")
 def unlock_vault(req: UnlockRequest):
     _reserve_unlock_slot()
+    success = False
     try:
         success = vault.unlock(req.password, req.hint)
     finally:
-        _release_unlock_slot(False)  # Default: treat as failure; success path overrides below.
+        # The previous design always released as failure, then cleared
+        # _UNLOCK_FAILURES outside the lock on success. Between the false
+        # record and the clear, a concurrent unlock attempt could read the
+        # inflated count and get an unjustified 429. Now the release is told
+        # the actual outcome — clear-on-success happens inside the same lock
+        # as the in-flight bookkeeping.
+        _release_unlock_slot(success)
     if not success:
         raise HTTPException(status_code=401, detail="Senha incorreta ou falha ao desbloquear.")
-    # On real success, undo the failure record the finally block just added.
-    with _UNLOCK_LOCK:
-        _UNLOCK_FAILURES.clear()
     return {"status": "success", "message": "Cofre desbloqueado."}
 
 @router.post("/security/lock")

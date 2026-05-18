@@ -145,6 +145,7 @@ class WinRMHandler:
         the lifetime of the websocket / handler instance.
         """
         last_result = None
+        had_qualified_auth_fail = False
         for variant in self._username_variants():
             if variant != self.username:
                 # Demoted from info to debug: every variant attempt used to
@@ -162,6 +163,15 @@ class WinRMHandler:
             last_result = result
             # Don't keep retrying variants if the failure isn't auth-related.
             if result.get("code") not in (None, "AUTH_FAILED", "CROSS_DOMAIN_AUTH"):
+                break
+            # If we already failed with a *qualified* form (DOMAIN\\user or
+            # user@domain), the bare/other-qualified variants will fail too —
+            # AD interprets them as the same identity. Stop here to keep us
+            # from blowing through the lockout threshold on a single bad
+            # password.
+            if "\\" in variant or "@" in variant:
+                had_qualified_auth_fail = True
+            if had_qualified_auth_fail:
                 break
 
         return last_result or {"error": "Falha ao conectar.", "code": "UNKNOWN"}
@@ -214,7 +224,13 @@ class WinRMHandler:
         """Tenta conectar com um conjunto específico de credenciais."""
         errors = []
         codes = []
-        auth_methods = ['negotiate', 'ntlm', 'credssp']
+        # negotiate + ntlm cover every Windows host the operator can reach.
+        # CredSSP was previously in the fallback chain — it delegates the
+        # operator's plaintext credentials to the remote target, which is
+        # exactly what you don't want if that target turns out to be hostile
+        # (a compromised host harvests the operator's domain account). Single-
+        # hop WinRM never needs CredSSP, so it's gone from the default.
+        auth_methods = ['negotiate', 'ntlm']
 
         for method in auth_methods:
             try:

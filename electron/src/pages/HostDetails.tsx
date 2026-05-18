@@ -157,18 +157,17 @@ export const HostDetails: React.FC = () => {
         }
     };
 
-    // Re-fetch whenever the tab or credentials change. `credentials` is set
-    // once after the CredentialModal closes and doesn't churn between fetches,
-    // so adding it to the deps doesn't trigger spurious requests — it just
-    // closes the stale-closure window where switching tabs after a credential
-    // update would have refetched with old creds.
+    // Re-fetch on tab switch or credential change. `credentials` is set once
+    // after the CredentialModal closes; adding it to deps closes the stale-
+    // closure window where the prior version refetched with whatever creds
+    // existed at first tab change. `handleFetchData` reads fresh `fetchData`
+    // and context refs each render — that's deliberate, so it stays out of
+    // the deps array.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     useEffect(() => {
         if (credentials) {
             handleFetchData(credentials.username, credentials.password);
         }
-        // handleFetchData isn't memoized but closes only over stable router
-        // params and setters, so leaving it out of deps is intentional.
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeTab, credentials]);
 
     const formatDate = (dateStr: string) => {
