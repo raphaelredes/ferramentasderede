@@ -443,12 +443,29 @@ class WinRMHandler:
             return False
 
     @staticmethod
+    def _is_safe_trusted_value(value: str) -> bool:
+        """IP/hostname/`*` allowlist mirroring `src.system.winrm._validate_entry`.
+
+        WinRMHandler.set_trusted_hosts writes via the registry (no shell), so
+        injection per se isn't possible here. But entries with commas, semis,
+        or wildcards corrupt the TrustedHosts list semantics — e.g. a value
+        of `*,evil` would silently widen TrustedHosts to permit anything.
+        Reject everything that isn't a clean single entry."""
+        import re as _re
+        if not isinstance(value, str) or not value or len(value) > 253:
+            return False
+        return bool(_re.fullmatch(r"(?:\*|[A-Za-z0-9._\-]+)", value))
+
+    @staticmethod
     def add_trusted_host(ip):
         """Adiciona um IP aos TrustedHosts se não estiver lá."""
+        if not WinRMHandler._is_safe_trusted_value(ip):
+            logging.warning(f"add_trusted_host: rejecting unsafe entry {ip!r}")
+            return False
         current = WinRMHandler.get_trusted_hosts()
         if current == "*":
             return True # Já aceita tudo
-        
+
         hosts = [h.strip() for h in current.split(',') if h.strip()]
         if ip in hosts:
             return True # Já está na lista
@@ -459,10 +476,13 @@ class WinRMHandler:
     @staticmethod
     def remove_trusted_host(ip):
         """Remove um IP dos TrustedHosts."""
+        if not WinRMHandler._is_safe_trusted_value(ip):
+            logging.warning(f"remove_trusted_host: rejecting unsafe entry {ip!r}")
+            return False
         current = WinRMHandler.get_trusted_hosts()
         if current == "*":
             return False # Não removemos se for wildcard global (configuração do usuário)
-        
+
         hosts = [h.strip() for h in current.split(',') if h.strip()]
         if ip in hosts:
             hosts.remove(ip)

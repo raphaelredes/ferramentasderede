@@ -3,7 +3,7 @@ import shutil
 import logging
 import zipfile
 from datetime import datetime, timedelta
-from typing import List, Dict
+from typing import List, Dict, Optional
 import glob
 
 from src.config.settings import (
@@ -141,13 +141,44 @@ class BackupManager:
             logging.error(f"Error listing backups: {e}")
             return []
 
+    # Cheap shape check before path normalization. Backup files are written
+    # by create_backup() as `{prefix}_{timestamp}.bkp` — never contain `/`,
+    # `\`, `..`, drive letters, or anything other than alnum, dot, underscore,
+    # hyphen. Anything else means the route parameter was hand-crafted.
+    _BACKUP_NAME_RE = __import__("re").compile(r"^[A-Za-z0-9._\-]{1,128}\.bkp$")
+
+    def _resolve_backup_path(self, filename: str) -> Optional[str]:
+        r"""Return an absolute backup path iff `filename` is a safe leaf
+        residing strictly inside self.backup_dir. Returns None otherwise.
+
+        The route layer passes `filename` as a `{filename}` path parameter.
+        Starlette URL-decodes percent escapes before matching, and matches
+        any non-`/` sequence — meaning `..%5C..%5Cwindows%5C...` decodes to
+        `..\..\windows\...` (no slashes), passes the route, and would land
+        outside `backup_dir`. Validate shape + realpath containment here so
+        delete and restore can't be coerced into touching unrelated files.
+        """
+        if not isinstance(filename, str) or not self._BACKUP_NAME_RE.match(filename):
+            return None
+        try:
+            base = os.path.realpath(self.backup_dir)
+            target = os.path.realpath(os.path.join(self.backup_dir, filename))
+            if target == base or not target.startswith(base + os.sep):
+                return None
+            return target
+        except Exception:
+            return None
+
     def delete_backup(self, filename: str) -> Dict[str, str]:
         """Deletes a specific backup file."""
-        backup_path = os.path.join(self.backup_dir, filename)
-        
+        backup_path = self._resolve_backup_path(filename)
+        if backup_path is None:
+            logging.warning(f"delete_backup: rejected unsafe filename {filename!r}")
+            return {"status": "error", "message": "Backup file not found."}
+
         if not os.path.exists(backup_path):
             return {"status": "error", "message": "Backup file not found."}
-            
+
         try:
             os.remove(backup_path)
             logging.info(f"Deleted backup: {backup_path}")
@@ -192,7 +223,11 @@ class BackupManager:
     def restore_backup(self, filename: str) -> Dict[str, str]:
         """Restores files from a specific backup file (.bkp).
 
-        Hardened against three previously-latent issues:
+        Hardened against four previously-latent issues:
+        - outer-filename path traversal (round 9): the `{filename}` route
+          parameter URL-decodes percent escapes, so `..%5Cevil.bkp` decodes
+          to `..\\evil.bkp` and slipped past the previous join. Now validated
+          via `_resolve_backup_path` (shape regex + realpath containment).
         - zip slip on Windows (`C:\\evil` slipped past the old substring check
           because it has no slashes). Now resolves each member against
           APP_DATA_DIR and rejects anything outside it.
@@ -203,7 +238,10 @@ class BackupManager:
           the in-memory master key no longer matches what's on disk. Force a
           lock before restoring so the next read goes through unlock().
         """
-        backup_path = os.path.join(self.backup_dir, filename)
+        backup_path = self._resolve_backup_path(filename)
+        if backup_path is None:
+            logging.warning(f"restore_backup: rejected unsafe filename {filename!r}")
+            return {"status": "error", "message": "Backup file not found."}
 
         if not os.path.exists(backup_path):
             return {"status": "error", "message": "Backup file not found."}

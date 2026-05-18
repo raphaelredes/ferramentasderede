@@ -287,10 +287,17 @@ class RemoteCommands:
             yield {"status": "error", "message": f"Falha ao enviar mensagem: {error_msg}"}
 
     def get_system_info_raw(self):
-        """Obtém informações básicas do sistema."""
+        """Obtém informações básicas do sistema.
+
+        `target_ip` flows into a PS single-quoted literal (`'__TARGET_IP__'`
+        in get_system_info.ps1, switched from double-quoted in the same
+        commit). Pass it through `escape_ps_single_quoted` here so even if a
+        caller bypasses the Pydantic validator, the substitution can't break
+        out of the literal.
+        """
         logging.info(f"Executing 'get_system_info_raw' on {self.target_ip}")
         script = self._load_script("get_system_info", {
-            "__TARGET_IP__": self.target_ip
+            "__TARGET_IP__": escape_ps_single_quoted(str(self.target_ip), max_length=253)
         })
         result = self.handler.execute_script(script)
 
