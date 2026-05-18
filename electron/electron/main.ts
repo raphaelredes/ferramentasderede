@@ -422,39 +422,18 @@ function registerIpcHandlers() {
 app.whenReady().then(() => {
   logToFile('app.whenReady fired');
 
-  // Inject a strict Content-Security-Policy on every response. The renderer
-  // talks to the local backend over http/ws on 127.0.0.1:8000 (port still
-  // configurable via VITE_API_PORT at build time, so we widen the connect-src
-  // to 127.0.0.1 generally); everything else stays self-origin. Without this
-  // header, any reflected/injected content in the renderer could pull JS or
-  // styles from arbitrary origins.
-  // In dev mode Vite's HMR client uses eval() for module replacement; without
-  // 'unsafe-eval' in script-src the renderer console floods with CSP errors
-  // and hot reload stops working. The prod build bundles everything ahead of
-  // time, so we drop 'unsafe-eval' there.
-  const isDev = Boolean(VITE_DEV_SERVER_URL)
-  const scriptSrc = isDev ? "script-src 'self' 'unsafe-eval'" : "script-src 'self'"
-  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
-    const csp = [
-      "default-src 'self'",
-      // Tailwind/Vite emits inline style attributes; allow 'unsafe-inline' for styles only.
-      "style-src 'self' 'unsafe-inline'",
-      scriptSrc,
-      "img-src 'self' data: blob:",
-      "font-src 'self' data:",
-      "connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:* http://localhost:* ws://localhost:*",
-      "frame-src 'none'",
-      "object-src 'none'",
-      "base-uri 'self'",
-      "form-action 'self'",
-    ].join('; ')
-    callback({
-      responseHeaders: {
-        ...details.responseHeaders,
-        'Content-Security-Policy': [csp],
-      },
-    })
-  })
+  // CSP is enforced by the `<meta http-equiv="Content-Security-Policy">` tag
+  // in electron/index.html. We do NOT inject a duplicate via webRequest:
+  // when two CSPs are present the browser combines them by taking the most
+  // restrictive value of EACH directive — and the meta tag legitimately
+  // needs `'unsafe-inline' 'unsafe-eval'` in script-src for Vite's
+  // module-preload helper and recharts internals. Injecting `script-src
+  // 'self'` here (no unsafe-*) intersected with the meta to block every
+  // module load → the splash screen hung forever because the React bundle
+  // couldn't execute.
+  //
+  // If you want to tighten CSP further, edit the meta tag in index.html;
+  // don't add a header here.
 
   // Deny camera/mic/notifications/geolocation/etc. by default. Future UI
   // changes can request specifics explicitly.
