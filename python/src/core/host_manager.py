@@ -315,14 +315,17 @@ class HostManager:
         pass
 
     def clear_all_hosts(self):
-        """Limpa a lista de hosts."""
-        try:
-            with db._get_connection() as conn:
-                conn.execute("DELETE FROM hosts")
-                conn.commit()
+        """Limpa a lista de hosts.
+
+        Antes este método pegava `db._get_connection()` direto, sem o
+        `@_retry_on_locked` + `_write_lock` dos outros writes — único bypass na
+        camada de dados. Sob carga (monitor pingando + UI mexendo), levava a
+        `database is locked` esporádico. Agora vai pela API decorada do DB.
+        """
+        if db.clear_all_hosts():
             self.hosts.clear()
-        except Exception as e:
-            logging.error(f"Erro ao limpar hosts: {e}")
+        else:
+            logging.error("Erro ao limpar hosts (DatabaseManager.clear_all_hosts retornou False)")
 
     def update_hosts(self, updated_hosts_list):
         """Substitui a lista de hosts inteira atomicamente."""

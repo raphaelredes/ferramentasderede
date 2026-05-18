@@ -642,7 +642,6 @@ def configure_trusted_hosts():
     if not success:
         raise HTTPException(status_code=500, detail="Falha ao configurar TrustedHosts.")
     return {"success": True}
-    return {"success": True}
 
 @router.post("/test-connection")
 def test_connection(request: TestConnectionRequest, x_temp_auth: str = Header(default=None)):

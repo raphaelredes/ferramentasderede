@@ -321,6 +321,22 @@ class DatabaseManager:
                 return False
 
     @_retry_on_locked()
+    def clear_all_hosts(self) -> bool:
+        """Apaga todos os hosts. Respeita write_lock + retry decorator —
+        bypass-direto via `_get_connection()` (como o legado em HostManager)
+        contornava a serialização e podia causar `database is locked` quando
+        outra task estava no meio de um INSERT."""
+        with self._write_lock:
+            try:
+                with self._get_connection() as conn:
+                    conn.execute("DELETE FROM hosts")
+                    conn.commit()
+                return True
+            except Exception as e:
+                logging.exception(f"Erro ao limpar hosts: {e}")
+                return False
+
+    @_retry_on_locked()
     def reset_database(self):
         """Apaga todos os dados das tabelas e otimiza o banco."""
         with self._write_lock:

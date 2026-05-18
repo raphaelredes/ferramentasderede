@@ -35,7 +35,11 @@ class ConnectionManager:
         self.active_connections.remove(websocket)
 
     async def broadcast(self, message: dict):
-        for connection in self.active_connections:
+        # Snapshot before iterating: a disconnect() during broadcast mutates
+        # self.active_connections (list.remove) and can skip an element on the
+        # next index advance. Cheap to copy — connection list is small (1-2 in
+        # practice).
+        for connection in list(self.active_connections):
             try:
                 await connection.send_json(message)
             except Exception as e:

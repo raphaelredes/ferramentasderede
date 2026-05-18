@@ -564,12 +564,20 @@ class HostMonitor:
                         ports_status[port] = is_open
                     stats['ports_status'] = ports_status
 
-                # Notify callback about update
-                if self._on_update_callback:
-                    try:
-                        self._on_update_callback(ip, stats.copy())
-                    except Exception as e:
-                        logging.error(f"Error in update callback: {e}")
+                # Snapshot stats + callback BEFORE releasing the lock, then
+                # invoke the callback OUTSIDE the lock. The callback does DB
+                # writes and a WebSocket broadcast; holding `_lock` through that
+                # serialized every host's tick behind whichever one happened to
+                # be flushing — under load this drifted ticks well past 1s.
+                stats_snapshot = stats.copy()
+                callback = self._on_update_callback
+
+            # Outside the lock now.
+            if callback:
+                try:
+                    callback(ip, stats_snapshot)
+                except Exception as e:
+                    logging.error(f"Error in update callback: {e}")
 
         except Exception as e:
             logging.error(f"Erro ao processar host {ip}: {e}")
