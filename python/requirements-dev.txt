@@ -1,0 +1,15 @@
+# Development-only dependencies.
+# Production installs (PyInstaller / ops machine) should NOT install these —
+# only the pinned runtime deps in requirements.txt are needed at runtime.
+
+# Test framework
+pytest
+pytest-asyncio==0.23.5
+httpx
+
+# Legacy GUI (customtkinter app pre-Electron) — excluded by build_webview.spec
+# so they don't bloat the bundle, but kept available for ad-hoc debugging on
+# the old code path. Safe to remove entirely once the legacy GUI is deleted.
+customtkinter==5.2.2
+Pillow==11.3.0
+pyperclip==1.9.0
