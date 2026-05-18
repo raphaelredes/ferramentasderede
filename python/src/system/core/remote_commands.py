@@ -15,6 +15,7 @@ from .ps_safety import (
     validate_service_action,
     validate_service_startup_type,
     validate_event_count,
+    validate_spooler_action,
     escape_ps_single_quoted,
 )
 
@@ -344,6 +345,49 @@ class RemoteCommands:
         except json.JSONDecodeError as e:
             logging.error(f"JSON decode error in get_pre_power_check: {e}")
             return {"error": "Falha ao decodificar JSON de resposta."}
+
+    def manage_spooler(self, action):
+        """Restart (and optionally purge) the Windows print spooler.
+
+        The route /system/spooler/manage was wired to SystemTools.manage_spooler
+        -> cmd.manage_spooler(action), but that method didn't exist on
+        RemoteCommands at all — every invocation crashed with AttributeError.
+        Same class of bug that hit `manage_remote_service` previously. This
+        adds the missing builder; action is validated as one of
+        {"restart", "clear_and_restart"}.
+        """
+        try:
+            action = validate_spooler_action(action)
+        except ValueError as e:
+            yield {"status": "error", "message": str(e)}
+            return
+
+        logging.info(f"Executing 'manage_spooler' ({action}) on {self.target_ip}")
+
+        if action == "restart":
+            ps = (
+                "$ErrorActionPreference = 'Stop'; "
+                "Restart-Service -Name 'Spooler' -Force; "
+                "Write-Output 'OK'"
+            )
+        else:  # clear_and_restart
+            # Stop spooler, purge queued jobs, start again. The PRINTERS dir
+            # path is constant on every supported Windows.
+            ps = (
+                "$ErrorActionPreference = 'Stop'; "
+                "Stop-Service -Name 'Spooler' -Force; "
+                "$dir = Join-Path $env:SystemRoot 'System32\\spool\\PRINTERS'; "
+                "if (Test-Path $dir) { Get-ChildItem $dir -Force -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue }; "
+                "Start-Service -Name 'Spooler'; "
+                "Write-Output 'OK'"
+            )
+
+        result = self.handler.execute_script(ps)
+        output_str = "".join(result.get("output", []))
+        if result.get("success") and "OK" in output_str:
+            yield {"status": "success", "message": f"Spooler: ação '{action}' concluída."}
+        else:
+            yield {"status": "error", "message": f"Falha no spooler: {output_str.strip() or 'sem detalhes'}."}
 
     def get_remote_event_logs(self, log_name, level, count):
         """Obtém logs de eventos do Windows.

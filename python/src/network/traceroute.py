@@ -15,9 +15,19 @@ def traceroute(target_ip, current_process_holder=None, source_ip=None):
     process = None
     try:
         if os.name == 'nt':
+            # Windows tracert.exe `-S` is for IPv6 strict source-route, NOT
+            # source-address (that flag does not exist in IPv4 tracert at
+            # all). The legacy code added `-S <ip>` blindly, which either
+            # tracert ignored or rejected with a usage banner — multi-VLAN
+            # operators got silent fallback to the default route. Until we
+            # wire PowerShell `Test-NetConnection -TraceRoute -SourceIPAddress`,
+            # we log a warning and drop the flag so the trace still runs.
             command = ["tracert", "-h", "15", "-w", "3000"]
             if source_ip:
-                command += ["-S", source_ip]
+                logging.warning(
+                    "traceroute: source_ip=%r requested but Windows tracert does not support source-address; ignoring.",
+                    source_ip,
+                )
             command.append(target_ip)
             encoding = 'cp850'
         else:

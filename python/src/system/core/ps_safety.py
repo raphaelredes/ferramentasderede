@@ -34,6 +34,9 @@ _LOG_NAME_RE = re.compile(r"^[A-Za-z0-9 ._\-/]{1,255}$")
 # Service actions: enum-style.
 _SERVICE_ACTIONS = {"start", "stop", "restart", "pause", "set_startup"}
 
+# Spooler actions: enum-style.
+_SPOOLER_ACTIONS = {"restart", "clear_and_restart"}
+
 # StartupType values accepted by `Set-Service -StartupType`.
 _SERVICE_STARTUP_TYPES = {"Automatic", "Manual", "Disabled", "AutomaticDelayedStart"}
 
@@ -59,6 +62,12 @@ def validate_log_name(value: object) -> str:
 def validate_service_action(value: object) -> str:
     if value not in _SERVICE_ACTIONS:
         raise ValueError(f"invalid service action: {value!r}")
+    return value  # type: ignore[return-value]
+
+
+def validate_spooler_action(value: object) -> str:
+    if value not in _SPOOLER_ACTIONS:
+        raise ValueError(f"invalid spooler action: {value!r}")
     return value  # type: ignore[return-value]
 
 
