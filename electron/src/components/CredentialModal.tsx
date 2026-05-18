@@ -193,7 +193,13 @@ export function CredentialModal({
             await saveCredentialToVault(finalUsername);
         }
 
-        onConfirm(finalUsername, password);
+        // Snapshot the password and clear React state immediately. Without
+        // this, the password stayed in component state until the next isOpen
+        // toggle effect ran — visible to React DevTools in the meantime, and
+        // a StrictMode remount could leave a stale closure value behind.
+        const submittedPassword = password;
+        setPassword('');
+        onConfirm(finalUsername, submittedPassword);
     };
 
     return createPortal(

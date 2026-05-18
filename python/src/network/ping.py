@@ -301,7 +301,12 @@ def check_host_status_detailed(ip_address, count=1, is_wan=False, resolve_names=
         if not online and count == 1 and not fast_mode:
             if check_arp_table(ip_address):
                 online = True
-                latency = 0 # Latência desprezível na rede local
+                # `None` instead of `0`: ARP says "this MAC was on the wire
+                # recently" but doesn't measure RTT. Returning 0 made the UI
+                # paint a healthy "0 ms" badge for hosts that hadn't actually
+                # replied — misleading. None is rendered as "—" by the front-
+                # end.
+                latency = None
 
     # Fallback 3: Tentar via PowerShell (Test-Connection) se tudo falhar
         # REMOVIDO: PowerShell é muito lento (3-5s) e causa atraso no monitoramento em tempo real.
