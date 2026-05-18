@@ -14,7 +14,9 @@ class LocalHandler:
         return {"success": True}
 
     def close(self):
-        pass
+        # Best-effort: drop the password reference so a leaked handler object
+        # doesn't keep the operator's password alive in memory.
+        self.password = None
 
     def execute_script(self, script: str):
         """Executes a PowerShell script locally."""
@@ -30,35 +32,41 @@ class LocalHandler:
                 exit 1
             }}
             """
-            
-            # Use -EncodedCommand to avoid escaping issues? Or just passed as string?
-            # Passing as string with -Command is usually fine if we are careful.
-            # But for complex scripts, saving to temp file or using encoded command is safer.
-            # Let's try passing as -Command first, but we need to be careful with quotes.
-            # Actually, RemoteCommands loads scripts that might have quotes.
-            # Better to use EncodedCommand.
-            
+
             import base64
             encoded_script = base64.b64encode(wrapped_script.encode('utf-16le')).decode('utf-8')
-            
+
+            # PowerShell -EncodedCommand has a documented ~32KB cap on the
+            # encoded argument. Refuse oversized scripts up front instead of
+            # hitting a cryptic "command line too long" error from CreateProcess.
+            if len(encoded_script) > 32000:
+                return {"error": "Script muito longo para -EncodedCommand."}
+
             cmd = ["powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded_script]
-            
-            process = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                encoding='utf-8',
-                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
-            )
-            
+
+            try:
+                # Hard timeout so a hanging local script can't pin this thread
+                # indefinitely. 5 minutes is generous enough for any local
+                # script we ship; longer signals a real hang.
+                process = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    encoding='utf-8',
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0,
+                    timeout=300,
+                )
+            except subprocess.TimeoutExpired:
+                return {"error": "Local Execution Error: timeout after 300s."}
+
             output_lines = process.stdout.splitlines()
-            
+
             if process.returncode != 0:
                 error_msg = process.stderr or "Unknown error"
                 return {"error": f"Local Execution Error: {error_msg}"}
-                
+
             return {"success": True, "output": output_lines}
-            
+
         except Exception as e:
             logging.error(f"Local execution failed: {e}")
             return {"error": str(e)}

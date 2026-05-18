@@ -326,16 +326,34 @@ async def import_hosts(file: UploadFile = File(...)):
         manager = HostManager()
         manager.update_hosts(hosts_data)
 
-        # Restore Trusted Hosts if present
+        # Restore Trusted Hosts if present. Filter through the strict
+        # validator BEFORE handing to set_trusted_hosts — a malicious backup
+        # could otherwise smuggle entries like "evil'; rm -rf; '" that, while
+        # the underlying writer now sanitizes too, shouldn't even reach the
+        # decision boundary. set_trusted_hosts is itself fail-closed if any
+        # entry is unsafe; we filter first so partially-valid imports still
+        # apply their clean entries instead of bouncing the whole list.
         if trusted_hosts_data:
-            from src.system.winrm import set_trusted_hosts
-            set_trusted_hosts(trusted_hosts_data)
-            
+            from src.system.winrm import set_trusted_hosts, _validate_entry
+            safe_entries = [h for h in trusted_hosts_data if _validate_entry(h)]
+            rejected = [h for h in trusted_hosts_data if not _validate_entry(h)]
+            if rejected:
+                logging.warning(
+                    f"/settings/import: rejected {len(rejected)} unsafe trusted_hosts entries: {rejected!r}"
+                )
+            if safe_entries and not set_trusted_hosts(safe_entries):
+                logging.warning("/settings/import: set_trusted_hosts returned False (defensive validators rejected at writer layer)")
+
         return {"status": "success", "message": "Hosts imported successfully."}
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Invalid JSON file.")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Import failed: {str(e)}")
+    except HTTPException:
+        raise
+    except Exception:
+        # Sanitize the error path — exception text could include attacker-
+        # controlled bytes from the parse failure path.
+        logging.exception("/settings/import failed")
+        raise HTTPException(status_code=500, detail="Import failed.")
 
 @router.post("/settings/reset")
 def factory_reset():

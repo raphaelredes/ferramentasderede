@@ -21,7 +21,15 @@ class NativeWMIHandler:
             self.service.Security_.ImpersonationLevel = 3 # Impersonate
             return True
         except Exception as e:
-            logging.error(f"WMI Connection failed for {self.target_ip}: {e}")
+            # `e` may be a pywintypes.com_error whose args tuple — under
+            # specific HRESULTs — can echo the parameter values passed to
+            # ConnectServer (including the password). Log only the class name
+            # and HRESULT to avoid leaking credentials into the log.
+            hresult = getattr(e, "hresult", None)
+            logging.error(
+                "WMI Connection failed for %s: %s (hresult=%r)",
+                self.target_ip, e.__class__.__name__, hresult,
+            )
             return False
 
     def query(self, wql):

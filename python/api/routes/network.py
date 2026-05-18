@@ -560,8 +560,25 @@ def discover_network(request: DiscoveryRequest):
     cidr = request.cidr
     task_id = request.task_id or f"scanner_{time.time()}"
     timeout = request.timeout or 200
-    max_workers = request.max_workers or 50
+    # Cap max_workers too. The CIDR is already capped at /16 below, but the
+    # `max_workers` field was unbounded — a request with `max_workers: 100000`
+    # would spawn 100k threads regardless of CIDR size and exhaust file
+    # descriptors. 256 covers any legitimate scanning rate.
+    try:
+        requested_workers = int(request.max_workers or 50)
+    except (TypeError, ValueError):
+        requested_workers = 50
+    max_workers = max(1, min(requested_workers, 256))
+
+    # Validate source_ip if provided (must be a literal IP, see
+    # /network/dns/resolve for the reasoning — same threat model).
     source_ip = request.source_ip
+    if source_ip:
+        import ipaddress as _ip
+        try:
+            _ip.ip_address(source_ip)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="source_ip deve ser um endereço IP.")
 
     # Cap CIDR size BEFORE spinning up worker threads. A misclick on
     # 10.0.0.0/8 used to spawn 16M scan tasks, fill the threadpool for
@@ -601,9 +618,33 @@ def discover_network(request: DiscoveryRequest):
 
     return StreamingResponse(event_generator(), media_type="application/x-ndjson")
 
+def _validate_tool_target(target: str) -> None:
+    """Reject targets that look like CLI flags or contain shell metacharacters.
+
+    The /tools/ping and /tools/traceroute endpoints pass `target` as an argv
+    element (no shell), so this isn't RCE — but a value starting with `-` is
+    interpreted as an option by ping.exe/tracert.exe and triggers help output
+    instead of a real probe, and arbitrary strings exfiltrate via the system
+    DNS resolver. Use the same shape as `_is_safe_remote_target`."""
+    if not _is_safe_remote_target(target):
+        raise HTTPException(status_code=400, detail="Endereço de destino inválido.")
+
+
+def _validate_optional_source_ip(value):
+    if not value:
+        return
+    import ipaddress as _ip
+    try:
+        _ip.ip_address(value)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="source_ip deve ser um endereço IP.")
+
+
 @router.post("/tools/ping")
 def run_ping(request: ToolRequest):
     target = request.target
+    _validate_tool_target(target)
+    _validate_optional_source_ip(request.source_ip)
     task_id = request.task_id or f"ping_{time.time()}"
     source_ip = request.source_ip
 
@@ -622,6 +663,8 @@ def run_ping(request: ToolRequest):
 @router.post("/tools/traceroute")
 def run_traceroute(request: ToolRequest):
     target = request.target
+    _validate_tool_target(target)
+    _validate_optional_source_ip(request.source_ip)
     task_id = request.task_id or f"traceroute_{time.time()}"
     source_ip = request.source_ip
 

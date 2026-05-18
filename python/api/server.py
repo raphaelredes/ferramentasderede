@@ -6,6 +6,16 @@ import sys
 import os
 from contextlib import asynccontextmanager
 
+# Configure the root logger eagerly. Without this, `logging.info(...)` calls
+# in the route layer are silently dropped (root level defaults to WARNING).
+# Uvicorn configures its own access/error loggers separately; this only sets
+# up the application loggers. Idempotent: if a downstream tool already
+# configured the root, basicConfig is a no-op.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+
 # Adicionar diretório pai ao path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 

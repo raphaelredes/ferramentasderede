@@ -93,10 +93,19 @@ class SecureVault:
             return False
 
     def lock(self):
-        """Locks the vault and clears the master key from memory."""
-        self.master_key = None
-        self.credentials = {}
-        self.is_unlocked = False
+        """Locks the vault and clears the master key from memory.
+
+        Acquire `_save_lock` for symmetry — save() already holds it across
+        the encrypt + write window, so by the time we get the lock here, any
+        in-flight save() has either completed or hasn't started. Today
+        save()'s local AESGCM object insulates it from `master_key = None`
+        mid-write, but the symmetry prevents a future maintainer from
+        breaking that subtle invariant.
+        """
+        with self._save_lock:
+            self.master_key = None
+            self.credentials = {}
+            self.is_unlocked = False
         logging.info("Vault locked.")
 
     def save(self):
