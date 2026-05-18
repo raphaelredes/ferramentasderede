@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { APP_VERSION } from '../../data/changelog';
 import { ChangelogModal } from './ChangelogModal';
+import { useEscapeToClose } from '../../hooks/useEscapeToClose';
 
 interface AboutModalProps {
     isOpen: boolean;
@@ -11,13 +12,20 @@ interface AboutModalProps {
 
 export function AboutModal({ isOpen, onClose }: AboutModalProps) {
     const [isChangelogOpen, setIsChangelogOpen] = useState(false);
+    useEscapeToClose(isOpen, onClose);
     if (!isOpen) return null;
 
     return createPortal(
         <>
         <ChangelogModal isOpen={isChangelogOpen} onClose={() => setIsChangelogOpen(false)} />
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999] p-4 animate-in fade-in duration-200" onClick={onClose}>
-            <div className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden scale-100 animate-in zoom-in-95 duration-200 relative" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999] p-4 animate-in fade-in duration-200" onClick={onClose} role="presentation">
+            <div
+                className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden scale-100 animate-in zoom-in-95 duration-200 relative"
+                onClick={(e) => e.stopPropagation()}
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="about-title"
+            >
 
                 {/* Decorative Background Elements */}
                 <div className="absolute top-0 left-0 w-full h-32 bg-gradient-to-b from-blue-500/10 to-transparent pointer-events-none" />
@@ -25,9 +33,10 @@ export function AboutModal({ isOpen, onClose }: AboutModalProps) {
 
                 <button
                     onClick={onClose}
+                    aria-label="Fechar"
                     className="absolute top-4 right-4 p-2 text-zinc-500 hover:text-white hover:bg-zinc-800/50 rounded-full transition-colors z-10"
                 >
-                    <X size={20} />
+                    <X size={20} aria-hidden="true" />
                 </button>
 
                 <div className="p-8 text-center relative z-0">
@@ -35,7 +44,7 @@ export function AboutModal({ isOpen, onClose }: AboutModalProps) {
                         <img src="/logo.png?v=4" alt="Logo" className="w-24 h-24 object-contain drop-shadow-[0_0_15px_rgba(0,123,255,0.5)]" />
                     </div>
 
-                    <h2 className="text-2xl font-bold text-white mb-2">Ferramentas de Rede</h2>
+                    <h2 id="about-title" className="text-2xl font-bold text-white mb-2">Ferramentas de Rede</h2>
                     <button
                         onClick={() => setIsChangelogOpen(true)}
                         title="Ver últimas melhorias e alterações"

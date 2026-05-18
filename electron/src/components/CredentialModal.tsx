@@ -5,6 +5,7 @@ import { useVault } from '../contexts/VaultContext';
 import { useToast } from '../contexts/ToastContext';
 import { ConfirmationModal } from './ConfirmationModal';
 import { API_BASE } from '../config/api';
+import { useEscapeToClose } from '../hooks/useEscapeToClose';
 
 interface CredentialModalProps {
     isOpen: boolean;
@@ -180,6 +181,7 @@ export function CredentialModal({
         setIsResetModalOpen(false);
     };
 
+    useEscapeToClose(isOpen, isLoading ? () => {} : onClose);
     if (!isOpen) return null;
 
     const handleSubmit = async (e: React.FormEvent) => {
@@ -203,19 +205,26 @@ export function CredentialModal({
     };
 
     return createPortal(
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[9999] backdrop-blur-sm" onClick={onClose}>
-            <div className="bg-zinc-900 border border-zinc-800 rounded-xl w-full max-w-md p-6 shadow-2xl animate-in fade-in zoom-in duration-200 flex flex-col max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[9999] backdrop-blur-sm" onClick={onClose} role="presentation">
+            <div
+                className="bg-zinc-900 border border-zinc-800 rounded-xl w-full max-w-md p-6 shadow-2xl animate-in fade-in zoom-in duration-200 flex flex-col max-h-[90vh]"
+                onClick={(e) => e.stopPropagation()}
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="credentialmodal-title"
+            >
                 <div className="flex items-center justify-between mb-6 shrink-0">
-                    <h3 className="text-xl font-bold text-white flex items-center gap-2">
-                        <Lock className="text-blue-500" size={20} />
+                    <h3 id="credentialmodal-title" className="text-xl font-bold text-white flex items-center gap-2">
+                        <Lock className="text-blue-500" size={20} aria-hidden="true" />
                         {title}
                     </h3>
                     <button
                         onClick={onClose}
+                        aria-label="Fechar"
                         className="text-zinc-400 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         disabled={isLoading}
                     >
-                        <X size={20} />
+                        <X size={20} aria-hidden="true" />
                     </button>
                 </div>
 

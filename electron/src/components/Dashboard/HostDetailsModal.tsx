@@ -4,6 +4,8 @@ import { useNavigate } from 'react-router-dom';
 import { Host } from '../../types';
 import { RemoteAccessModal } from './RemoteAccessModal';
 import { API_BASE } from '../../config/api';
+import { useEscapeToClose } from '../../hooks/useEscapeToClose';
+import { useToast } from '../../contexts/ToastContext';
 
 interface HostDetailsModalProps {
     isOpen: boolean;
@@ -49,6 +51,7 @@ export function HostDetailsModal({
     onCancelAction
 }: HostDetailsModalProps) {
     const navigate = useNavigate();
+    const { showToast } = useToast();
     const [isRemoteModalOpen, setIsRemoteModalOpen] = React.useState(false);
     const [message, setMessage] = React.useState('');
     const [delay, setDelay] = React.useState(5);
@@ -81,11 +84,18 @@ export function HostDetailsModal({
         }
     }, [scheduledAction, countdown]);
 
+    useEscapeToClose(isOpen, onClose);
     if (!isOpen || !host) return null;
 
     return (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4" onClick={onClose}>
-            <div className="bg-zinc-900 border border-zinc-800 rounded-xl w-full max-w-2xl shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4" onClick={onClose} role="presentation">
+            <div
+                className="bg-zinc-900 border border-zinc-800 rounded-xl w-full max-w-2xl shadow-2xl overflow-hidden"
+                onClick={e => e.stopPropagation()}
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="hostdetails-title"
+            >
                 <div className="p-6 border-b border-zinc-800 flex justify-between items-start">
                     <div className="flex items-center gap-4">
                         <div className={`p-3 rounded-xl ${hostStatus[host.address] ? 'bg-green-500/10 text-green-500' : 'bg-red-500/10 text-red-500'}`}>
@@ -123,7 +133,7 @@ export function HostDetailsModal({
                                     </div>
                                 ) : (
                                     <>
-                                        <h2 className="text-2xl font-bold text-white">{host.name || host.hostname || host.address}</h2>
+                                        <h2 id="hostdetails-title" className="text-2xl font-bold text-white">{host.name || host.hostname || host.address}</h2>
                                         <button
                                             onClick={() => {
                                                 setEditedName(host.name || '');
@@ -225,13 +235,13 @@ export function HostDetailsModal({
                                                         if (res.ok) {
                                                             onRefresh();
                                                         } else {
-                                                            console.error('Falha na resolução:', res.statusText);
+                                                            showToast(`Falha na resolução: ${res.statusText}`, 'error');
                                                         }
                                                     } catch (e: any) {
                                                         if (e.name === 'AbortError') {
-                                                            console.error('Resolução de domínio excedeu o tempo limite.');
+                                                            showToast('Resolução de domínio excedeu o tempo limite.', 'error');
                                                         } else {
-                                                            console.error(e);
+                                                            showToast(`Erro ao resolver domínio: ${e.message ?? e}`, 'error');
                                                         }
                                                     } finally {
                                                         setIsResolving(false);

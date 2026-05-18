@@ -1,6 +1,7 @@
 import { X, Sparkles, Bug, Zap, ShieldCheck, Wand2, Wrench, FileText } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { CHANGELOG, type ChangeKind } from '../../data/changelog';
+import { useEscapeToClose } from '../../hooks/useEscapeToClose';
 
 interface ChangelogModalProps {
     isOpen: boolean;
@@ -18,32 +19,38 @@ const KIND_META: Record<ChangeKind, { label: string; color: string; bg: string; 
 };
 
 export function ChangelogModal({ isOpen, onClose }: ChangelogModalProps) {
+    useEscapeToClose(isOpen, onClose);
     if (!isOpen) return null;
 
     return createPortal(
         <div
             className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[10000] p-4 animate-in fade-in duration-200"
             onClick={onClose}
+            role="presentation"
         >
             <div
                 className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl scale-100 animate-in zoom-in-95 duration-200"
                 onClick={(e) => e.stopPropagation()}
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="changelog-title"
             >
                 <div className="flex items-center justify-between p-5 border-b border-zinc-800">
                     <div className="flex items-center gap-3">
                         <div className="p-2 bg-blue-500/10 rounded-lg border border-blue-500/20">
-                            <Sparkles size={18} className="text-blue-400" />
+                            <Sparkles size={18} className="text-blue-400" aria-hidden="true" />
                         </div>
                         <div>
-                            <h2 className="text-lg font-bold text-white">Novidades e melhorias</h2>
+                            <h2 id="changelog-title" className="text-lg font-bold text-white">Novidades e melhorias</h2>
                             <p className="text-xs text-zinc-500">Histórico de versões da aplicação</p>
                         </div>
                     </div>
                     <button
                         onClick={onClose}
+                        aria-label="Fechar"
                         className="p-2 text-zinc-500 hover:text-white hover:bg-zinc-800/50 rounded-lg transition-colors"
                     >
-                        <X size={20} />
+                        <X size={20} aria-hidden="true" />
                     </button>
                 </div>
 
