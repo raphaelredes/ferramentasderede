@@ -267,7 +267,16 @@ class HostMonitor:
 
             if is_hostname_input:
                 try:
-                    resolved_ip = socket.gethostbyname(ip)
+                    # Route through dns_resolver, not the system resolver. In a
+                    # multi-domain setup the system resolver may pick the wrong
+                    # domain when the same shortname exists in both ADs. When
+                    # there's no configured dns_server (or the host doesn't
+                    # match any configured network), dns_resolver falls back to
+                    # the system resolver itself.
+                    from src.network import dns_resolver
+                    resolved_ip = dns_resolver.resolve_hostname(ip)
+                    if not resolved_ip:
+                        raise socket.gaierror(f"resolve_hostname returned None for {ip}")
                     with self._lock:
                         if ip in self._hosts:
                             current_resolved = self._hosts[ip].get('ip')

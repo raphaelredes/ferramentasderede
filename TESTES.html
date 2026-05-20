@@ -296,7 +296,7 @@ await window.electron.showItemInFolder('..\\..\\Windows')   // deve dar Invalid 
   <div class="row"><span class="id">T2.3</span><span class="title">Endpoints básicos respondem</span><span class="badge badge-med">médio</span></div>
   <pre>curl http://127.0.0.1:8000/
 curl http://127.0.0.1:8000/network/interfaces</pre>
-  <div class="expect">✅ <strong>Esperado:</strong> primeiro retorna <code>{"status":"online","version":"2.0.0"}</code>. Segundo retorna JSON com a lista de NICs IPv4 ativas.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> primeiro retorna <code>{"status":"online","version":"&lt;versão atual&gt;"}</code> onde a versão coincide com <code>electron/package.json</code>. Segundo retorna JSON com a lista de NICs IPv4 ativas.</div>
 </div>
 
 <hr>

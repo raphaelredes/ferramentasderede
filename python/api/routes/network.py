@@ -937,16 +937,32 @@ async def websocket_terminal(websocket: WebSocket):
 # --- Status Check (Legacy/Compat) ---
 @router.get("/network/status")
 def check_status(ip: str):
-    """Verifica o status (online/offline) de um IP e atualiza o registro."""
+    """Verifica o status (online/offline) de um IP e atualiza o registro.
+
+    Validate `ip` with the same shape regex as `/tools/ping` so:
+      - A value starting with `-` can't be interpreted as a ping.exe option.
+      - The hostname-fallback path below can't be coerced into an arbitrary
+        DNS lookup for exfiltration. The system resolver is also bypassed
+        in favor of the per-network `dns_resolver` so multi-domain setups
+        pick the right answer.
+    """
+    if not _is_safe_remote_target(ip):
+        raise HTTPException(status_code=400, detail="Endereço de destino inválido.")
+
     result = net_tools.check_host_status_detailed(ip)
     is_online = result['online']
     resolved_ip_found = None
 
     if not is_online and not ip.replace('.', '').isdigit():
          try:
-             import socket
-             resolved_ip = socket.gethostbyname(ip)
-             if resolved_ip != ip:
+             from src.network import dns_resolver
+             # Prefer the DNS server of the network this host belongs to (if any).
+             # `_match_network` only works on IP literals; here `ip` is a hostname,
+             # so we fall back to the system resolver via dns_resolver (which
+             # itself routes through any configured `dns_server` when one is
+             # provided).
+             resolved_ip = dns_resolver.resolve_hostname(ip)
+             if resolved_ip and resolved_ip != ip:
                  res_resolved = net_tools.check_host_status_detailed(resolved_ip)
                  if res_resolved['online']:
                      result = res_resolved

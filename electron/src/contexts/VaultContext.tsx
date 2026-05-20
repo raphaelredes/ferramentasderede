@@ -97,12 +97,50 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     };
 
     useEffect(() => {
-        refreshStatus();
-        // Poll status every 30s. Vault state changes are rare (manual lock/unlock,
-        // auto-lock) so 5s was wasteful — N hosts × short interval was hammering
-        // the backend with no benefit.
-        const interval = setInterval(refreshStatus, 30000);
-        return () => clearInterval(interval);
+        // Recursive setTimeout with exponential backoff on failure — same
+        // pattern as MonitoringContext. Vault state changes are rare so the
+        // happy path polls every 30s; if /security/status fails (backend
+        // restart, network blip) we back off up to 2 min instead of hammering.
+        let timeoutId: number | null = null;
+        let cancelled = false;
+        let failureCount = 0;
+        const BASE_DELAY_MS = 30_000;
+        const MAX_DELAY_MS = 120_000;
+
+        const tick = async () => {
+            if (cancelled) return;
+            try {
+                const res = await fetch(`${API_BASE}/security/status`);
+                if (res.ok) {
+                    const data = await res.json();
+                    setHasVault(data.has_vault);
+                    setIsUnlocked(data.is_unlocked);
+                    if (data.is_unlocked) {
+                        refreshCredentials();
+                    } else {
+                        setVaultCredentials([]);
+                    }
+                    failureCount = 0;
+                } else {
+                    failureCount += 1;
+                }
+            } catch (error) {
+                failureCount += 1;
+                console.debug('VaultContext poll failed:', error);
+            } finally {
+                setIsLoading(false);
+            }
+
+            if (cancelled) return;
+            const delay = Math.min(BASE_DELAY_MS * Math.max(1, failureCount), MAX_DELAY_MS);
+            timeoutId = window.setTimeout(tick, delay);
+        };
+
+        tick();
+        return () => {
+            cancelled = true;
+            if (timeoutId !== null) window.clearTimeout(timeoutId);
+        };
     }, []);
 
     // Auto-lock logic

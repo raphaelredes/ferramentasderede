@@ -61,15 +61,29 @@ def cleanup():
     kill_child_processes(os.getpid())
 
 def start_server():
-    """Starts the FastAPI server in a separate thread."""
-    uvicorn.run(app, host="127.0.0.1", port=8000, log_level="error")
+    """Starts the FastAPI server in a separate thread.
+
+    Respect NT_API_HOST / NT_API_PORT so the portable .exe matches the
+    documented override surface (CLAUDE.md, TESTES.html). Default stays
+    on loopback. The webview's static port is independent — see
+    NT_WEBVIEW_PORT below."""
+    host = os.environ.get("NT_API_HOST", "127.0.0.1")
+    try:
+        port = int(os.environ.get("NT_API_PORT", "8000"))
+    except ValueError:
+        port = 8000
+    uvicorn.run(app, host=host, port=port, log_level="error")
 
 def main():
     # Register cleanup on exit
     atexit.register(cleanup)
 
-    # Ensure port 8000 is free
-    kill_port_process(8000)
+    # Ensure the API port is free (respects NT_API_PORT override).
+    try:
+        api_port = int(os.environ.get("NT_API_PORT", "8000"))
+    except ValueError:
+        api_port = 8000
+    kill_port_process(api_port)
     
     # Start the backend server
     server_thread = threading.Thread(target=start_server, daemon=True)
@@ -239,6 +253,26 @@ def main():
 
         def saveFileAs(self, filename, content):
             import webview
+            import re as _re
+            # Mirror the Electron handler's filename guard
+            # (electron/main.ts:save-file-as). The OS save dialog is the user's
+            # last line of defense, but we shouldn't be feeding it a default
+            # name containing path separators, null bytes, traversal, Windows
+            # reserved device names, or trailing dot/space. Content must be a
+            # plain string — the renderer should never send anything else.
+            if not isinstance(filename, str) or not isinstance(content, str):
+                return None
+            if (not filename
+                    or '\0' in filename
+                    or '/' in filename
+                    or '\\' in filename
+                    or '..' in filename):
+                return None
+            stem = _re.sub(r"\.[^.]+$", "", filename).upper()
+            if _re.fullmatch(r"CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9]", stem):
+                return None
+            if _re.search(r"[. ]$", filename):
+                return None
             try:
                 active_window = webview.windows[0]
                 result = active_window.create_file_dialog(
@@ -246,7 +280,7 @@ def main():
                     save_filename=filename,
                     file_types=('CSV Files (*.csv)', 'All files (*.*)')
                 )
-                
+
                 if result:
                     path = result if isinstance(result, str) else result[0]
                     with open(path, 'w', encoding='utf-8') as f:

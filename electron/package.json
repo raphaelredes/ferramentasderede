@@ -7,7 +7,8 @@
   "author": "Raphael Rego",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build && electron-builder",
+    "build": "node -e \"console.error('npm run build is rejected — produces a 400MB Electron portable. Use build_system.bat at the repo root, which invokes python/build_webview.spec for the ~40MB portable. See CLAUDE.md.'); process.exit(1)\"",
+    "build:renderer": "tsc && vite build",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview"
   },
