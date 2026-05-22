@@ -1,11 +1,48 @@
 import React from 'react';
-import { Monitor, X, AlertCircle, Globe, Hash, Info, Clock, RefreshCw, Server, Power, Trash2, Check, Copy, Pencil, Activity } from 'lucide-react';
+import { Monitor, X, AlertCircle, Globe, Hash, Info, Clock, RefreshCw, Server, Power, Trash2, Check, Copy, Pencil, Activity, WifiOff } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Host } from '../../types';
 import { RemoteAccessModal } from './RemoteAccessModal';
 import { API_BASE } from '../../config/api';
 import { useEscapeToClose } from '../../hooks/useEscapeToClose';
 import { useToast } from '../../contexts/ToastContext';
+
+// IP resolution helper. Picks, in order:
+//   1. stats.ip — monitor's freshly-resolved IP (set when the host was added
+//      by hostname and forward-DNS later filled in the address).
+//   2. host.ip — backend-stored IP. For hosts cadastrados pelo hostname este
+//      campo pode conter o próprio hostname, então só aceitamos se parecer
+//      um literal IPv4.
+//   3. host.address — same shape constraint.
+// Returns null if no IP-shaped value is available yet — the UI renders a
+// "Não disponível" / "Resolvendo..." placeholder instead of showing the
+// hostname in the IP column.
+const IPV4_RE = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
+function ipForHost(host: Host): string | null {
+    const statsIp = host.stats?.ip;
+    if (statsIp && IPV4_RE.test(statsIp)) return statsIp;
+    if (host.ip && IPV4_RE.test(host.ip)) return host.ip;
+    if (host.address && IPV4_RE.test(host.address)) return host.address;
+    return null;
+}
+
+// Human-friendly elapsed time, PT-BR. "2 dias, 3 h", "4 h 12 min", "37 min", "12 s".
+function formatElapsed(fromIso: string): string {
+    const from = new Date(fromIso).getTime();
+    if (!Number.isFinite(from)) return '';
+    const diffMs = Date.now() - from;
+    if (diffMs < 0) return '';
+    const sec = Math.floor(diffMs / 1000);
+    if (sec < 60) return `${sec} s`;
+    const min = Math.floor(sec / 60);
+    if (min < 60) return `${min} min`;
+    const hr = Math.floor(min / 60);
+    const remMin = min % 60;
+    if (hr < 24) return remMin ? `${hr} h ${remMin} min` : `${hr} h`;
+    const day = Math.floor(hr / 24);
+    const remHr = hr % 24;
+    return remHr ? `${day} ${day === 1 ? 'dia' : 'dias'}, ${remHr} h` : `${day} ${day === 1 ? 'dia' : 'dias'}`;
+}
 
 interface HostDetailsModalProps {
     isOpen: boolean;
@@ -57,6 +94,15 @@ export function HostDetailsModal({
     const [delay, setDelay] = React.useState(5);
     const [countdown, setCountdown] = React.useState<number | null>(null);
     const [isResolving, setIsResolving] = React.useState(false);
+    // Drives the "offline há X min" relative-time refresh while the modal is
+    // open. WebSocket updates of `host.stats` already trigger re-renders when
+    // the offline_since field flips, but a stable offline host needs its
+    // *elapsed* label to keep ticking forward — hence this 30s heartbeat.
+    const [, setNowTick] = React.useState(0);
+    React.useEffect(() => {
+        const id = setInterval(() => setNowTick(t => t + 1), 30_000);
+        return () => clearInterval(id);
+    }, []);
 
     React.useEffect(() => {
         if (scheduledAction) {
@@ -147,7 +193,7 @@ export function HostDetailsModal({
                                     </>
                                 )}
                             </div>
-                            <p className="text-zinc-400 font-mono">{host.ip || (/\d+\.\d+\.\d+\.\d+/.test(host.address) ? host.address : 'IP não disponível')}</p>
+                            <p className="text-zinc-400 font-mono">{ipForHost(host) || 'IP não disponível'}</p>
                         </div>
                     </div>
                     <button
@@ -183,11 +229,19 @@ export function HostDetailsModal({
                                     <div className="flex items-center gap-2">
                                         <Globe size={14} className="text-blue-500" />
                                         <span className="font-mono text-sm text-zinc-200">
-                                            {host.ip || (/\d+\.\d+\.\d+\.\d+/.test(host.address) ? host.address : 'Não disponível')}
+                                            {/* Resolution order:
+                                                  1. stats.ip — the monitor's freshly-resolved IP
+                                                     (set when the host was registered by hostname).
+                                                  2. host.ip — backend-stored IP. May be the hostname
+                                                     for hosts added by name, so we accept it only when
+                                                     it looks like an IP literal.
+                                                  3. host.address — original key. Same constraint. */}
+                                            {ipForHost(host) || 'Não disponível'}
                                         </span>
                                         <button
-                                            onClick={() => handleModalCopy(host.ip || (/\d+\.\d+\.\d+\.\d+/.test(host.address) ? host.address : ''), 'ip')}
+                                            onClick={() => handleModalCopy(ipForHost(host) || '', 'ip')}
                                             className="p-1 hover:bg-zinc-800 rounded text-zinc-500 hover:text-white transition-colors"
+                                            title="Copiar IP"
                                         >
                                             {copiedIp ? <Check size={10} className="text-green-500" /> : <Copy size={10} />}
                                         </button>
@@ -286,6 +340,29 @@ export function HostDetailsModal({
                                         </button>
                                     </div>
                                 </div>
+
+                                {/* Offline since — visible only when the monitor stamped a transition.
+                                    Shows the wall-clock timestamp + a relative "há X" label so the
+                                    operator can answer "since when?" without doing the math. The
+                                    backend only stamps online->offline transitions, so a host that
+                                    flapped briefly and recovered won't show anything here.
+
+                                    Visual treatment is intentionally loud (red border + bg) so an
+                                    offline status doesn't blend in with the rest of the info. */}
+                                {host.stats?.offline_since && (
+                                    <div className="space-y-1 sm:col-span-2 border-t border-red-900/30 pt-3 mt-1">
+                                        <p className="text-xs text-red-400 uppercase tracking-wider">Offline desde</p>
+                                        <div className="flex items-center gap-2 mt-1">
+                                            <WifiOff size={14} className="text-red-500" />
+                                            <span className="text-sm text-zinc-200">
+                                                {new Date(host.stats.offline_since).toLocaleString()}
+                                            </span>
+                                            <span className="text-xs text-zinc-500">
+                                                (há {formatElapsed(host.stats.offline_since)})
+                                            </span>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         </div>
 

@@ -36,6 +36,10 @@ export interface HostStatistics {
     current_user?: string;
     is_smart_offline?: boolean;
     has_ever_been_online?: boolean;
+    // ISO timestamp set the moment the host transitioned from online to
+    // offline. Cleared (null/undefined) when it comes back up. The UI shows
+    // "Offline desde X" in the host details popup.
+    offline_since?: string | null;
 }
 
 export interface Host {

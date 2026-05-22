@@ -134,6 +134,10 @@ class HostMonitor:
                         'consecutive_failures': 0,
                         'is_smart_offline': False,
                         'has_ever_been_online': False,
+                        # ISO timestamp of the most recent online->offline transition.
+                        # `None` until the host first goes down (or for hosts that
+                        # never came up). Cleared on the offline->online transition.
+                        'offline_since': None,
                         'history': [],
                         'ports': host.get('ports', []),
                         'ports_status': {},
@@ -475,6 +479,9 @@ class HostMonitor:
                     stats['online'] = True # Force online
                     stats['has_ever_been_online'] = True # Force ever online
                     stats['is_smart_offline'] = False # Reset smart offline flag
+                    # Came back online — clear the "offline since" marker so the
+                    # UI doesn't keep displaying a stale timestamp.
+                    stats['offline_since'] = None
 
                     if 'history' not in stats: stats['history'] = []
                     stats['history'].append({
@@ -501,6 +508,21 @@ class HostMonitor:
                 # Estável: já estava online e respondeu agora -> mantém online
                 # Recuperando: estava offline e tem ≥2 ok consecutivos -> online
                 stats['online'] = last_ping_ok and not in_smart_offline and (was_online or cons_ok >= 2)
+
+                # Track the online -> offline transition so the UI can show
+                # "offline desde". We only stamp the moment the host *flips*
+                # online -> offline; subsequent offline ticks leave the marker
+                # alone so it points at the original drop. The marker is
+                # cleared on the reverse transition below (and in Smart
+                # Recovery above). `has_ever_been_online` gates the first
+                # stamp — for a host that has never come up since we started
+                # monitoring, "offline desde X" would be misleading.
+                from datetime import datetime as _dt
+                if was_online and not stats['online'] and stats.get('has_ever_been_online'):
+                    stats['offline_since'] = _dt.now().isoformat()
+                elif stats['online']:
+                    if stats.get('offline_since'):
+                        stats['offline_since'] = None
                 
                 if mac_address:
                     stats['mac'] = mac_address
