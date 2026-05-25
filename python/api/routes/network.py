@@ -246,10 +246,33 @@ class HostUpdate(BaseModel):
 def update_host(address: str, update: HostUpdate):
     try:
         current_hosts = get_hosts_list()
+        # Address lookup is case-insensitive AND tolerant of callers passing
+        # `stats.ip` (resolved IP) instead of the stored hostname. Backstory:
+        # the frontend's `ipForHost(host)` now prefers `host.stats?.ip` for
+        # display, so an operator looking at the popup may have the resolved
+        # IP visually associated with the host, but `host.address` (the PK)
+        # is still the hostname the host was cadastrado as. If the renderer
+        # ever sends the IP by mistake (or a future refactor swaps them), a
+        # strict equality check would 404 a legitimate update. Match by:
+        #   1. exact (fast path)
+        #   2. case-insensitive on .address
+        #   3. .ip equality (covers the resolved-IP variant)
         target_host = next((h for h in current_hosts if h.address == address), None)
+        if not target_host:
+            addr_lower = address.lower() if isinstance(address, str) else address
+            target_host = next(
+                (h for h in current_hosts
+                 if (h.address or "").lower() == addr_lower
+                 or (h.ip or "").lower() == addr_lower),
+                None,
+            )
 
         if not target_host:
             raise HTTPException(status_code=404, detail="Host não encontrado.")
+
+        # Use the host's real address for downstream writes — the URL param
+        # was just a lookup key.
+        canonical_address = target_host.address
 
         # Fast path: opportunistic probe fields and other simple column updates
         # go through update_host_fields directly. This avoids the full
@@ -265,7 +288,7 @@ def update_host(address: str, update: HostUpdate):
         if update.system_disk_free_gb is not None: probe_field_updates['system_disk_free_gb'] = update.system_disk_free_gb
         if update.teamviewer_id is not None: probe_field_updates['teamviewer_id'] = update.teamviewer_id
         if probe_field_updates:
-            _db.update_host_fields(address, probe_field_updates)
+            _db.update_host_fields(canonical_address, probe_field_updates)
 
         # Display-only / structural updates still go through the slower path so
         # the nickname-vs-hostname routing in save_hosts_list applies and the

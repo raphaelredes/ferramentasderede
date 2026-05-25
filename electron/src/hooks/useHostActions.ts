@@ -139,13 +139,32 @@ export function useHostActions() {
     };
 
     const updateHost = async (address: string, updates: Partial<Host> & { reset_stats?: boolean }) => {
+        // URL-encode the path segment so an `address` like "10.10.38.16" or
+        // a hostname with a dot doesn't get reinterpreted by the router. The
+        // backend now also accepts case-insensitive lookups and falls back to
+        // `host.ip` when the URL doesn't match `host.address`, so callers
+        // that mistakenly pass the resolved IP (e.g. from stats.ip) still
+        // land on the right row.
         try {
-            const response = await fetch(`${API_BASE}/hosts/${address}`, {
+            const response = await fetch(`${API_BASE}/hosts/${encodeURIComponent(address)}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(updates)
             });
-            return response.ok;
+            if (!response.ok) {
+                // Surface the backend's error message to the caller so the UI
+                // can show something useful instead of a flat "Erro ao
+                // atualizar". Falls back to status text when the body isn't
+                // JSON.
+                let detail = `${response.status} ${response.statusText}`;
+                try {
+                    const data = await response.json();
+                    if (data?.detail) detail = data.detail;
+                } catch { /* non-JSON body, keep status text */ }
+                console.error(`updateHost failed for ${address}:`, detail);
+                return false;
+            }
+            return true;
         } catch (error) {
             console.error('Erro ao atualizar host:', error);
             return false;
