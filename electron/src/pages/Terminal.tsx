@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Terminal as TerminalIcon, ExternalLink, ChevronDown, Search } from 'lucide-react';
+import { Terminal as TerminalIcon, ExternalLink, ChevronDown, Search, BookOpen } from 'lucide-react';
 import { clsx } from 'clsx';
 import { API_BASE } from '../config/api';
 import { useMonitoring } from '../contexts/MonitoringContext';
 import { Host } from '../types';
 import { probeHost } from '../utils/hostProbe';
 import { resolveTeamViewerId } from '../utils/teamviewer';
+import { CommandGuideModal } from '../components/Terminal/CommandGuideModal';
 
 type LogEntry = { ts: number; level: 'info' | 'warn' | 'error'; text: string };
 
@@ -25,6 +26,8 @@ export function Terminal() {
     const [isPickerOpen, setIsPickerOpen] = useState(false);
     const [search, setSearch] = useState('');
     const pickerRef = useRef<HTMLDivElement>(null);
+    // Quick-reference modal toggle ("Guia de Comandos" button in the header).
+    const [isGuideOpen, setIsGuideOpen] = useState(false);
 
     const append = (text: string, level: LogEntry['level'] = 'info') =>
         setLog(prev => [...prev.slice(-200), { ts: Date.now(), level, text }]);
@@ -213,14 +216,27 @@ export function Terminal() {
 
     return (
         <div className="h-full flex flex-col space-y-4 min-h-0 p-8">
-            <header>
-                <h2 className="text-2xl font-bold text-white flex items-center gap-2">
-                    <TerminalIcon /> Terminal Remoto
-                </h2>
-                <p className="text-zinc-400">
-                    Abre uma janela PowerShell nativa autenticada via WinRM. A sessão acontece fora desta janela.
-                </p>
+            <header className="flex items-start justify-between gap-4">
+                <div>
+                    <h2 className="text-2xl font-bold text-white flex items-center gap-2">
+                        <TerminalIcon /> Terminal Remoto
+                    </h2>
+                    <p className="text-zinc-400">
+                        Abre uma janela PowerShell nativa autenticada via WinRM. A sessão acontece fora desta janela.
+                    </p>
+                </div>
+                <button
+                    type="button"
+                    onClick={() => setIsGuideOpen(true)}
+                    className="flex items-center gap-2 px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-blue-400 border border-zinc-700/60 hover:border-blue-500/40 rounded-lg text-sm font-medium transition-colors flex-shrink-0"
+                    title="Abrir guia de comandos PowerShell"
+                >
+                    <BookOpen size={16} />
+                    <span>Guia de Comandos</span>
+                </button>
             </header>
+
+            <CommandGuideModal isOpen={isGuideOpen} onClose={() => setIsGuideOpen(false)} />
 
             <div className="bg-zinc-900 p-4 rounded-xl border border-zinc-800 flex gap-4 items-end">
                 <div className="flex-1 grid grid-cols-1 md:grid-cols-[2fr_1fr_1fr] gap-4">
