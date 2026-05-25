@@ -318,8 +318,13 @@ def main():
         js_api=Api()
     )
     
-    # Register the shim injection
-    webview.start(func=initialize_shim, args=window, debug=False)
+    # Register the shim injection.
+    # `debug` is opt-in via NT_WEBVIEW_DEBUG=1. When enabled, pywebview exposes
+    # the WebView2 DevTools (right-click → Inspecionar), which is the only way
+    # to capture network requests / console logs from inside the portable .exe.
+    # Off by default so production users don't see a "Inspecionar" item.
+    _debug = os.environ.get("NT_WEBVIEW_DEBUG", "").strip() in ("1", "true", "yes")
+    webview.start(func=initialize_shim, args=window, debug=_debug)
 
 if __name__ == '__main__':
     main()

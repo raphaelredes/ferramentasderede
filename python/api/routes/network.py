@@ -257,6 +257,10 @@ def update_host(address: str, update: HostUpdate):
         #   1. exact (fast path)
         #   2. case-insensitive on .address
         #   3. .ip equality (covers the resolved-IP variant)
+        #   4. stats.ip equality from the live monitor — needed because
+        #      `host.ip` in the DB stores the hostname (when cadastrado por
+        #      nome), so steps 1–3 don't cover the case where the frontend
+        #      passes the *resolved* IP it got from /network/monitor.
         target_host = next((h for h in current_hosts if h.address == address), None)
         if not target_host:
             addr_lower = address.lower() if isinstance(address, str) else address
@@ -266,8 +270,32 @@ def update_host(address: str, update: HostUpdate):
                  or (h.ip or "").lower() == addr_lower),
                 None,
             )
+        if not target_host:
+            # Last resort: ask the live monitor for hosts whose resolved IP
+            # matches `address`. This covers operators cadastrando por hostname
+            # — the DB row's `ip` column is the hostname, while the resolved
+            # IPv4 lives only in monitor stats.
+            try:
+                monitor_stats = host_monitor.get_stats() or {}
+                resolved_match = None
+                for monitored_addr, st in monitor_stats.items():
+                    st_ip = (st or {}).get("ip") if isinstance(st, dict) else None
+                    if st_ip and (st_ip == address or st_ip.lower() == addr_lower):
+                        resolved_match = monitored_addr
+                        break
+                if resolved_match:
+                    target_host = next(
+                        (h for h in current_hosts if h.address == resolved_match),
+                        None,
+                    )
+            except Exception as e:
+                logging.debug(f"update_host: monitor-stats fallback failed: {e}")
 
         if not target_host:
+            logging.warning(
+                f"update_host: 404 for address={address!r}. "
+                f"Known addresses: {[h.address for h in current_hosts][:20]}"
+            )
             raise HTTPException(status_code=404, detail="Host não encontrado.")
 
         # Use the host's real address for downstream writes — the URL param
