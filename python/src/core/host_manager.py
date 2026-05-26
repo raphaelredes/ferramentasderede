@@ -73,7 +73,12 @@ class HostManager:
             for h in db_hosts:
                 self.hosts.append({
                     'name': h['hostname'], # UI usa 'name'
-                    'ip': h['address'],    # UI usa 'ip'
+                    'ip': h['address'],    # UI usa 'ip' (PK do DB, pode ser hostname)
+                    # resolved_ip: IPv4 efetivo do host. Quando `address` é
+                    # um hostname, este é o valor que a UI quer mostrar como
+                    # "Endereço IP". Não é PK — só metadado descobrível por
+                    # DNS forward (monitor + refresh manual).
+                    'resolved_ip': h.get('resolved_ip'),
                     'domain': h.get('domain'),
                     'mac': h['mac'],
                     'nickname': h['description'],
@@ -286,6 +291,22 @@ class HostManager:
         except Exception as e:
             logging.exception(f"Erro ao atualizar IP do host {host_name}: {e}")
         return False
+
+    def update_resolved_ip(self, address, resolved_ip):
+        """Persist the host's forward-resolved IPv4 (DB column resolved_ip).
+
+        Called by the monitor after a successful DNS forward lookup and by the
+        refresh_host route. Cheap UPDATE on a single column — no DELETE+INSERT
+        round-trip. In-memory mirror updated so the next get_all_hosts call
+        reflects the new value without going to disk.
+        """
+        if not address or not resolved_ip:
+            return False
+        for host in self.hosts:
+            if host.get('ip') == address:
+                host['resolved_ip'] = resolved_ip
+                break
+        return db.update_host_fields(address, {'resolved_ip': resolved_ip})
 
     def update_host_details(self, ip, hostname=None, domain=None):
         """Atualiza hostname/domínio de um host. Usa o write lock + retry do DatabaseManager."""

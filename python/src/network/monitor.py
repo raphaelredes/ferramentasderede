@@ -316,6 +316,16 @@ class HostMonitor:
                             callback(ip, {'ip': resolved_ip})
                         except Exception:
                             logging.exception(f"on_update_callback raised for {ip}")
+                    # Persistir o IPv4 resolvido na coluna `resolved_ip` do DB.
+                    # Diferente do in-memory `_hosts[ip]['ip']` (que some quando
+                    # o app reinicia), isto sobrevive restarts — então um host
+                    # cadastrado pelo hostname já mostra o IP correto no card
+                    # no boot seguinte, antes do monitor terminar o primeiro
+                    # round de DNS.
+                    try:
+                        self._host_manager.update_resolved_ip(ip, resolved_ip)
+                    except Exception:
+                        logging.debug(f"update_resolved_ip failed for {ip}", exc_info=True)
                 except Exception:
                     pass
 

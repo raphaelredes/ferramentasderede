@@ -95,6 +95,7 @@ class DatabaseManager:
                         current_user TEXT,                 -- last known interactive user (host-probe)
                         last_boot TEXT,                    -- last known LastBootUpTime (host-probe)
                         system_disk_free_gb REAL,          -- free space on SystemDrive in GB (host-probe)
+                        resolved_ip TEXT,                  -- forward-resolved IPv4 when `address` is a hostname; survives restarts
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
@@ -134,6 +135,10 @@ class DatabaseManager:
                 'current_user': 'TEXT',
                 'last_boot': 'TEXT',
                 'system_disk_free_gb': 'REAL',
+                # forward-DNS result when `address` is a hostname. Lets the UI
+                # show the real IP without depending on the in-memory monitor
+                # state (which is lost on restart).
+                'resolved_ip': 'TEXT',
             }
             
             # One-time cleanup: hosts created by older versions persisted the
@@ -311,6 +316,7 @@ class DatabaseManager:
             'monitoring', 'vendor', 'type', 'teamviewer_id',
             'last_checked', 'last_status',
             'current_user', 'last_boot', 'system_disk_free_gb',
+            'resolved_ip',
         }
         # tags/ports are JSON columns — handle them explicitly if needed.
         sanitized = {k: v for k, v in fields.items() if k in allowed}

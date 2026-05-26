@@ -246,6 +246,41 @@ def refresh_host(address: str):
 
         host_manager_instance.update_host_details(canonical_address, hostname=hostname, domain=domain)
 
+        # Forward-DNS: if `address` is a hostname, resolve and persist the
+        # IPv4 so the card's "Endereço IP" stops showing the hostname after
+        # an explicit refresh. Uses the per-network dns_server when the
+        # host's IP belongs to a configured VLAN — otherwise system resolver.
+        import ipaddress as _ip
+        try:
+            _ip.ip_address(canonical_address)
+            is_hostname = False
+        except ValueError:
+            is_hostname = True
+        if is_hostname:
+            try:
+                from src.network import dns_resolver
+                # Pick the network's DNS server when we already know which
+                # VLAN this host lives on. Falls back to system resolver
+                # otherwise. The per-network DNS matters in multi-domain
+                # environments where the same shortname exists in both ADs.
+                dns_server = None
+                if target_host.network_id:
+                    try:
+                        from api.routes.settings import load_settings
+                        settings = load_settings()
+                        for net in (settings.networks or []):
+                            if net.id == target_host.network_id:
+                                dns_server = net.dns_server
+                                break
+                    except Exception:
+                        pass
+                new_ip = dns_resolver.resolve_hostname(canonical_address, dns_server=dns_server)
+                if new_ip:
+                    target_host.ip = new_ip
+                    host_manager_instance.update_resolved_ip(canonical_address, new_ip)
+            except Exception as e:
+                logging.debug(f"refresh_host: forward-DNS for {canonical_address!r} failed: {e}")
+
         return {"status": "success", "message": "Informações atualizadas.", "host": target_host}
     except HTTPException as he:
         raise he
@@ -452,12 +487,41 @@ def get_hosts_list():
     Each host also gets `network_id` / `network_name` inferred from its IP
     against the user-configured networks (Settings → Redes / VLANs).
     """
+    import re as _re
+    _IPV4_RE = _re.compile(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$")
     raw_hosts = host_manager_instance.get_all_hosts()
     configured = _load_configured_networks()
+    # Live monitor snapshot — used as a last-resort source for the resolved
+    # IP when the DB column is still empty (host added recently, monitor
+    # already resolved but the update_resolved_ip persistence hasn't fired
+    # yet, etc.). Cheap dict copy.
+    try:
+        monitor_snapshot = host_monitor.get_stats() or {}
+    except Exception:
+        monitor_snapshot = {}
     hosts = []
     for item in raw_hosts:
-        ip = item.get("ip")
-        net_id, net_name = _match_network(ip, configured)
+        # `address` is the DB PK. May be either an IPv4 literal (host
+        # cadastrado pelo IP) or a hostname (cadastrado pelo nome).
+        address = item.get("ip")
+        # Resolved IPv4 — best-of-three:
+        #   1. DB column `resolved_ip` (persisted by monitor on forward-DNS)
+        #   2. monitor.stats[address].ip (in-memory; survives restart only
+        #      until the next DNS cycle)
+        #   3. address itself, if it's already an IPv4 literal
+        resolved_ip = item.get("resolved_ip")
+        if not resolved_ip:
+            st = monitor_snapshot.get(address) if address else None
+            if isinstance(st, dict):
+                cand = st.get("ip")
+                if cand and _IPV4_RE.match(cand):
+                    resolved_ip = cand
+        if not resolved_ip and address and _IPV4_RE.match(address):
+            resolved_ip = address
+
+        # Network match uses the *actual IP*, not the hostname — VLAN
+        # detection by CIDR is meaningless on a non-IP value.
+        net_id, net_name = _match_network(resolved_ip, configured)
         resolved_hostname = item.get("name")          # DNS-resolved
         nickname = item.get("nickname")               # operator label (DB description)
         # Display name fallback chain:
@@ -465,16 +529,19 @@ def get_hosts_list():
         # Never "Unknown". Operators want the card to show *something useful*
         # at a glance even before the monitor has resolved DNS; the IP is the
         # least-bad fallback and is always present.
-        display_name = nickname or resolved_hostname or ip
+        display_name = nickname or resolved_hostname or address
         hosts.append(Host(
             name=display_name,
-            address=ip,
+            address=address,
             type=item.get("type", "generic"),
             mac=item.get("mac"),
             vendor=item.get("vendor"),
             hostname=resolved_hostname,
             domain=item.get("domain"),
-            ip=ip,
+            # Frontend's `host.ip` is now ALWAYS the real IPv4 (or None when
+            # nothing was resolved yet). Operators clicking "Copiar IP" or
+            # using a quick action no longer get a hostname back.
+            ip=resolved_ip,
             last_status=item.get("last_status"),
             last_checked=item.get("last_checked"),
             group=item.get("group"),
@@ -557,14 +624,34 @@ def add_host(host: Host):
             'teamviewer_id': host.teamviewer_id
         }
         success, message = host_manager_instance.add_host(new_host_data)
-        
+
         if not success:
              raise HTTPException(status_code=400, detail=message)
-        
+
+        # If the operator added the host by hostname, resolve the IPv4
+        # synchronously *once* and persist it. The monitor will eventually
+        # do this on its own (5s DNS loop), but doing it now means the card
+        # shows the real IP from the very first GET /hosts after add — no
+        # "hostname-in-the-IP-column" beat to confuse the operator.
+        import ipaddress as _ip
+        try:
+            _ip.ip_address(host.address)
+            is_hostname = False
+        except ValueError:
+            is_hostname = True
+        if is_hostname:
+            try:
+                from src.network import dns_resolver
+                resolved = dns_resolver.resolve_hostname(host.address)
+                if resolved:
+                    host_manager_instance.update_resolved_ip(host.address, resolved)
+            except Exception as e:
+                logging.debug(f"add_host: forward-DNS for {host.address!r} failed: {e}")
+
         # Update monitor
         current_hosts = get_hosts_list()
         host_monitor.update_hosts([h.model_dump() for h in current_hosts])
-            
+
         return {"status": "success", "message": f"Host {host.name} adicionado."}
     except HTTPException as he: raise he
     except Exception as e: raise HTTPException(status_code=500, detail=f"Erro ao salvar host: {str(e)}")
