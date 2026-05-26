@@ -553,13 +553,19 @@ export const HostCard = memo(function HostCard({
                                     Traceroute
                                 </button>
                                 <button
-                                    onClick={(e) => {
+                                    onClick={async (e) => {
                                         e.stopPropagation();
-                                        if (onUpdateHost) {
-                                            onUpdateHost(host.address, { reset_stats: true });
-                                            showToast('Estatísticas de ping reiniciadas', 'success');
-                                        }
                                         setContextMenu(null);
+                                        if (!onUpdateHost) return;
+                                        // Wait on the PATCH before announcing success — the
+                                        // previous fire-and-forget toast lied when the backend
+                                        // 404'd or the host wasn't found in the monitor.
+                                        const ok = await onUpdateHost(host.address, { reset_stats: true });
+                                        if (ok) {
+                                            showToast('Estatísticas de ping reiniciadas', 'success');
+                                        } else {
+                                            showToast('Erro ao reiniciar estatísticas', 'error');
+                                        }
                                     }}
                                     className="w-full px-3 py-2 text-left text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white flex items-center gap-2"
                                 >

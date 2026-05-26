@@ -195,10 +195,29 @@ class HostMonitor:
                 self._inflight.discard(ip)
 
     def reset_host_stats(self, ip: str):
-        """Reseta as estatísticas de ping para um host específico."""
+        """Reseta as estatísticas de ping para um host específico.
+
+        Matches the host key case-insensitively. DB column `address` can drift
+        in case (DNS reverse occasionally returns the hostname lowercase, and
+        a save round-trip would persist that). When that happens, the route
+        layer's case-insensitive lookup finds the host but the canonical
+        address comes back in whichever case the DB has — which may differ
+        from the case the monitor was originally seeded with. Without the
+        normalization here, `if ip in self._hosts` would miss and reset
+        would silently no-op.
+        """
         with self._lock:
+            actual_key = None
             if ip in self._hosts:
-                stats = self._hosts[ip]
+                actual_key = ip
+            else:
+                ip_lower = ip.lower() if isinstance(ip, str) else ip
+                for k in self._hosts:
+                    if isinstance(k, str) and k.lower() == ip_lower:
+                        actual_key = k
+                        break
+            if actual_key is not None:
+                stats = self._hosts[actual_key]
                 stats['latency'] = None
                 stats['average_latency'] = None
                 stats['packet_loss'] = 0

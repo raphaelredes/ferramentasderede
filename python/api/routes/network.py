@@ -204,20 +204,47 @@ def _resolve_fqdn_for_host(ip_address: str):
 def refresh_host(address: str):
     try:
         current_hosts = get_hosts_list()
+        # Same lookup tolerance as update_host: exact → case-insensitive →
+        # host.ip → monitor stats.ip. Operators clicking "refresh" from the
+        # popup may have stats.ip on display; we shouldn't 404 that.
         target_host = next((h for h in current_hosts if h.address == address), None)
+        if not target_host:
+            addr_lower = address.lower() if isinstance(address, str) else address
+            target_host = next(
+                (h for h in current_hosts
+                 if (h.address or "").lower() == addr_lower
+                 or (h.ip or "").lower() == addr_lower),
+                None,
+            )
+        if not target_host:
+            try:
+                monitor_stats = host_monitor.get_stats() or {}
+                for monitored_addr, st in monitor_stats.items():
+                    st_ip = (st or {}).get("ip") if isinstance(st, dict) else None
+                    if st_ip and (st_ip == address or st_ip.lower() == addr_lower):
+                        target_host = next(
+                            (h for h in current_hosts if h.address == monitored_addr),
+                            None,
+                        )
+                        if target_host:
+                            break
+            except Exception as e:
+                logging.debug(f"refresh_host: monitor-stats fallback failed: {e}")
 
         if not target_host:
             raise HTTPException(status_code=404, detail="Host não encontrado.")
 
-        hostname, domain = _resolve_fqdn_for_host(address)
+        # Use the host's canonical address for the resolver and persistence —
+        # not the URL param, which may have been the resolved IP or a
+        # case-drifted form.
+        canonical_address = target_host.address
+
+        hostname, domain = _resolve_fqdn_for_host(canonical_address)
         if hostname:
             target_host.hostname = hostname
             target_host.domain = domain
 
-        if address and address != "N/A":
-            target_host.ip = address
-
-        host_manager_instance.update_host_details(address, hostname=hostname, domain=domain)
+        host_manager_instance.update_host_details(canonical_address, hostname=hostname, domain=domain)
 
         return {"status": "success", "message": "Informações atualizadas.", "host": target_host}
     except HTTPException as he:

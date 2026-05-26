@@ -171,21 +171,21 @@ export default function Dashboard() {
         }
     };
 
-    const handleToggleMonitoring = useCallback((e: React.MouseEvent, host: Host) => {
+    const handleToggleMonitoring = useCallback(async (e: React.MouseEvent, host: Host) => {
         e.stopPropagation();
         const newStatus = host.monitoring === false;
 
-        fetch(`${API_BASE}/hosts/${host.address}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ monitoring: newStatus })
-        }).then(() => {
+        // Use the centralized updateHost helper — same code path as nickname /
+        // ports / reset_stats. Inline fetch was missing two things: URL-encode
+        // and a `response.ok` check (a 404 from the backend was being treated
+        // as success here, while the .catch only fired on a network error).
+        const ok = await updateHost(host.address, { monitoring: newStatus });
+        if (ok) {
             fetchHosts();
-        }).catch(err => {
-            console.error("Failed to toggle monitoring:", err);
+        } else {
             showToast('Erro ao atualizar monitoramento', 'error');
-        });
-    }, [fetchHosts, showToast]);
+        }
+    }, [fetchHosts, showToast, updateHost]);
 
     // Details Modal Handlers
     const handleModalCopy = (text: string, type: 'ip' | 'hostname') => {
