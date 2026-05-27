@@ -146,7 +146,14 @@ app.add_middleware(
     # future compromise of one of the allowed origins (the static webview port
     # has no auth and could be replaced by a malicious local process) gets to
     # speak any verb with any header. Keep the surface narrow.
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    # PATCH must be in this list — the frontend uses it for /hosts/{address}
+    # (rename, ports, monitoring, reset_stats). Without PATCH, the preflight
+    # OPTIONS reply lists only GET/POST/PUT/DELETE/OPTIONS, browsers (Chromium
+    # / WebView2) reject the actual PATCH with a CORS error, the fetch throws
+    # TypeError "Failed to fetch", and the UI shows the generic "Erro ao
+    # atualizar". curl bypasses preflight so it worked in isolation, hiding
+    # the bug for several iterations.
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "X-Temp-Auth", "Authorization"],
 )
 
