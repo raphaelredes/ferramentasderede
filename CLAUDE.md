@@ -122,11 +122,17 @@ Se mexeu em arquivos do backend que estão importados em runtime, vale rodar `py
 
 ### Bumpar versão do app
 
+**Regra obrigatória de release** (registrada por solicitação do dono em 2026-05-27):
+
+> Toda atualização do `.exe` portátil que ship pra usuário (Desktop ou GitHub release) **deve** bumpar a versão e ter as correções listadas no `AboutModal`. Não distribuir `.exe` regerado com a mesma versão — usuário não consegue distinguir builds e perde o registro do que mudou.
+
 **Fonte única: [electron/package.json](electron/package.json)** — campo `version`. Tudo o mais deriva dela.
 
-1. Editar `version` em `electron/package.json`.
-2. Adicionar entrada no topo do array `CHANGELOG` em [electron/src/data/changelog.ts](electron/src/data/changelog.ts). Cada mudança é tipada por `kind`: `feat | fix | perf | security | ui | refactor | docs`. **Não edite o `APP_VERSION`** — ele é importado de `package.json`.
+1. Editar `version` em `electron/package.json` (incrementar patch, minor ou major conforme escopo das mudanças).
+2. Adicionar entrada no topo do array `CHANGELOG` em [electron/src/data/changelog.ts](electron/src/data/changelog.ts). Cada mudança é tipada por `kind`: `feat | fix | perf | security | ui | refactor | docs`. **Não edite o `APP_VERSION`** — ele é importado de `package.json`. **Liste todos os commits desde a tag anterior** (`git log --oneline vX.Y.Z..HEAD`) para que o operador veja o que mudou ao clicar em "Versão X.Y.Z" no Sobre.
 3. `cd electron && npm install --package-lock-only` para sincronizar `package-lock.json`.
+4. Rebuild do portátil (`build_system.bat` ou `python/build_exe.bat`). Asset final é `python/dist/Ferramentas.de.Rede.v<versão>.exe`.
+5. Substituir o `.exe` em todos os locais de distribuição (Desktop do dono, GitHub release `gh release upload v<versão> --clobber`, etc.). Tag git nova só quando for release pública (eg. `git tag v1.2.5 && git push --tags`).
 
 Derivações automáticas:
 - Backend Python lê em runtime via `src/config/settings.py:_read_app_version()` (cai em ENV `NT_APP_VERSION` se setado, depois `electron/package.json` no checkout, depois no bundle PyInstaller).

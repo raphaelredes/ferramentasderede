@@ -17,14 +17,27 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
     {
+        version: '1.2.5',
+        date: '2026-05-27',
+        title: 'Ações do card funcionando + IP real + Guia de Comandos',
+        changes: [
+            { kind: 'fix', text: 'CORS allow_methods agora inclui PATCH. Sem isso, o preflight OPTIONS respondia "GET, POST, PUT, DELETE, OPTIONS" e o WebView2 bloqueava toda PATCH cross-origin com TypeError "Failed to fetch" — os 4 botões do card (renomear apelido, adicionar porta, reiniciar métricas, alternar monitoramento) caíam silenciosamente. curl não dispara preflight, então o bug escapou de testes manuais.' },
+            { kind: 'feat', text: 'host.ip agora é SEMPRE o IPv4 real, nunca o hostname. Nova coluna resolved_ip no DB persiste o forward-DNS resolvido (sobrevive restart). add_host faz resolução síncrona ao cadastrar pelo nome; refresh_host (botão do popup) força nova resolução com o dns_server da rede do host. _match_network passa a usar o IP resolvido para detectar VLAN.' },
+            { kind: 'feat', text: 'Botão "Guia de Comandos" no Terminal Remoto abre modal de consulta rápida com snippets PowerShell organizados por seção (rede, diagnósticos, disco, usuários/sessões, sistema/processos). Cada bloco tem botão de copiar e os destrutivos têm aviso amarelo (logoff, Restart-Computer -Force, Disable-NetAdapter etc.). Busca por palavra-chave.' },
+            { kind: 'feat', text: 'Popup de detalhes do host agora mostra "Offline desde X" quando o monitor detectou uma transição online→offline, com wall-clock e label relativo "há X" que tica enquanto o popup está aberto. Limpado automaticamente quando o host volta a responder.' },
+            { kind: 'fix', text: 'Campo "Endereço IP" do popup de detalhes mostrava o hostname quando o host era cadastrado pelo nome. Agora um helper ipForHost(host) prefere stats.ip → host.ip → host.address (todos validados como literal IPv4). Quando nada bate, exibe "Não disponível" em vez do hostname.' },
+            { kind: 'fix', text: 'PATCH /hosts/{address} agora aceita lookup em 4 níveis: exato → case-insensitive → host.ip → monitor.stats.ip. Cobre o caso em que o frontend envia o IP resolvido em vez da PK. Frontend URL-encoda o address e expõe o detail do backend no console em vez do genérico "Erro ao atualizar".' },
+            { kind: 'fix', text: 'Ações do card foram unificadas no helper updateHost (URL-encode + response.ok check + erro real surfaceado). Toggle monitoramento agora retorna toast de erro quando falha (antes ignorava response.ok). Reiniciar Métricas aguarda a Promise antes de exibir "sucesso" — não mais mensagens enganosas.' },
+            { kind: 'fix', text: 'Backend reset_host_stats agora faz lookup case-insensitive da key do monitor — quando o address sofreu drift de case (DNS reverse retornando lowercase), o reset deixava de funcionar silenciosamente.' },
+            { kind: 'security', text: 'Hardening do portátil: NT_API_HOST/NT_API_PORT respeitados no main_webview.py (antes hardcoded 127.0.0.1:8000); /network/status com validação shape; saveFileAs do pywebview com validação de filename igual ao Electron handler; resolver do sistema substituído por dns_resolver no monitor + check_status; VaultContext com backoff exponencial em vez de setInterval fixo; electron-builder.yml removido e script "build" do package.json neutralizado.' },
+            { kind: 'docs', text: 'Regra de release: a partir desta versão, toda atualização do .exe deve bumpar a versão (1.2.4 → 1.2.5 → …) e ter as correções listadas no AboutModal (CHANGELOG em changelog.ts). Aplicado no CLAUDE.md como regra obrigatória.' },
+        ],
+    },
+    {
         version: '1.2.4',
         date: '2026-05-11',
         title: 'Coleta oportunista de informações + UX refinada',
         changes: [
-            { kind: 'feat', text: 'Botão "Guia de Comandos" no Terminal Remoto abre modal de consulta rápida com snippets PowerShell organizados por seção (rede, diagnósticos, disco, usuários/sessões, sistema/processos). Cada bloco tem botão de copiar e os destrutivos têm aviso amarelo (logoff, Restart-Computer -Force, Disable-NetAdapter etc.). Busca por palavra-chave.' },
-            { kind: 'feat', text: 'Popup de detalhes do host agora mostra "Offline desde X" quando o monitor detectou uma transição online→offline, com wall-clock e label relativo "há X" que tica enquanto o popup está aberto. Limpado automaticamente quando o host volta a responder.' },
-            { kind: 'fix', text: 'Campo "Endereço IP" do popup de detalhes mostrava o hostname quando o host era cadastrado pelo nome (e o monitor ainda não tinha resolvido). Agora um helper ipForHost(host) prefere stats.ip → host.ip → host.address (todos validados como literal IPv4). Quando nada bate, exibe "Não disponível" em vez do hostname.' },
-            { kind: 'fix', text: 'PATCH /hosts/{address} agora aceita lookup case-insensitive e cai para match por host.ip quando o caller envia o IP resolvido em vez da PK. Frontend URL-encoda o address e surfaca o detail do backend no console em caso de erro (não mais "Erro ao atualizar" genérico).' },
             { kind: 'feat', text: 'Quando o operador autentica em um host para qualquer ação (Terminal Remoto, TestConnection, Power Action, abrir Detalhes Avançados, buscar TeamViewer ID), agora coletamos em background MAC, domínio AD real, usuário atual, último boot e disco livre — tudo persistido sem o operador precisar fazer nada extra. Novo endpoint /system/host-probe + script PowerShell enxuto.' },
             { kind: 'feat', text: 'Confirmação pré-shutdown/restart: novo diálogo mostra uptime, sessões ativas e reinício pendente antes de mandar a ação. Auto-skip quando não há nada para avisar. Endpoint /system/pre-power-check + heurística shouldWarn.' },
             { kind: 'feat', text: 'Terminal Remoto agora tem picker de hosts do painel com busca, indicador online/offline e opção "Digitar manualmente". Selecionar um host preenche o IP e o prefixo de domínio (DOMINIO\\) automaticamente; trocar de host troca o domínio preservando a parte do usuário.' },
