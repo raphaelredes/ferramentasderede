@@ -194,28 +194,37 @@ class DatabaseManager:
             logging.exception(f"Erro ao buscar hosts: {e}")
             return []
 
-    _UPSERT_SQL = """
-        INSERT INTO hosts (address, hostname, domain, mac, description, group_name, tags, ports, monitoring, vendor, type, teamviewer_id, last_checked, last_status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(address) DO UPDATE SET
-            hostname=excluded.hostname,
-            domain=excluded.domain,
-            mac=excluded.mac,
-            description=excluded.description,
-            group_name=excluded.group_name,
-            tags=excluded.tags,
-            ports=excluded.ports,
-            monitoring=excluded.monitoring,
-            vendor=excluded.vendor,
-            type=excluded.type,
-            teamviewer_id=excluded.teamviewer_id,
-            last_checked=excluded.last_checked,
-            last_status=excluded.last_status,
-            updated_at=CURRENT_TIMESTAMP
-    """
+    # Single source of truth for the columns we write through save_host /
+    # bulk_save_hosts / replace_all_hosts. Listing them once avoids the bug
+    # where _UPSERT_SQL and the replace_all_hosts INSERT drift out of sync
+    # — which is how `resolved_ip` and the host-probe columns (current_user,
+    # last_boot, system_disk_free_gb) silently got zeroed on every PATCH
+    # that went through the slow path.
+    _WRITE_COLUMNS = [
+        'address', 'hostname', 'domain', 'mac', 'description', 'group_name',
+        'tags', 'ports', 'monitoring', 'vendor', 'type', 'teamviewer_id',
+        'last_checked', 'last_status',
+        'resolved_ip',
+        'current_user', 'last_boot', 'system_disk_free_gb',
+    ]
+    _UPSERT_SQL = (
+        f"INSERT INTO hosts ({', '.join(_WRITE_COLUMNS)}) "
+        f"VALUES ({', '.join(['?'] * len(_WRITE_COLUMNS))}) "
+        "ON CONFLICT(address) DO UPDATE SET "
+        + ", ".join(
+            f"{col}=excluded.{col}"
+            for col in _WRITE_COLUMNS
+            if col != 'address'
+        )
+        + ", updated_at=CURRENT_TIMESTAMP"
+    )
 
     @staticmethod
     def _row_params(host: Dict[str, Any]):
+        """Tuple matching _WRITE_COLUMNS order. Adding a column here means:
+        (1) extend _WRITE_COLUMNS, (2) append the value here, (3) update
+        update_hosts in HostManager to pass it through. Otherwise the column
+        gets `NULL` written on every replace_all_hosts pass."""
         return (
             host.get('address'),
             host.get('hostname'),
@@ -231,6 +240,10 @@ class DatabaseManager:
             str(host.get('teamviewer_id')) if host.get('teamviewer_id') is not None else None,
             host.get('last_checked'),
             host.get('last_status'),
+            host.get('resolved_ip'),
+            host.get('current_user'),
+            host.get('last_boot'),
+            host.get('system_disk_free_gb'),
         )
 
     @_retry_on_locked()
@@ -337,19 +350,24 @@ class DatabaseManager:
 
     @_retry_on_locked()
     def replace_all_hosts(self, hosts: List[Dict[str, Any]]) -> bool:
-        """Substitui todos os hosts atomicamente (DELETE + INSERT na mesma transação)."""
+        """Substitui todos os hosts atomicamente (DELETE + INSERT na mesma transação).
+
+        Uses the same _WRITE_COLUMNS constant as save_host so that columns added
+        later (resolved_ip, current_user, last_boot, system_disk_free_gb) are
+        preserved across the DELETE/INSERT instead of silently NULLed. Before
+        the refactor the INSERT was a separate hard-coded list of 14 columns;
+        adding resolved_ip didn't update it, so every PATCH that went through
+        the slow path wiped the IP cache the monitor had just resolved.
+        """
+        cols = ", ".join(self._WRITE_COLUMNS)
+        placeholders = ", ".join(["?"] * len(self._WRITE_COLUMNS))
+        sql = f"INSERT INTO hosts ({cols}) VALUES ({placeholders})"
         with self._write_lock:
             try:
                 with self._get_connection() as conn:
                     cursor = conn.cursor()
                     cursor.execute("DELETE FROM hosts")
-                    cursor.executemany(
-                        """
-                        INSERT INTO hosts (address, hostname, domain, mac, description, group_name, tags, ports, monitoring, vendor, type, teamviewer_id, last_checked, last_status)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        [self._row_params(h) for h in hosts],
-                    )
+                    cursor.executemany(sql, [self._row_params(h) for h in hosts])
                     conn.commit()
                     return True
             except Exception as e:

@@ -4,6 +4,7 @@ import { Area, AreaChart, ResponsiveContainer } from 'recharts';
 import { Host, HostStatistics, HostUpdate } from '../../types';
 import { RemoteAccessModal } from './RemoteAccessModal';
 import { useToast } from '../../contexts/ToastContext';
+import { ipForHost } from '../../utils/ipForHost';
 
 interface HostCardProps {
     host: Host;
@@ -269,27 +270,43 @@ export const HostCard = memo(function HostCard({
                                 })()}
                             </div>
                             <div className="flex items-center gap-2 group/ip">
-                                <p className="text-xs text-zinc-500 font-mono">{stats.ip || host.ip || (/\d+\.\d+\.\d+\.\d+/.test(host.address) ? host.address : 'Resolvendo...')}</p>
-                                {host.network_name && (
-                                    <span
-                                        className="px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 text-[10px] font-medium border border-blue-500/20 truncate max-w-[120px]"
-                                        title={`Rede: ${host.network_name}`}
-                                    >
-                                        {host.network_name}
-                                    </span>
-                                )}
-                                <button
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        navigator.clipboard.writeText(stats.ip || host.ip || host.address);
-                                        showToast('Endereço IP copiado!', 'success');
-                                    }}
-                                    className="opacity-0 group-hover/ip:opacity-100 p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-white transition-all"
-                                    title="Copiar IP"
-                                    aria-label={`Copiar IP ${stats.ip || host.ip || host.address}`}
-                                >
-                                    <Copy size={12} aria-hidden="true" />
-                                </button>
+                                {/* Same resolution discipline as the popup: only show an IPv4
+                                    literal here, never the hostname. Before this, hosts cadastrados
+                                    por nome levavam `host.address` (= hostname) para a coluna do
+                                    IP, e o botão "Copiar IP" copiava o hostname. */}
+                                {(() => {
+                                    const ip = ipForHost({ ip: host.ip, address: host.address, stats });
+                                    return (
+                                        <>
+                                            <p className="text-xs text-zinc-500 font-mono">{ip ?? 'Resolvendo...'}</p>
+                                            {host.network_name && (
+                                                <span
+                                                    className="px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 text-[10px] font-medium border border-blue-500/20 truncate max-w-[120px]"
+                                                    title={`Rede: ${host.network_name}`}
+                                                >
+                                                    {host.network_name}
+                                                </span>
+                                            )}
+                                            <button
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    if (!ip) {
+                                                        showToast('IP ainda não resolvido', 'error');
+                                                        return;
+                                                    }
+                                                    navigator.clipboard.writeText(ip);
+                                                    showToast('Endereço IP copiado!', 'success');
+                                                }}
+                                                disabled={!ip}
+                                                className="opacity-0 group-hover/ip:opacity-100 p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-white transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                                                title={ip ? 'Copiar IP' : 'IP ainda não resolvido'}
+                                                aria-label={ip ? `Copiar IP ${ip}` : 'IP ainda não resolvido'}
+                                            >
+                                                <Copy size={12} aria-hidden="true" />
+                                            </button>
+                                        </>
+                                    );
+                                })()}
                             </div>
                         </div>
                     </div>

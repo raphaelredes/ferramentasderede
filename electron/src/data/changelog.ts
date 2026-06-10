@@ -17,6 +17,20 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
     {
+        version: '1.2.6',
+        date: '2026-06-10',
+        title: 'Revisão profunda: replace_all_hosts não apaga mais campos novos',
+        changes: [
+            { kind: 'fix', text: 'replace_all_hosts (DELETE+INSERT da tabela inteira, usado em todo PATCH de nome/grupo/portas/monitoramento) listava só 14 colunas no INSERT — não incluía resolved_ip, current_user, last_boot, system_disk_free_gb. Resultado: cada PATCH zerava o IP resolvido e os dados de host-probe (usuário atual, último boot, disco livre). O monitor reescrevia o IP em ~5s mas os campos do probe ficavam perdidos até a próxima autenticação. Agora o SQL é construído a partir da constante _WRITE_COLUMNS — adicionar uma coluna nova passa a ser único ponto de edição.' },
+            { kind: 'fix', text: 'update_host_details(ip, mac=...) chamado pelo monitor disparava TypeError engolido pelo except — a assinatura só aceitava hostname e domain. MAC só chegava ao DB via outro caminho (callback do tick), escondendo o silent-fail. Agora aceita mac= também.' },
+            { kind: 'fix', text: 'HostCard mostrava host.ip || host.address na coluna do IP, e o botão "Copiar IP" copiava host.address — para hosts cadastrados pelo nome isso vazava o hostname. Agora usa o helper ipForHost compartilhado com o popup (movido para utils/ipForHost.ts) com validação IPv4 estrita. Botão de copiar fica desabilitado enquanto resolução não termina.' },
+            { kind: 'fix', text: 'Sort por IP em useFilteredHosts.ts virava NaN-compare quando o host era cadastrado pelo nome (hostname.split(".") = [NaN, NaN, ...]). Agora prefere host.ip resolvido e cai em 0.0.0.0 quando ambos são hostnames — sort estável.' },
+            { kind: 'perf', text: '_dns_loop do monitor recriava um ThreadPoolExecutor(16) a cada ciclo de 5s — sob 100+ hosts isso era ~16 thread spawn/s gratuito. Agora o pool é persistente, criado uma vez e shutdown no fim do loop.' },
+            { kind: 'refactor', text: 'Hook useHosts.ts (legado, não-importado) removido — 110 linhas de polling sem AbortController/backoff/null-safety que confundiam future-readers. MonitoringContext é o único caminho.' },
+            { kind: 'refactor', text: 'electron-builder removido das devDependencies. O script "build" do package.json já estava neutralizado (aborta com mensagem apontando build_system.bat) — o pacote era dead weight cobrindo ~70% das 27 vulnerabilidades do npm audit.' },
+        ],
+    },
+    {
         version: '1.2.5',
         date: '2026-05-27',
         title: 'Ações do card funcionando + IP real + Guia de Comandos',

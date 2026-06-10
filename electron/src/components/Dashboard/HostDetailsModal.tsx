@@ -6,25 +6,7 @@ import { RemoteAccessModal } from './RemoteAccessModal';
 import { API_BASE } from '../../config/api';
 import { useEscapeToClose } from '../../hooks/useEscapeToClose';
 import { useToast } from '../../contexts/ToastContext';
-
-// IP resolution helper. Picks, in order:
-//   1. stats.ip — monitor's freshly-resolved IP (set when the host was added
-//      by hostname and forward-DNS later filled in the address).
-//   2. host.ip — backend-stored IP. For hosts cadastrados pelo hostname este
-//      campo pode conter o próprio hostname, então só aceitamos se parecer
-//      um literal IPv4.
-//   3. host.address — same shape constraint.
-// Returns null if no IP-shaped value is available yet — the UI renders a
-// "Não disponível" / "Resolvendo..." placeholder instead of showing the
-// hostname in the IP column.
-const IPV4_RE = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
-function ipForHost(host: Host): string | null {
-    const statsIp = host.stats?.ip;
-    if (statsIp && IPV4_RE.test(statsIp)) return statsIp;
-    if (host.ip && IPV4_RE.test(host.ip)) return host.ip;
-    if (host.address && IPV4_RE.test(host.address)) return host.address;
-    return null;
-}
+import { ipForHost } from '../../utils/ipForHost';
 
 // Human-friendly elapsed time, PT-BR. "2 dias, 3 h", "4 h 12 min", "37 min", "12 s".
 function formatElapsed(fromIso: string): string {

@@ -326,8 +326,11 @@ class HostMonitor:
                         self._host_manager.update_resolved_ip(ip, resolved_ip)
                     except Exception:
                         logging.debug(f"update_resolved_ip failed for {ip}", exc_info=True)
-                except Exception:
-                    pass
+                except Exception as _e:
+                    # Forward-DNS failure is expected (host offline, DNS down,
+                    # invalid hostname). Drop to debug so we have a breadcrumb
+                    # without spamming the operator's errors.log every 5s/host.
+                    logging.debug(f"forward DNS failed for {ip}: {_e}")
 
             # --- MAC Address Resolution (every ~5 min while online) ---
             needs_mac = False
@@ -357,33 +360,41 @@ class HostMonitor:
         """Loop dedicado para resolução de DNS / MAC em background.
 
         Anteriormente serial (~2s/host × N hosts era impraticável em rede
-        ampla). Agora despacha as resoluções em paralelo via ThreadPoolExecutor
-        — limitado a 16 workers para não exaurir file descriptors nem detonar
-        o DNS server.
+        ampla). Agora despacha as resoluções em paralelo via um
+        ThreadPoolExecutor persistente — limitado a 16 workers para não
+        exaurir file descriptors nem detonar o DNS server.
+
+        Pool é criado uma vez e reutilizado a cada ciclo. Antes o pool era
+        recriado a cada 5s dentro de um `with`, alocando/destruindo 16 OS
+        threads continuamente — sob 100+ hosts isso era ~16 thread spawn/s
+        gratuito.
         """
         from concurrent.futures import ThreadPoolExecutor
-        while self._running:
-            try:
-                with self._lock:
-                    hosts_to_resolve = list(self._hosts.keys())
+        dns_pool = ThreadPoolExecutor(max_workers=16, thread_name_prefix="dns-resolve")
+        try:
+            while self._running:
+                try:
+                    with self._lock:
+                        hosts_to_resolve = list(self._hosts.keys())
 
-                if hosts_to_resolve:
-                    workers = min(16, max(1, len(hosts_to_resolve)))
-                    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="dns-resolve") as pool:
-                        futures = [pool.submit(self._resolve_one_host, ip) for ip in hosts_to_resolve]
+                    if hosts_to_resolve:
+                        futures = [dns_pool.submit(self._resolve_one_host, ip) for ip in hosts_to_resolve]
                         for f in futures:
                             if not self._running:
                                 break
                             try:
                                 f.result(timeout=15)
-                            except Exception:
-                                pass
+                            except Exception as _e:
+                                logging.debug(f"DNS resolution task raised: {_e}")
 
-                # Sleep antes da próxima rodada completa.
-                time.sleep(5)
-            except Exception as e:
-                logging.error(f"Error in DNS loop: {e}")
-                time.sleep(5)
+                    # Sleep antes da próxima rodada completa.
+                    time.sleep(5)
+                except Exception as e:
+                    logging.error(f"Error in DNS loop: {e}")
+                    time.sleep(5)
+        finally:
+            # Não esperar tasks pendentes — o app pode estar fechando.
+            dns_pool.shutdown(wait=False, cancel_futures=True)
 
     def _process_host(self, ip: str, hostname: str):
         """Processa um único host: ping (DNS já resolvido em background)."""

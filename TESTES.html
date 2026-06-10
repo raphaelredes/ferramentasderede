@@ -201,7 +201,8 @@ Atualizado em <strong>2026-05-06</strong>. Ambiente alvo: rede ampla com 2 domí
     <li><a href="#sec-winrm">5. Acesso remoto (WinRM)</a></li>
     <li><a href="#sec-vendor">6. Vendor lookup &amp; logs</a></li>
     <li><a href="#sec-ux">7. UX &amp; regressões funcionais</a></li>
-    <li><a href="#troubleshoot">8. Troubleshooting</a></li>
+    <li><a href="#sec-v126">8. Novidades v1.2.5 / v1.2.6 ⭐</a></li>
+    <li><a href="#troubleshoot">9. Troubleshooting</a></li>
     <li><a href="#refs">9. Referência</a></li>
   </ul>
 </div>
@@ -534,7 +535,50 @@ Tentando variante de username: dominio-b.local\raphael</pre>
 </div>
 
 <hr>
-<h2 id="troubleshoot">8. Troubleshooting</h2>
+<h2 id="sec-v126">8. Novidades v1.2.5 / v1.2.6 ⭐</h2>
+
+<p>Cobertura para as mudanças das releases 1.2.5 (ações do card + IP real + Guia de Comandos) e 1.2.6 (persistência de colunas novas).</p>
+
+<div class="test new">
+  <div class="row"><span class="id">T8.1</span><span class="title">CORS permite PATCH (ações do card funcionam)</span><span class="badge badge-new">novo</span></div>
+  <pre>curl -s -X OPTIONS http://127.0.0.1:8000/hosts/QUALQUER -H "Origin: http://127.0.0.1:5174" -H "Access-Control-Request-Method: PATCH" -i | findstr allow-methods</pre>
+  <div class="expect">✅ <strong>Esperado:</strong> <code>access-control-allow-methods</code> contém <code>PATCH</code>. Sem isso, renomear apelido / adicionar porta / reiniciar métricas / alternar monitoramento falham silenciosamente no WebView2 (preflight nega e o fetch lança "Failed to fetch").</div>
+</div>
+
+<div class="test new">
+  <div class="row"><span class="id">T8.2</span><span class="title">host.ip é sempre IPv4 real (nunca hostname)</span><span class="badge badge-new">novo</span></div>
+  <div class="step">Cadastrar um host pelo <strong>hostname</strong> (ex: <code>ADM-12345</code>), aguardar ~10s.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> card e popup mostram o IPv4 resolvido na coluna "Endereço IP" (nunca o hostname). "Copiar IP" copia o IPv4. Enquanto não resolve, mostra "Resolvendo..." e o botão de copiar fica desabilitado. No <code>GET /hosts</code>, o campo <code>ip</code> vem IPv4 ou <code>null</code>.</div>
+</div>
+
+<div class="test new">
+  <div class="row"><span class="id">T8.3</span><span class="title">resolved_ip e host-probe sobrevivem a PATCH (v1.2.6)</span><span class="badge badge-new">novo</span></div>
+  <div class="step">Com um host que já tem IP resolvido + MAC: renomear o apelido pelo popup.</div>
+  <pre>curl -s http://127.0.0.1:8000/hosts   # conferir ip/mac antes e depois do rename</pre>
+  <div class="expect">✅ <strong>Esperado:</strong> após o rename, <code>ip</code>, <code>mac</code>, <code>current_user</code>, <code>last_boot</code> e <code>system_disk_free_gb</code> continuam preenchidos. Na v1.2.5 o <code>replace_all_hosts</code> zerava essas colunas a cada PATCH de nome/grupo/portas/monitoramento.</div>
+</div>
+
+<div class="test new">
+  <div class="row"><span class="id">T8.4</span><span class="title">Marcador "Offline desde" no popup</span><span class="badge badge-new">novo</span></div>
+  <div class="step">Desligar (ou desconectar da rede) um host monitorado que estava online. Abrir o popup do card.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> faixa vermelha "Offline desde &lt;data/hora&gt; (há X min)" abaixo de "Última Verificação". O "há X" atualiza com o popup aberto. Ao religar o host, o marcador some.</div>
+</div>
+
+<div class="test new">
+  <div class="row"><span class="id">T8.5</span><span class="title">Guia de Comandos PowerShell no Terminal Remoto</span><span class="badge badge-new">novo</span></div>
+  <div class="step">Em <strong>Terminal Remoto</strong>, clicar no botão "Guia de Comandos" (canto superior direito).</div>
+  <div class="expect">✅ <strong>Esperado:</strong> modal com 5 seções de snippets PS. Buscar "porta" filtra para o Test-NetConnection. Botão de copiar em cada bloco (feedback "copiado" 2s). Comandos destrutivos (logoff, Restart-Computer) têm aviso amarelo. Escape fecha.</div>
+</div>
+
+<div class="test new">
+  <div class="row"><span class="id">T8.6</span><span class="title">PATCH aceita address com case diferente ou IP resolvido</span><span class="badge badge-new">novo</span></div>
+  <pre>curl -s -X PATCH http://127.0.0.1:8000/hosts/&lt;hostname-em-minusculas&gt; -H "Content-Type: application/json" -d "{\"name\":\"x\"}" -o NUL -w "%{http_code}\n"
+curl -s -X PATCH http://127.0.0.1:8000/hosts/&lt;ip-resolvido&gt; -H "Content-Type: application/json" -d "{\"name\":\"x\"}" -o NUL -w "%{http_code}\n"</pre>
+  <div class="expect">✅ <strong>Esperado:</strong> ambos retornam 200 (lookup em 4 níveis: exato → case-insensitive → host.ip → monitor.stats.ip). Reverter o nome depois do teste.</div>
+</div>
+
+<hr>
+<h2 id="troubleshoot">9. Troubleshooting</h2>
 
 <details>
   <summary>Backend não sobe / API offline</summary>

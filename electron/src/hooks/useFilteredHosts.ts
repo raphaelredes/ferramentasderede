@@ -77,11 +77,19 @@ export function useFilteredHosts({
             if (sortBy === 'name') return aName.localeCompare(bName);
 
             if (sortBy === 'ip') {
-                const ipA = aAddr.split('.').map(Number);
-                const ipB = bAddr.split('.').map(Number);
+                // Prefer the resolved IPv4 over `address` — hosts cadastrados por
+                // nome têm `address` = hostname, e splitting "srv01.acme.local"
+                // by "." gives [NaN, NaN, ...] so the NaN comparisons (always
+                // false) leave their relative order undefined. Fall back to
+                // 0.0.0.0 so hostname-only hosts cluster at the top instead of
+                // shuffling randomly between renders.
+                const ipA = (a.ip ?? aAddr ?? '0.0.0.0').split('.').map(Number);
+                const ipB = (b.ip ?? bAddr ?? '0.0.0.0').split('.').map(Number);
                 for (let i = 0; i < 4; i++) {
-                    if (ipA[i] < ipB[i]) return -1;
-                    if (ipA[i] > ipB[i]) return 1;
+                    const av = Number.isFinite(ipA[i]) ? ipA[i] : 0;
+                    const bv = Number.isFinite(ipB[i]) ? ipB[i] : 0;
+                    if (av < bv) return -1;
+                    if (av > bv) return 1;
                 }
                 return 0;
             }

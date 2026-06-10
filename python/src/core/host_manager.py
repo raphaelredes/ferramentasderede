@@ -308,13 +308,22 @@ class HostManager:
                 break
         return db.update_host_fields(address, {'resolved_ip': resolved_ip})
 
-    def update_host_details(self, ip, hostname=None, domain=None):
-        """Atualiza hostname/domínio de um host. Usa o write lock + retry do DatabaseManager."""
+    def update_host_details(self, ip, hostname=None, domain=None, mac=None):
+        """Atualiza hostname/domínio/mac de um host. Write lock + retry do DatabaseManager.
+
+        `mac` é aceito porque o monitor's MAC-resolution path chamava com
+        `mac=` desde a v1.2.4. Sem ele aqui o kwarg disparava TypeError
+        engolido pelo `except Exception: pass` do caller, e o MAC só
+        chegava ao DB via outro caminho (callback do tick). Aceitar mac aqui
+        fecha esse silent-fail.
+        """
         fields = {}
         if hostname is not None:
             fields['hostname'] = hostname
         if domain is not None:
             fields['domain'] = domain
+        if mac is not None:
+            fields['mac'] = mac
         if not fields:
             return False
 
@@ -325,6 +334,8 @@ class HostManager:
                     host['name'] = hostname
                 if domain:
                     host['domain'] = domain
+                if mac:
+                    host['mac'] = mac
                 break
 
         return db.update_host_fields(ip, fields)
@@ -349,11 +360,17 @@ class HostManager:
             logging.error("Erro ao limpar hosts (DatabaseManager.clear_all_hosts retornou False)")
 
     def update_hosts(self, updated_hosts_list):
-        """Substitui a lista de hosts inteira atomicamente."""
-        
+        """Substitui a lista de hosts inteira atomicamente.
+
+        Forward all columns to the DB layer, including resolved_ip and the
+        host-probe fields. Omitting them here used to zero those columns on
+        every save (replace_all_hosts wraps DELETE+INSERT) — the monitor
+        re-resolved within seconds, but probe data (current_user, last_boot,
+        system_disk_free_gb) was lost until the next opportunistic probe.
+        """
         hosts_to_save = []
         for h in updated_hosts_list:
-             hosts_to_save.append({
+            hosts_to_save.append({
                 'address': h.get('ip'),
                 'hostname': h.get('name'),
                 'domain': h.get('domain'),
@@ -367,9 +384,16 @@ class HostManager:
                 'type': h.get('type'),
                 'teamviewer_id': h.get('teamviewer_id'),
                 'last_checked': h.get('last_checked'),
-                'last_status': h.get('last_status')
+                'last_status': h.get('last_status'),
+                # Columns added after the initial schema. Forwarding them is
+                # what stops the slow-path PATCH from wiping operator-touched
+                # data (resolved IP cache, host-probe results).
+                'resolved_ip': h.get('resolved_ip'),
+                'current_user': h.get('current_user'),
+                'last_boot': h.get('last_boot'),
+                'system_disk_free_gb': h.get('system_disk_free_gb'),
             })
-        
+
         if db.replace_all_hosts(hosts_to_save):
             self.hosts = updated_hosts_list
 
