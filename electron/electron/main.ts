@@ -125,12 +125,16 @@ function isAllowedRendererUrl(url: string): boolean {
 
 function createWindow() {
   logToFile('createWindow called');
+  // Window title carries the version (app.getVersion reads electron/package.json,
+  // the single source). Matches the portable's title (main_webview.py) so an
+  // operator can tell which build is running regardless of how it was launched.
+  const windowTitle = `Ferramentas de Rede v${app.getVersion()}`
   win = new BrowserWindow({
     width: 1200,
     height: 800,
     minWidth: 1200,
     minHeight: 800,
-    title: 'Ferramentas de Rede',
+    title: windowTitle,
     backgroundColor: '#09090b', // Dark background to match loader (prevents white flash)
     icon: path.join(process.env.VITE_PUBLIC, 'icon.png'),
     webPreferences: {
@@ -147,6 +151,14 @@ function createWindow() {
   })
 
   win.removeMenu()
+
+  // The renderer's <title> tag ("Ferramentas de Rede") would override the
+  // versioned title above once the page loads. Pin our title and re-apply it
+  // whenever the page tries to change it.
+  win.on('page-title-updated', (event) => {
+    event.preventDefault()
+    win?.setTitle(windowTitle)
+  })
 
   // Defense-in-depth navigation guards:
   // 1. Reject window.open / target=_blank — the UI doesn't need it. External URLs

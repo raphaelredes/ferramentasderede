@@ -234,6 +234,45 @@ class HostMonitor:
                 stats['has_ever_been_online'] = False
                 logging.info(f"Estatísticas resetadas para o host {ip}")
 
+    @staticmethod
+    def _resolve_hostname_multi_domain(hostname):
+        """Forward-resolve a hostname trying each configured network's
+        dns_server/domain before falling back to the system resolver.
+
+        In a two-AD environment the same short hostname can exist in both
+        domains; the system resolver picks whichever the machine's primary
+        DNS knows. By trying every configured (dns_server, domain) pair we
+        give the operator a deterministic answer per VLAN. First valid A
+        record wins. Returns the IPv4 string or None.
+
+        Best-effort: any failure to load settings just degrades to the plain
+        system resolver, which is what the monitor did before.
+        """
+        from src.network import dns_resolver
+        try:
+            from api.routes.settings import load_settings
+            settings = load_settings()
+            networks = [n for n in (settings.networks or []) if n.enabled and n.dns_server]
+        except Exception:
+            networks = []
+
+        for net in networks:
+            try:
+                ip = dns_resolver.resolve_hostname(
+                    hostname, dns_server=net.dns_server, domain=net.domain
+                )
+                if ip:
+                    return ip
+            except Exception as e:
+                logging.debug(f"multi-domain resolve via {net.dns_server} failed for {hostname}: {e}")
+
+        # Fallback: system resolver (also handles the no-networks-configured case).
+        try:
+            return dns_resolver.resolve_hostname(hostname)
+        except Exception as e:
+            logging.debug(f"system resolve failed for {hostname}: {e}")
+            return None
+
     def _resolve_one_host(self, ip):
         """Resolve reverse DNS, forward DNS (if input was a hostname) and MAC
         for a single host. Persists updates and fires the on_update callback.
@@ -292,12 +331,16 @@ class HostMonitor:
                 try:
                     # Route through dns_resolver, not the system resolver. In a
                     # multi-domain setup the system resolver may pick the wrong
-                    # domain when the same shortname exists in both ADs. When
-                    # there's no configured dns_server (or the host doesn't
-                    # match any configured network), dns_resolver falls back to
-                    # the system resolver itself.
+                    # domain when the same shortname exists in both ADs.
+                    #
+                    # For a hostname we don't yet know which VLAN it belongs to
+                    # (no IP to _match_network against), so we try each
+                    # configured network's dns_server/domain in turn, falling
+                    # back to the system resolver. First answer wins. This is
+                    # the multi-domain-aware path; before, the monitor always
+                    # used the blind system resolver here.
                     from src.network import dns_resolver
-                    resolved_ip = dns_resolver.resolve_hostname(ip)
+                    resolved_ip = self._resolve_hostname_multi_domain(ip)
                     if not resolved_ip:
                         raise socket.gaierror(f"resolve_hostname returned None for {ip}")
                     with self._lock:

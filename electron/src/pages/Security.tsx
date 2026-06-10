@@ -4,6 +4,7 @@ import { useVault } from '../contexts/VaultContext';
 import { useToast } from '../contexts/ToastContext';
 import { ConfirmationModal } from '../components/ConfirmationModal';
 import { API_BASE } from '../config/api';
+import { useEscapeToClose } from '../hooks/useEscapeToClose';
 
 export function Security() {
     const {
@@ -27,6 +28,9 @@ export function Security() {
     const [isResetModalOpen, setIsResetModalOpen] = useState(false);
     const [credentialToDelete, setCredentialToDelete] = useState<string | null>(null);
     const [editingCredential, setEditingCredential] = useState<string | null>(null);
+
+    // Escape fecha o modal de credencial, como os demais modais da app.
+    useEscapeToClose(isAddModalOpen, () => setIsAddModalOpen(false));
 
     // Form State
     const [masterPassword, setMasterPassword] = useState('');
@@ -472,9 +476,19 @@ export function Security() {
 
             {/* Add Modal */}
             {isAddModalOpen && (
-                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-                    <div className="bg-zinc-900 border border-zinc-800 rounded-xl w-full max-w-md p-6 shadow-2xl">
-                        <h3 className="text-xl font-bold text-white mb-4">{editingCredential ? 'Editar Credencial' : 'Adicionar Credencial'}</h3>
+                <div
+                    className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+                    onClick={() => setIsAddModalOpen(false)}
+                    role="presentation"
+                >
+                    <div
+                        className="bg-zinc-900 border border-zinc-800 rounded-xl w-full max-w-md p-6 shadow-2xl"
+                        onClick={e => e.stopPropagation()}
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="credential-modal-title"
+                    >
+                        <h3 id="credential-modal-title" className="text-xl font-bold text-white mb-4">{editingCredential ? 'Editar Credencial' : 'Adicionar Credencial'}</h3>
                         <form onSubmit={handleAddCredential} className="space-y-4">
                             <div>
                                 <label className="block text-sm font-medium text-zinc-400 mb-1">Nome (Identificador)</label>

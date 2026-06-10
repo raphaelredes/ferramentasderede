@@ -5,6 +5,7 @@ import { useToast } from '../../contexts/ToastContext';
 import { resolveTeamViewerId, getDefaultCredentialIdIfAvailable } from '../../utils/teamviewer';
 import { probeHost } from '../../utils/hostProbe';
 import { useEscapeToClose } from '../../hooks/useEscapeToClose';
+import { ipForHost } from '../../utils/ipForHost';
 
 interface RemoteAccessModalProps {
     isOpen: boolean;
@@ -191,7 +192,10 @@ export const RemoteAccessModal: React.FC<RemoteAccessModalProps> = ({ isOpen, on
                         <div className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]"></div>
                         <div>
                             <div className="text-white font-medium">{host.name || host.hostname || host.address}</div>
-                            <div className="text-zinc-500 text-xs font-mono">{host.ip || host.address}</div>
+                            {/* Show the resolved IPv4 only — never the hostname (same
+                                discipline as card/popup). IPC calls below still use
+                                host.ip || host.address as the target. */}
+                            <div className="text-zinc-500 text-xs font-mono">{ipForHost(host) ?? 'Resolvendo...'}</div>
                         </div>
                     </div>
                     <div className="px-3 py-1 rounded-full bg-zinc-800 text-zinc-400 text-xs border border-zinc-700">

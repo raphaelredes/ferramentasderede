@@ -23,13 +23,13 @@ def traceroute(target_ip, current_process_holder=None, source_ip=None):
             # wire PowerShell `Test-NetConnection -TraceRoute -SourceIPAddress`,
             # we log a warning and drop the flag so the trace still runs.
             command = ["tracert", "-h", "15", "-w", "3000"]
-            if source_ip:
-                logging.warning(
-                    "traceroute: source_ip=%r requested but Windows tracert does not support source-address; ignoring.",
-                    source_ip,
-                )
             command.append(target_ip)
             encoding = 'cp850'
+            if source_ip:
+                logging.warning(
+                    "traceroute: source_ip=%r requested but Windows tracert does not support source-address; using default route.",
+                    source_ip,
+                )
         else:
             command = ["traceroute", "-m", "15", "-w", "3"]
             if source_ip:
@@ -53,6 +53,16 @@ def traceroute(target_ip, current_process_holder=None, source_ip=None):
             current_process_holder['_current_process'] = process
         
         yield f"Rastreando rota para {target_ip}...\n\n"
+
+        # Honest, visible warning when the operator picked a source NIC but
+        # the OS can't honor it for traceroute. Previously this was a silent
+        # log line — the operator saw a normal trace and assumed it left via
+        # the chosen VLAN when it actually used the default route.
+        if source_ip and os.name == 'nt':
+            yield (
+                f"[AVISO] O Windows tracert não suporta IP de origem ({source_ip}); "
+                f"a rota foi traçada pela interface padrão do SO, não pela NIC selecionada.\n\n"
+            )
         
         # Ler output linha por linha
         line_count = 0

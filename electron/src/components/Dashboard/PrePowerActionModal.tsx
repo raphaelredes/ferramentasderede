@@ -3,6 +3,7 @@ import { AlertTriangle, X, Clock, Users, RotateCw, Loader2, Power } from 'lucide
 import { clsx } from 'clsx';
 import { Host } from '../../types';
 import { PrePowerCheckData } from '../../utils/prePowerCheck';
+import { ipForHost } from '../../utils/ipForHost';
 
 interface Props {
     isOpen: boolean;
@@ -158,7 +159,7 @@ export function PrePowerActionModal({
                                 {actionLabel} {host.name || host.address}?
                             </h3>
                             <p className="text-xs text-zinc-500 font-mono mt-0.5">
-                                {host.ip || host.address}
+                                {ipForHost(host) ?? 'Resolvendo...'}
                             </p>
                         </div>
                     </div>

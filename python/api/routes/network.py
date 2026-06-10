@@ -582,6 +582,15 @@ def save_hosts_list(hosts_list):
             and display != 'Unknown'
         )
         nickname = display if is_meaningful else None
+        # `h.ip` here is the resolved IPv4 that get_hosts_list computed
+        # (best-of-three: DB resolved_ip → monitor stats → address-if-IPv4).
+        # Persist it back as resolved_ip so the full-table rewrite below
+        # doesn't blow away the cache. Only persist when it's a real IPv4 and
+        # differs from the address — for IP-registered hosts address IS the IP
+        # and a separate resolved_ip column is redundant.
+        import re as _re
+        h_ip = h.ip if (h.ip and _re.fullmatch(r"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}", h.ip)) else None
+        resolved_ip_to_persist = h_ip if (h_ip and h_ip != h.address) else None
         updated_list.append({
             'name': resolved,
             'ip': h.address,
@@ -596,7 +605,18 @@ def save_hosts_list(hosts_list):
             'type': h.type,
             'teamviewer_id': h.teamviewer_id,
             'last_checked': h.last_checked,
-            'last_status': h.last_status
+            'last_status': h.last_status,
+            # Forward the columns added after the initial schema so the
+            # replace_all_hosts (DELETE+INSERT) inside update_hosts doesn't
+            # NULL them. CRITICAL: the v1.2.6 fix wired update_hosts /
+            # replace_all_hosts to READ these via .get(), but this caller never
+            # populated them — so PATCH name/group/ports/monitoring still wiped
+            # resolved_ip + the host-probe fields for every host. This closes
+            # that loop.
+            'resolved_ip': resolved_ip_to_persist,
+            'current_user': h.current_user,
+            'last_boot': h.last_boot,
+            'system_disk_free_gb': h.system_disk_free_gb,
         })
     host_manager_instance.update_hosts(updated_list)
 
@@ -1012,7 +1032,15 @@ async def websocket_terminal(websocket: WebSocket):
                 username = data.get("username")
                 password = data.get("password")
                 credential_id = data.get("credential_id")
-                
+
+                # Validate the target before touching WinRM — same guard as
+                # the REST /tools/terminal/external path. WinRMHandler builds
+                # a PowerShell session against `ip`; rejecting non-host shapes
+                # here keeps the two terminal entry points consistent.
+                if not _is_safe_remote_target(ip or ""):
+                    await websocket.send_json({"type": "error", "message": "Endereço de destino inválido."})
+                    continue
+
                 if credential_id:
                     try:
                         from api.routes.security import vault

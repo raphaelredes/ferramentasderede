@@ -339,25 +339,11 @@ def check_host_status_detailed(ip_address, count=1, is_wan=False, resolve_names=
             'domain': None
         }
 
-def check_powershell_ping(ip_address):
-    """Tenta verificar status usando PowerShell Test-Connection (ICMP) e Test-NetConnection (TCP)."""
-    try:
-        # Tentar Test-Connection (ICMP) - Count 2 para confiabilidade
-        cmd = f"Test-Connection -ComputerName {ip_address} -Count 2 -Quiet"
-        result = subprocess.run(["powershell", "-Command", cmd], capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
-        if result.returncode == 0 and "True" in result.stdout:
-            return True, 0 # Latência desconhecida, assume 0 ou baixo
-            
-        # Tentar Test-NetConnection porta 135 (TCP)
-        cmd_tcp = f"Test-NetConnection -ComputerName {ip_address} -Port 135 -InformationLevel Quiet"
-        result_tcp = subprocess.run(["powershell", "-Command", cmd_tcp], capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
-        if result_tcp.returncode == 0 and "True" in result_tcp.stdout:
-            return True, 0
-            
-        return False, None
-    except Exception as e:
-        logging.debug(f"Test-Connection fallback failed for {ip_address}: {e}")
-        return False, None
+# NOTE: check_powershell_ping was removed. It was dead code (only referenced
+# in a commented-out block of check_host_status_detailed) and it interpolated
+# `ip_address` straight into a PowerShell `-Command` string — a latent
+# injection trap if anyone ever wired it back up. The ICMP/TCP/ARP fallbacks
+# in check_host_status_detailed already cover its purpose without a shell.
 
 def check_arp_table(ip_address):
     """Verifica se o IP está presente na tabela ARP (indica que está online na rede local)."""

@@ -242,8 +242,16 @@ def main():
         def showItemInFolder(self, path):
             import subprocess
             import os
+            # Mirror the Electron isSafeShowItemPath guard: reject NUL,
+            # traversal, UNC shares and \\?\ device paths before handing the
+            # value to explorer. Belt-and-suspenders — the renderer is trusted
+            # and behind CSP, but the two entry points should validate alike.
+            if (not isinstance(path, str) or not path or len(path) > 1024
+                    or '\0' in path or '..' in path
+                    or path.startswith('\\\\') or path.startswith('//')):
+                print("showItemInFolder: rejected unsafe path")
+                return False
             try:
-                # Windows explorer /select,path
                 path = os.path.normpath(path)
                 subprocess.Popen(['explorer', '/select,', path])
                 return True
@@ -307,9 +315,19 @@ def main():
         """
         window.evaluate_js(shim_js)
 
+    # Window title carries the app version so an operator can tell which
+    # build they're running at a glance (we ship the portable as a single
+    # versioned .exe, but copies on the Desktop drift). APP_VERSION is the
+    # single source resolved from electron/package.json (settings.py).
+    try:
+        from src.config.settings import APP_VERSION as _APP_VERSION
+        _window_title = f'Ferramentas de Rede v{_APP_VERSION}'
+    except Exception:
+        _window_title = 'Ferramentas de Rede'
+
     # Create the window
     window = webview.create_window(
-        'Ferramentas de Rede',
+        _window_title,
         url=url,
         width=1280,
         height=800,
