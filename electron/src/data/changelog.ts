@@ -17,6 +17,22 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
     {
+        version: '1.2.7',
+        date: '2026-06-24',
+        title: 'Scanner identifica fabricante e tipo + abas fixas/persistentes',
+        changes: [
+            { kind: 'feat', text: 'Scanner de Rede agora identifica o FABRICANTE de cada dispositivo pelo MAC address (via OUI/IEEE). Funciona para hosts na mesma sub-rede do operador — em VLAN roteada o MAC não é visível através do roteador (limitação do ARP/L2), então fica vazio nesses casos. O MAC só carrega o fabricante: não existe (em nenhuma base do mundo) como descobrir o MODELO do dispositivo a partir do MAC.' },
+            { kind: 'feat', text: 'Cards do scan ganham um rótulo de TIPO provável (Impressora, Câmera IP, Workstation Windows, Equipamento de rede, Máquina virtual, etc.) inferido combinando portas abertas + fabricante + hostname. Quando o tipo é incerto (só fabricante/hostname), aparece um ícone "?" com aviso no hover. Tipos por porta forte (9100=impressora, 554=câmera, 3389=RDP) são tratados como certos e não mostram o "?".' },
+            { kind: 'feat', text: 'Abas do Scanner de Rede agora podem ser RENOMEADAS (duplo-clique no título) e FIXADAS (pin — aba fixada não fecha por acidente). As abas, com nomes e pins, sobrevivem ao fechar/reabrir o app (persistidas em localStorage), igual aos cards de host. Resultados de scan antigos não voltam — cada aba reabre "Pronta" para re-escanear.' },
+            { kind: 'feat', text: 'Configurações → Scanner: novo toggle "Identificar fabricante no scan" (liga/desliga a etapa) e bloco "Base de fabricantes (IEEE OUI)" com contagem de registros, data de atualização e botão "Atualizar base". A atualização baixa a lista oficial da IEEE só sob demanda — o scan nunca baixa nada automaticamente (evita falso-negativo com proxy corporativo e alerta de IDS).' },
+            { kind: 'fix', text: 'Lookup de fabricante é thread-safe: o dicionário de prefixos OUI é carregado UMA vez antes do pool de threads do scan e lido em memória — evita o crash de event-loop concorrente da biblioteca mac-vendor-lookup quando chamada dos N workers do discovery.' },
+            { kind: 'fix', text: 'Cache da base de fabricantes movido para %APPDATA%\\FerramentasDeRede\\mac-vendors.txt (antes ficava em ~/.cache, que some no portátil PyInstaller). Atualização com escrita atômica (temp + rename) e validação por contagem de registros — um download interrompido não corrompe mais a base existente.' },
+            { kind: 'perf', text: 'MAC resolvido com UMA leitura de "arp -a" ao fim do scan, cruzada por IP — em vez de um subprocesso arp por host (que com 50-256 workers spawava centenas de processos). Port-probe leve (connect_ex, sem subprocess) só nos hosts online.' },
+            { kind: 'fix', text: 'closeScanSession (fechar aba do scanner) reescrito: a escolha da próxima aba ativa agora acontece dentro da própria função (a lógica antiga era admitidamente frágil e dependia de um efeito downstream). Abas fixadas não podem ser fechadas. Renomear inline resolve o conflito clique-vs-duplo-clique.' },
+            { kind: 'fix', text: 'Export CSV do scanner passa a escapar aspas internas (RFC-4180) — antes um nome de fabricante com vírgula/aspas quebrava o CSV. Nova coluna "Tipo" no export.' },
+        ],
+    },
+    {
         version: '1.2.6',
         date: '2026-06-10',
         title: 'Revisão profunda: replace_all_hosts não apaga mais campos novos',
