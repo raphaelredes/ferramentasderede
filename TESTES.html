@@ -483,6 +483,28 @@ curl http://127.0.0.1:8000/network/interfaces</pre>
   <div class="expect">✅ <strong>Esperado:</strong> crescimento &lt; 50MB. Sem leak agressivo.</div>
 </div>
 
+<div class="test new">
+  <div class="row"><span class="id">T4.6</span><span class="title">Notificação de host caiu / voltou</span><span class="badge badge-new">novo</span></div>
+  <div class="step">Em <strong>Configurações → Painel</strong>, ligar <strong>"Notificar quando ficar offline"</strong> e <strong>"Notificar quando ficar online"</strong>. Salvar. (Na 1ª vez o Windows pede permissão de notificação — permitir.)</div>
+  <div class="step">Monitorar um host que você consiga derrubar (desligar a NIC, parar a VM, ou desconectar o cabo).</div>
+  <div class="expect">✅ <strong>Esperado:</strong> quando o host cai (e cruza o critério "Smart Offline", não um ping isolado), aparece um toast vermelho <em>"&lt;host&gt; ficou OFFLINE"</em> E uma notificação nativa do Windows — mesmo com a janela do app minimizada / em segundo plano.</div>
+  <div class="step">Religar o host.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> toast verde <em>"&lt;host&gt; voltou ONLINE"</em> + notificação nativa.</div>
+  <div class="step">Abrir/fechar o app com hosts já offline.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> NÃO dispara notificação para o estado inicial (só para transições reais depois do baseline). Com as opções desligadas, nenhuma notificação aparece.</div>
+  <div class="meta">Funciona no portátil (WebView2) e no Electron — usa a Web Notification API, não depende do main process.</div>
+</div>
+
+<div class="test new">
+  <div class="row"><span class="id">T4.7</span><span class="title">Histórico de disponibilidade persiste após restart</span><span class="badge badge-new">novo</span></div>
+  <div class="step">Monitorar um host por alguns minutos (o sampler grava 1 amostra/minuto).</div>
+  <div class="step">Abrir os <strong>detalhes do host</strong> → aba <strong>"Histórico"</strong>.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> mostra a <strong>disponibilidade (uptime %)</strong> e um <strong>gráfico de latência</strong>. Seletor 24h / 7 dias funciona. A aba abre <strong>sem pedir autenticação WinRM</strong>.</div>
+  <div class="step"><strong>Fechar e reabrir o app.</strong> Voltar à aba Histórico do mesmo host.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> o histórico anterior <strong>continua lá</strong> (antes era perdido — vivia só em memória). Host recém-adicionado mostra "ainda não há histórico" até o sampler rodar alguns minutos.</div>
+  <div class="meta">Tabela <code>host_metrics</code> no SQLite, gravada por thread separado fora do hot path do ping. Retenção 30 dias. Endpoint <code>GET /hosts/{address}/metrics?range=24h|7d</code>.</div>
+</div>
+
 <hr>
 <h2 id="sec-winrm">5. Acesso remoto (WinRM)</h2>
 

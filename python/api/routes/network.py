@@ -697,6 +697,43 @@ def delete_host(address: str):
         return {"status": "success", "message": "Host removido com sucesso."}
     except Exception as e: raise HTTPException(status_code=500, detail=f"Erro ao remover host: {str(e)}")
 
+
+@router.get("/hosts/{address}/metrics")
+def get_host_metrics(address: str, range: str = "24h"):
+    """Histórico de uptime/latência de um host para os gráficos do HostDetails.
+
+    `range`: '24h' (default) ou '7d'. Retorna {points:[{ts,online,latency,
+    packet_loss_pct}], uptime_pct, sample_count, range}. Vazio (não erro) quando
+    ainda não há amostras — a UI mostra um placeholder.
+    """
+    import time as _time
+    from src.core.database import db as _db
+
+    ranges = {"24h": 86400, "7d": 7 * 86400}
+    window = ranges.get(range)
+    if window is None:
+        raise HTTPException(status_code=400, detail="range deve ser '24h' ou '7d'.")
+
+    since = int(_time.time()) - window
+    points = _db.get_host_metrics(address, since)
+
+    # Uptime % over the returned window (share of samples that were online).
+    sample_count = len(points)
+    if sample_count:
+        online_count = sum(1 for p in points if p.get("online"))
+        uptime_pct = round(100.0 * online_count / sample_count, 1)
+    else:
+        uptime_pct = None
+
+    return {
+        "address": address,
+        "range": range,
+        "sample_count": sample_count,
+        "uptime_pct": uptime_pct,
+        "points": points,
+    }
+
+
 # --- Network Tools ---
 @router.get("/network/monitor")
 def get_monitor_stats():

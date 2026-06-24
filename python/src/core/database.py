@@ -108,7 +108,28 @@ class DatabaseManager:
                         value TEXT
                     )
                 """)
-                
+
+                # Histórico de monitoramento (uptime/latência). Populada por um
+                # sampler periódico no HostMonitor (fora do hot path do ping).
+                # Chaveada por `address` (mesma PK lógica de hosts) + `ts` epoch.
+                # `online` 1/0, `latency` em ms (NULL quando offline),
+                # `packet_loss_pct` 0-100. Índice por (address, ts) para as
+                # queries de range (24h/7d) e o pruning.
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS host_metrics (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        address TEXT NOT NULL,
+                        ts INTEGER NOT NULL,
+                        online INTEGER NOT NULL,
+                        latency REAL,
+                        packet_loss_pct REAL
+                    )
+                """)
+                cursor.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_host_metrics_addr_ts
+                    ON host_metrics (address, ts)
+                """)
+
                 conn.commit()
                 
                 # Migração de Schema (adicionar colunas se não existirem em bancos antigos)
@@ -168,6 +189,70 @@ class DatabaseManager:
             conn.commit()
         except Exception as e:
             logging.error(f"Erro na migração de schema: {e}")
+
+    # --- Host metrics history -------------------------------------------------
+    # 30 days of samples at 1/min ≈ 43k rows/host. Cheap for SQLite. Pruned by
+    # _prune_metrics on each batch insert so the table can't grow unbounded.
+    _METRICS_RETENTION_DAYS = 30
+
+    @_retry_on_locked()
+    def insert_metrics_batch(self, rows: List[Dict[str, Any]]):
+        """Grava um lote de amostras de métricas. Cada row:
+        {address, ts (epoch int), online (bool), latency (float|None),
+         packet_loss_pct (float)}.
+        Chamado pelo sampler do monitor — fora do caminho do ping.
+        """
+        if not rows:
+            return
+        with self._write_lock:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.executemany(
+                    """INSERT INTO host_metrics (address, ts, online, latency, packet_loss_pct)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    [
+                        (
+                            r.get("address"),
+                            int(r.get("ts", 0)),
+                            1 if r.get("online") else 0,
+                            r.get("latency"),
+                            r.get("packet_loss_pct"),
+                        )
+                        for r in rows
+                        if r.get("address")
+                    ],
+                )
+                conn.commit()
+
+    @_retry_on_locked()
+    def get_host_metrics(self, address: str, since_ts: int) -> List[Dict[str, Any]]:
+        """Série temporal de um host desde `since_ts` (epoch), ordem cronológica."""
+        try:
+            with self._get_connection() as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute(
+                    """SELECT ts, online, latency, packet_loss_pct
+                       FROM host_metrics
+                       WHERE address = ? AND ts >= ?
+                       ORDER BY ts ASC""",
+                    (address, int(since_ts)),
+                )
+                return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logging.error(f"get_host_metrics({address}) failed: {e}")
+            return []
+
+    @_retry_on_locked()
+    def prune_metrics(self, older_than_ts: Optional[int] = None):
+        """Remove amostras mais velhas que a retenção (default 30 dias)."""
+        if older_than_ts is None:
+            older_than_ts = int(time.time()) - self._METRICS_RETENTION_DAYS * 86400
+        with self._write_lock:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM host_metrics WHERE ts < ?", (int(older_than_ts),))
+                conn.commit()
 
     @_retry_on_locked()
     def get_all_hosts(self) -> List[Dict[str, Any]]:

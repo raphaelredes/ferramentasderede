@@ -17,6 +17,17 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
     {
+        version: '1.2.8',
+        date: '2026-06-24',
+        title: 'Notificações de queda/retorno + histórico de disponibilidade',
+        changes: [
+            { kind: 'feat', text: 'Notificações de host caiu/voltou agora FUNCIONAM. As opções "Notificar quando ficar offline/online" (Configurações → Painel) existiam mas não faziam nada — eram uma promessa quebrada. Agora, quando um host monitorado transita online→offline (ou volta), o app mostra um toast E uma notificação nativa do Windows (aparece mesmo com a janela em segundo plano). Respeita o critério "Smart Offline" — não notifica em queda isolada de um único ping.' },
+            { kind: 'feat', text: 'Histórico persistente de disponibilidade: nova aba "Histórico" nos detalhes do host mostra a disponibilidade (uptime %) e um gráfico de latência das últimas 24h ou 7 dias. Antes todo o histórico de monitoramento vivia só em memória e era perdido ao fechar o app — agora sobrevive ao restart.' },
+            { kind: 'feat', text: 'O monitoramento grava uma amostra por minuto (status + latência + perda) numa tabela SQLite dedicada (host_metrics), num thread separado que nunca fica no caminho crítico do ping. Retenção automática de 30 dias (pruning). A aba Histórico não exige autenticação WinRM — funciona para qualquer host monitorado.' },
+            { kind: 'perf', text: 'O sampler de histórico só grava hosts já calibrados e roda fora do hot path do ping (escrita em lote), então não afeta a performance do monitoramento mesmo com 100+ hosts.' },
+        ],
+    },
+    {
         version: '1.2.7',
         date: '2026-06-24',
         title: 'Scanner identifica fabricante e tipo + abas fixas/persistentes',

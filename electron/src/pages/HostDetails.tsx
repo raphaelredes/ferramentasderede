@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, RefreshCw, Copy, Check, Terminal } from 'lucide-react';
 import { HostInfoTab } from '../components/HostDetails/HostInfoTab';
+import { HostHistoryTab } from '../components/HostDetails/HostHistoryTab';
 import { ServicesTab } from '../components/HostDetails/ServicesTab';
 import { PrintServiceTab } from '../components/HostDetails/PrintServiceTab';
 import { LogsTab } from '../components/HostDetails/LogsTab';
@@ -474,6 +475,7 @@ export const HostDetails: React.FC = () => {
             <div className="flex gap-2 border-b border-zinc-800">
                 {[
                     { id: 'info', label: 'Informações', help: 'Exibe detalhes gerais do hardware e sistema operacional do host.' },
+                    { id: 'history', label: 'Histórico', help: 'Histórico de disponibilidade (uptime) e latência do host nas últimas 24h / 7 dias. Não requer autenticação.' },
                     { id: 'services', label: 'Serviços', help: 'Gerencie serviços do Windows (Iniciar, Parar, Reiniciar). Requer privilégios administrativos.' },
                     { id: 'print', label: 'Impressão', help: 'Controle o Spooler de Impressão e visualize impressoras instaladas.' },
                     { id: 'logs', label: 'Logs de Eventos', help: 'Visualize os últimos eventos do sistema (Event Viewer) para diagnóstico.' },
@@ -497,7 +499,11 @@ export const HostDetails: React.FC = () => {
             </div>
 
             <div className="flex-1 min-h-0 overflow-y-auto pr-2 custom-scrollbar">
-                {loading && !systemInfo && !services.length && !logs.length && !sessions.length ? (
+                {/* History is self-contained (reads the monitor DB, no WinRM auth),
+                    so it renders regardless of the WinRM loading/error state below. */}
+                {activeTab === 'history' ? (
+                    <HostHistoryTab address={ip || ''} />
+                ) : loading && !systemInfo && !services.length && !logs.length && !sessions.length ? (
                     <div className="flex items-center justify-center h-full text-zinc-500">
                         <RefreshCw className="animate-spin mr-2" /> Carregando...
                     </div>
