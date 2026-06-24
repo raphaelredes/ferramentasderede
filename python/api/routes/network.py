@@ -91,6 +91,11 @@ class Host(BaseModel):
     address: str
     mac: Optional[str] = None
     vendor: Optional[str] = None
+    # Inferred probable device category (printer/camera/workstation/…). Best
+    # effort: combines vendor + hostname + open ports. Never a model — MAC
+    # cannot identify a model. `device_type_guess` marks low-confidence results.
+    device_type: Optional[str] = None
+    device_type_guess: Optional[bool] = None
     type: Optional[str] = "generic"
     hostname: Optional[str] = None
     domain: Optional[str] = None
@@ -415,6 +420,9 @@ class DiscoveryRequest(BaseModel):
     timeout: Optional[int] = 200
     max_workers: Optional[int] = 50
     source_ip: Optional[str] = None  # NIC source for the discovery scan
+    # When False, skip the post-scan ARP/vendor enrichment (faster scan, no
+    # manufacturer column). Mirrors the `online_vendor_lookup` scanner setting.
+    resolve_vendors: Optional[bool] = True
 
 class StopRequest(BaseModel):
     task_id: str
@@ -810,6 +818,7 @@ def discover_network(request: DiscoveryRequest):
                 network, task_id,
                 timeout=timeout, max_workers=max_workers,
                 source_ip=source_ip,
+                resolve_vendors=request.resolve_vendors,
             )
             for host in iterator:
                 yield json.dumps(host).encode('utf-8') + b"\n"
@@ -819,6 +828,30 @@ def discover_network(request: DiscoveryRequest):
             yield json.dumps({"error": str(e)}).encode('utf-8') + b"\n"
 
     return StreamingResponse(event_generator(), media_type="application/x-ndjson")
+
+
+@router.get("/network/vendors/info")
+def vendors_info():
+    """Status of the local MAC-vendor (OUI) database for the Settings UI."""
+    from src.network.vendor_utils import VendorUtils
+    return VendorUtils.get_database_info()
+
+
+@router.post("/network/vendors/update")
+def vendors_update():
+    """Download a fresh IEEE OUI database. ONLINE and may take a few seconds.
+
+    Explicit operator action only — the scan never auto-downloads (avoids
+    surprising a corporate operator and tripping IDS on the IEEE OUI fetch).
+    Blocking is acceptable here: it's a deliberate button press, not the scan
+    hot path.
+    """
+    from src.network.vendor_utils import VendorUtils
+    success, message = VendorUtils.update_database()
+    if not success:
+        raise HTTPException(status_code=502, detail=message)
+    return {"status": "success", "message": message, "info": VendorUtils.get_database_info()}
+
 
 def _validate_tool_target(target: str) -> None:
     """Reject targets that look like CLI flags or contain shell metacharacters.
