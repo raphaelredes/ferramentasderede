@@ -396,6 +396,52 @@ curl http://127.0.0.1:8000/network/interfaces</pre>
   <div class="expect">✅ <strong>Esperado:</strong> mesma coisa.</div>
 </div>
 
+<div class="test new">
+  <div class="row"><span class="id">T3.11</span><span class="title">Scanner identifica fabricante e tipo na sub-rede local</span><span class="badge badge-new">novo</span></div>
+  <div class="step">Em <strong>Configurações → Scanner</strong>, confirmar que <strong>"Identificar fabricante no scan"</strong> está ligado.</div>
+  <div class="step">Fazer um discovery na <strong>própria sub-rede</strong> (mesma VLAN do operador), onde haja máquinas Dell/HP/Lenovo/VMware, uma impressora e/ou uma câmera IP.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> ao fim do scan aparece o status "Identificando fabricantes...". Os cards mostram o <strong>fabricante</strong> (ex.: "Dell Inc.", "Cisco Systems") abaixo do hostname.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> cards ganham um <strong>rótulo de tipo</strong> (ex.: "Impressora", "Câmera IP", "Workstation Windows", "Equipamento de rede").</div>
+  <div class="expect">✅ <strong>Esperado:</strong> quando o tipo vem só de fabricante/hostname (incerto), aparece um ícone <strong>"?"</strong> ao lado; passar o mouse mostra o aviso "Tipo provável... pode estar incorreto". Tipos por porta forte (impressora 9100, câmera 554, RDP 3389) <strong>não</strong> mostram o "?".</div>
+  <div class="meta">Limitação esperada: o MAC só identifica <strong>fabricante</strong>, nunca o modelo. Nenhuma base no mundo mapeia MAC→modelo.</div>
+</div>
+
+<div class="test new">
+  <div class="row"><span class="id">T3.12</span><span class="title">Scanner cross-VLAN: fabricante fica vazio (esperado)</span><span class="badge badge-new">novo</span></div>
+  <div class="step">Fazer um discovery em uma <strong>VLAN roteada</strong> (diferente da do operador), selecionando o source IP correto.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> hosts são encontrados normalmente, mas <strong>fabricante fica em branco</strong> para a maioria — o MAC do destino não entra na tabela ARP local através do roteador. Isso é uma limitação do protocolo (ARP é L2), não um bug.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> o tipo ainda pode aparecer quando há porta forte detectada (ex.: 9100 = Impressora), pois o port-probe funciona mesmo cross-VLAN.</div>
+</div>
+
+<div class="test new">
+  <div class="row"><span class="id">T3.13</span><span class="title">Desligar identificação de fabricante acelera o scan</span><span class="badge badge-new">novo</span></div>
+  <div class="step">Em <strong>Configurações → Scanner</strong>, <strong>desligar</strong> "Identificar fabricante no scan" e Salvar.</div>
+  <div class="step">Fazer um novo discovery na sub-rede local.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> o status "Identificando fabricantes..." <strong>não</strong> aparece; cards não mostram fabricante (o tipo por porta ainda pode aparecer). Religar a opção restaura o comportamento.</div>
+</div>
+
+<div class="test new">
+  <div class="row"><span class="id">T3.14</span><span class="title">Atualizar base de fabricantes (IEEE OUI)</span><span class="badge badge-new">novo</span></div>
+  <div class="step">Em <strong>Configurações → Scanner</strong>, no bloco "Base de fabricantes (IEEE OUI)", conferir o número de registros e a data de atualização.</div>
+  <div class="step">Com internet disponível, clicar em <strong>"Atualizar base"</strong>.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> toast de sucesso com a contagem de registros (~38 mil). A data de atualização muda para hoje. O download é atômico (temp + rename): se cair no meio, a base antiga continua íntegra.</div>
+  <div class="step">Repetir <strong>sem internet</strong> (ou rede sem saída/sem proxy).</div>
+  <div class="expect">✅ <strong>Esperado:</strong> toast de erro claro ("Erro ao atualizar..." / "Download incompleto"). A base local não é corrompida; o scan continua usando a base existente offline.</div>
+  <div class="meta">Cache vive em <code>%APPDATA%\FerramentasDeRede\mac-vendors.txt</code> (não mais em <code>~/.cache</code>) — sobrevive ao portátil PyInstaller.</div>
+</div>
+
+<div class="test new">
+  <div class="row"><span class="id">T3.15</span><span class="title">Abas de scan: renomear, fixar e persistir</span><span class="badge badge-new">novo</span></div>
+  <div class="step">Em <strong>Ferramentas → Scanner de Rede</strong>, criar 2-3 abas com CIDRs diferentes.</div>
+  <div class="step"><strong>Duplo-clique</strong> no título de uma aba.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> o título vira um campo editável. Digitar um nome (ex.: "VLAN Servidores") + Enter renomeia. Esc cancela.</div>
+  <div class="step">Passar o mouse sobre uma aba e clicar no ícone de <strong>pin</strong>.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> a aba fica fixada (ícone de pin azul preenchido) e o <strong>"X" de fechar some</strong> — não dá para fechar por acidente. Clicar no pin de novo desafixa.</div>
+  <div class="step"><strong>Fechar e reabrir o app.</strong></div>
+  <div class="expect">✅ <strong>Esperado:</strong> as abas (com nomes e pins) <strong>voltam</strong>, igual aos cards de host. Resultados de scan antigos <strong>não</strong> voltam — cada aba reabre "Pronto" para re-escanear.</div>
+  <div class="meta">Persistência em <code>localStorage</code> versionada (chave <code>scanSessions</code>, <code>v:1</code>); JSON inválido é descartado sem quebrar a tela.</div>
+</div>
+
 <hr>
 <h2 id="sec-stab">4. Estabilidade &amp; performance</h2>
 
@@ -435,6 +481,28 @@ curl http://127.0.0.1:8000/network/interfaces</pre>
   <div class="row"><span class="id">T4.5</span><span class="title">Memória estável após 30 minutos</span><span class="badge badge-low">baixo</span></div>
   <div class="step">Deixar o app rodando 30 minutos com monitoramento ativo. Anotar uso de memória do processo Electron no início e no fim (Task Manager).</div>
   <div class="expect">✅ <strong>Esperado:</strong> crescimento &lt; 50MB. Sem leak agressivo.</div>
+</div>
+
+<div class="test new">
+  <div class="row"><span class="id">T4.6</span><span class="title">Notificação de host caiu / voltou</span><span class="badge badge-new">novo</span></div>
+  <div class="step">Em <strong>Configurações → Painel</strong>, ligar <strong>"Notificar quando ficar offline"</strong> e <strong>"Notificar quando ficar online"</strong>. Salvar. (Na 1ª vez o Windows pede permissão de notificação — permitir.)</div>
+  <div class="step">Monitorar um host que você consiga derrubar (desligar a NIC, parar a VM, ou desconectar o cabo).</div>
+  <div class="expect">✅ <strong>Esperado:</strong> quando o host cai (e cruza o critério "Smart Offline", não um ping isolado), aparece um toast vermelho <em>"&lt;host&gt; ficou OFFLINE"</em> E uma notificação nativa do Windows — mesmo com a janela do app minimizada / em segundo plano.</div>
+  <div class="step">Religar o host.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> toast verde <em>"&lt;host&gt; voltou ONLINE"</em> + notificação nativa.</div>
+  <div class="step">Abrir/fechar o app com hosts já offline.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> NÃO dispara notificação para o estado inicial (só para transições reais depois do baseline). Com as opções desligadas, nenhuma notificação aparece.</div>
+  <div class="meta">Funciona no portátil (WebView2) e no Electron — usa a Web Notification API, não depende do main process.</div>
+</div>
+
+<div class="test new">
+  <div class="row"><span class="id">T4.7</span><span class="title">Histórico de disponibilidade persiste após restart</span><span class="badge badge-new">novo</span></div>
+  <div class="step">Monitorar um host por alguns minutos (o sampler grava 1 amostra/minuto).</div>
+  <div class="step">Abrir os <strong>detalhes do host</strong> → aba <strong>"Histórico"</strong>.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> mostra a <strong>disponibilidade (uptime %)</strong> e um <strong>gráfico de latência</strong>. Seletor 24h / 7 dias funciona. A aba abre <strong>sem pedir autenticação WinRM</strong>.</div>
+  <div class="step"><strong>Fechar e reabrir o app.</strong> Voltar à aba Histórico do mesmo host.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> o histórico anterior <strong>continua lá</strong> (antes era perdido — vivia só em memória). Host recém-adicionado mostra "ainda não há histórico" até o sampler rodar alguns minutos.</div>
+  <div class="meta">Tabela <code>host_metrics</code> no SQLite, gravada por thread separado fora do hot path do ping. Retenção 30 dias. Endpoint <code>GET /hosts/{address}/metrics?range=24h|7d</code>.</div>
 </div>
 
 <hr>
@@ -479,12 +547,13 @@ Tentando variante de username: dominio-b.local\raphael</pre>
 
 <div class="test new">
   <div class="row"><span class="id">T6.1</span><span class="title">Vendor lookup não bloqueia primeiro start sem internet</span><span class="badge badge-new">novo</span></div>
-  <div class="step">Deletar o cache OUI local: <code>%USERPROFILE%\.cache\python-mac-vendor-lookup\mac-vendors.txt</code> (se existir).</div>
+  <div class="step">Deletar o cache OUI local: <code>%APPDATA%\FerramentasDeRede\mac-vendors.txt</code> (se existir).</div>
   <div class="step">Desconectar a máquina da internet (ou bloquear no firewall <code>standards-oui.ieee.org</code>).</div>
   <div class="step">Iniciar o app.</div>
-  <div class="expect">✅ <strong>Esperado:</strong> sobe normalmente em ~10s. Antes ficava 30s+ tentando baixar OUI.</div>
-  <div class="step">Fazer um discovery em uma /24 onde haja máquinas Dell/HP/Lenovo/VMware/Hyper-V.</div>
-  <div class="expect">✅ <strong>Esperado:</strong> mesmo offline, vendor é classificado corretamente para essas marcas (via fallback embutido). Marcas raras aparecem como "Desconhecido".</div>
+  <div class="expect">✅ <strong>Esperado:</strong> sobe normalmente em ~10s. O scan <strong>nunca</strong> baixa OUI automaticamente — a atualização é só sob demanda (botão em Configurações → Scanner).</div>
+  <div class="step">Fazer um discovery na sub-rede local onde haja máquinas Dell/HP/Lenovo/VMware/Hyper-V.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> mesmo offline, vendor é classificado corretamente para essas marcas (via fallback embutido + base local). Marcas raras aparecem como "Desconhecido".</div>
+  <div class="meta">O lookup de fabricante é thread-safe: o dicionário de prefixos OUI é carregado <strong>uma vez</strong> antes do pool de threads do scan e lido em memória (evita o crash de event-loop concorrente da biblioteca <code>mac-vendor-lookup</code>).</div>
 </div>
 
 <div class="test new">

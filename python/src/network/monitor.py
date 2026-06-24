@@ -18,6 +18,10 @@ from src.core.host_manager import HostManager
 # starts triggering "no more handles" in tight loops.
 _DEFAULT_POOL_SIZE = int(os.environ.get("NT_MONITOR_POOL_SIZE", "64"))
 _TICK_INTERVAL_S = 1.0
+# How often the history sampler snapshots stats into host_metrics. 60s keeps the
+# table small (~43k rows/host/month) while giving enough resolution for 24h/7d
+# charts. Tunable for ops without a redeploy.
+_METRICS_SAMPLE_INTERVAL_S = int(os.environ.get("NT_METRICS_SAMPLE_INTERVAL_S", "60"))
 
 
 class HostMonitor:
@@ -69,6 +73,13 @@ class HostMonitor:
 
         self._dns_thread = threading.Thread(target=self._dns_loop, daemon=True, name="monitor-dns")
         self._dns_thread.start()
+
+        # History sampler: snapshots get_stats() periodically and batch-writes to
+        # host_metrics. Separate thread so DB I/O never sits on the ping hot path.
+        self._metrics_thread = threading.Thread(
+            target=self._metrics_loop, daemon=True, name="monitor-metrics"
+        )
+        self._metrics_thread.start()
 
         logging.info(f"HostMonitor started with pool_size={_DEFAULT_POOL_SIZE}")
 
@@ -711,3 +722,51 @@ class HostMonitor:
         """Retorna as estatísticas atuais de todos os hosts."""
         with self._lock:
             return {ip: data.copy() for ip, data in self._hosts.items()}
+
+    def _metrics_loop(self):
+        """Snapshot periódico das stats → host_metrics (histórico persistente).
+
+        Roda num thread próprio para que a escrita no SQLite nunca fique no
+        caminho crítico do ping. Amostra a cada _METRICS_SAMPLE_INTERVAL_S e
+        faz pruning da retenção uma vez por hora. Best-effort: qualquer falha é
+        logada e o loop continua — histórico é secundário ao monitoramento.
+        """
+        from src.core.database import db
+
+        last_prune = 0.0
+        # Skip the very first interval so calibration (first ping round) settles
+        # before we record — avoids a misleading "offline" sample at t=0.
+        self._stop_event.wait(_METRICS_SAMPLE_INTERVAL_S)
+
+        while self._running and not self._stop_event.is_set():
+            try:
+                now = int(time.time())
+                snapshot = self.get_stats()
+                rows = []
+                for ip, data in snapshot.items():
+                    if not data.get('monitoring', True):
+                        continue
+                    # Don't record hosts still calibrating — their status isn't
+                    # meaningful yet.
+                    if not data.get('calibration_done'):
+                        continue
+                    online = bool(data.get('online'))
+                    rows.append({
+                        'address': ip,
+                        'ts': now,
+                        'online': online,
+                        # Latency only meaningful when up.
+                        'latency': data.get('latency') if online else None,
+                        'packet_loss_pct': data.get('packet_loss_pct', 0),
+                    })
+                if rows:
+                    db.insert_metrics_batch(rows)
+
+                # Prune at most once an hour.
+                if time.time() - last_prune > 3600:
+                    db.prune_metrics()
+                    last_prune = time.time()
+            except Exception:
+                logging.exception("HostMonitor: metrics sampler tick failed")
+
+            self._stop_event.wait(_METRICS_SAMPLE_INTERVAL_S)

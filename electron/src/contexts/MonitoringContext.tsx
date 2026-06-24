@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useRef, useCallb
 import { useToast } from './ToastContext';
 import { Host, HostStatistics } from '../types';
 import { API_BASE } from '../config/api';
+import { useHostNotifications } from '../hooks/useHostNotifications';
 
 interface MonitoringStats {
     total: number;
@@ -195,6 +196,12 @@ export const MonitoringProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             }
         };
     }, [fetchHosts, showToast]);
+
+    // Fire desktop/toast notifications on host online↔offline transitions.
+    // Gated by settings.dashboard.notify_offline / notify_online. This is the
+    // single mount point (provider lives at the app root), so notifications work
+    // regardless of which screen is open.
+    useHostNotifications(hosts);
 
     // Derived state: Unique Groups
     const uniqueGroups = Array.from(new Set(hosts.map(h => h.group).filter(Boolean) as string[])).sort();

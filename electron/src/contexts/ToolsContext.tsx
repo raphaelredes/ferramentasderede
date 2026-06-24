@@ -8,6 +8,11 @@ interface ScannedHost {
     mac: string;
     vendor: string;
     status: 'online' | 'offline';
+    ports?: number[];
+    /** Probable device category (Impressora, Câmera IP, Workstation…). */
+    device_type?: string;
+    /** True when the type is a low-confidence guess (vendor/hostname only). */
+    device_type_guess?: boolean;
 }
 
 interface ToolState {
@@ -28,6 +33,54 @@ interface ScanSession {
     availableCount?: number;
     mode?: 'quick' | 'full';
     sourceIp?: string;  // NIC source for the discovery scan (multi-VLAN)
+    /** Operator-given label; falls back to cidr in the tab. */
+    name?: string;
+    /** Pinned tabs survive app restart and can't be closed by accident. */
+    pinned?: boolean;
+}
+
+// localStorage persistence. Only the durable shape is saved (no live scan
+// state) so a reopened tab comes back "Pronto", ready to re-scan, never showing
+// stale results. Versioned so a future shape change discards old data cleanly
+// instead of propagating undefined into fields the code assumes present.
+const SCAN_SESSIONS_STORAGE_KEY = 'scanSessions';
+const SCAN_SESSIONS_SCHEMA_VERSION = 1;
+
+type PersistedSession = Pick<ScanSession, 'id' | 'cidr' | 'name' | 'pinned' | 'sourceIp' | 'mode'>;
+
+function loadPersistedSessions(): { sessions: ScanSession[]; activeId: string | null } {
+    try {
+        const raw = localStorage.getItem(SCAN_SESSIONS_STORAGE_KEY);
+        if (!raw) return { sessions: [], activeId: null };
+        const parsed = JSON.parse(raw);
+        if (!parsed || parsed.v !== SCAN_SESSIONS_SCHEMA_VERSION || !Array.isArray(parsed.sessions)) {
+            return { sessions: [], activeId: null };
+        }
+        const sessions: ScanSession[] = (parsed.sessions as PersistedSession[])
+            .filter(s => s && typeof s.id === 'string')
+            .map(s => ({
+                id: s.id,
+                cidr: s.cidr || '',
+                name: s.name,
+                pinned: !!s.pinned,
+                sourceIp: s.sourceIp,
+                mode: s.mode,
+                // Volatile fields always reset on rehydrate.
+                results: [],
+                status: 'Pronto',
+                progress: 0,
+                isRunning: false,
+                availableRanges: [],
+                availableCount: undefined,
+            }));
+        const activeId = typeof parsed.activeId === 'string' && sessions.some(s => s.id === parsed.activeId)
+            ? parsed.activeId
+            : (sessions[0]?.id ?? null);
+        return { sessions, activeId };
+    } catch (e) {
+        console.warn('Failed to parse persisted scan sessions; starting fresh.', e);
+        return { sessions: [], activeId: null };
+    }
 }
 
 export interface PendingAction {
@@ -56,6 +109,8 @@ interface ToolsContextType {
     createScanSession: (cidr: string, mode?: 'quick' | 'full') => string;
     closeScanSession: (id: string) => void;
     updateScanSession: (id: string, updates: Partial<ScanSession>) => void;
+    renameScanSession: (id: string, name: string) => void;
+    togglePinScanSession: (id: string) => void;
     setActiveSessionId: (id: string | null) => void;
 
     runPing: (target: string, sourceIp?: string) => Promise<void>;
@@ -79,9 +134,10 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const [pingState, setPingState] = useState<ToolState>({ isRunning: false, output: [], target: '8.8.8.8', isOffline: false });
     const [traceState, setTraceState] = useState<ToolState>({ isRunning: false, output: [], target: '8.8.8.8' });
 
-    // Scanner State (Multi-Session)
-    const [scanSessions, setScanSessions] = useState<ScanSession[]>([]);
-    const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+    // Scanner State (Multi-Session) — rehydrated from localStorage (pinned tabs
+    // and last layout survive restart; live scan state is never persisted).
+    const [scanSessions, setScanSessions] = useState<ScanSession[]>(() => loadPersistedSessions().sessions);
+    const [activeSessionId, setActiveSessionId] = useState<string | null>(() => loadPersistedSessions().activeId);
 
     // Pending Action State (for auto-run from Dashboard)
     const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
@@ -147,6 +203,29 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         };
     }, []);
 
+    // Persist the durable scan-session layout (pinned tabs, names, CIDRs) to
+    // localStorage on every change. Live scan state (results/progress/running)
+    // is intentionally stripped — see PersistedSession.
+    useEffect(() => {
+        try {
+            const payload = {
+                v: SCAN_SESSIONS_SCHEMA_VERSION,
+                activeId: activeSessionId,
+                sessions: scanSessions.map<PersistedSession>(s => ({
+                    id: s.id,
+                    cidr: s.cidr,
+                    name: s.name,
+                    pinned: s.pinned,
+                    sourceIp: s.sourceIp,
+                    mode: s.mode,
+                })),
+            };
+            localStorage.setItem(SCAN_SESSIONS_STORAGE_KEY, JSON.stringify(payload));
+        } catch (e) {
+            console.warn('Failed to persist scan sessions', e);
+        }
+    }, [scanSessions, activeSessionId]);
+
     const setPingTarget = (target: string) => setPingState(prev => ({ ...prev, target }));
     const setTraceTarget = (target: string) => setTraceState(prev => ({ ...prev, target }));
 
@@ -167,36 +246,46 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }, []);
 
     const closeScanSession = useCallback((id: string) => {
-        // Abort if running
-        if (abortControllers.current[`scanner_${id}`]) {
-            abortControllers.current[`scanner_${id}`]?.abort();
-            abortControllers.current[`scanner_${id}`] = null;
-        }
-
         setScanSessions(prev => {
-            const newSessions = prev.filter(s => s.id !== id);
-            // If we closed the active one, switch to another
-            if (activeSessionId === id) {
-                // This side-effect inside setState is safe for the next render but we need to set activeSessionId separately
-                // However, we can't easily do that here. 
-                // Better logic: calculate new active ID outside or use an effect. 
-                // For simplicity, we'll handle active ID update in the component or here if possible.
-                // Actually, let's just let the component handle the "if empty create new" logic, 
-                // or handle it here.
+            const target = prev.find(s => s.id === id);
+            // Pinned tabs can't be closed — the UI hides the X, this is the
+            // belt-and-suspenders guard for any other call path.
+            if (target?.pinned) return prev;
+
+            // Abort if running (only once we know we're actually closing it).
+            if (abortControllers.current[`scanner_${id}`]) {
+                abortControllers.current[`scanner_${id}`]?.abort();
+                abortControllers.current[`scanner_${id}`] = null;
             }
+
+            const closedIndex = prev.findIndex(s => s.id === id);
+            const newSessions = prev.filter(s => s.id !== id);
+
+            // Pick the next active tab here (not in a downstream effect): the
+            // neighbour to the left, or the new first tab, or null if empty.
+            setActiveSessionId(currentActive => {
+                if (currentActive !== id) return currentActive; // closed a non-active tab
+                if (newSessions.length === 0) return null;
+                const nextIndex = Math.max(0, closedIndex - 1);
+                return newSessions[Math.min(nextIndex, newSessions.length - 1)].id;
+            });
+
             return newSessions;
         });
-
-        // We need to update activeSessionId if the current one was closed
-        if (activeSessionId === id) {
-            // We can't access the *new* sessions here easily without double-state logic.
-            // Let's just set it to null and let the UI pick the last one or the component handle it.
-            setActiveSessionId(null);
-        }
-    }, [activeSessionId]);
+    }, []);
 
     const updateScanSession = useCallback((id: string, updates: Partial<ScanSession>) => {
         setScanSessions(prev => prev.map(s => s.id === id ? { ...s, ...updates } : s));
+    }, []);
+
+    const renameScanSession = useCallback((id: string, name: string) => {
+        const trimmed = name.trim();
+        // Empty name clears the override (tab falls back to showing the CIDR).
+        setScanSessions(prev => prev.map(s => s.id === id ? { ...s, name: trimmed || undefined } : s));
+    }, []);
+
+    const togglePinScanSession = useCallback((id: string) => {
+        setScanSessions(prev => prev.map(s => s.id === id ? { ...s, pinned: !s.pinned } : s));
     }, []);
 
     // Ping Statistics Ref
@@ -447,12 +536,15 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             // Fetch settings
             let timeout = 200;
             let concurrency = 50;
+            let resolveVendors = true;
             try {
                 const settingsRes = await fetch(`${API_BASE}/settings`);
                 const settingsData = await settingsRes.json();
                 if (settingsData.scanner) {
                     timeout = settingsData.scanner.ping_timeout || 200;
                     concurrency = settingsData.scanner.concurrency || 50;
+                    // online_vendor_lookup gates the ARP→manufacturer pass.
+                    resolveVendors = settingsData.scanner.online_vendor_lookup !== false;
                 }
             } catch (e) { console.warn("Settings fetch failed", e); }
 
@@ -465,6 +557,7 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                     timeout,
                     max_workers: concurrency,
                     source_ip: session.sourceIp,
+                    resolve_vendors: resolveVendors,
                 }),
                 signal: abortController.signal
             });
@@ -500,6 +593,28 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                             });
                         } else if (data.error) {
                             updateScanSession(sessionId, { status: `Erro: ${data.error}`, isRunning: false });
+                        } else if (data.status === 'vendor_update' && data.ip) {
+                            // Post-scan ARP pass: merge MAC/vendor (and a refined
+                            // type) into the card that's already on screen. Never
+                            // downgrade a confident port-based type to a guess —
+                            // only overwrite device_type when the update carries one.
+                            setScanSessions(prev => prev.map(s => {
+                                if (s.id !== sessionId) return s;
+                                return {
+                                    ...s,
+                                    results: s.results.map(h => h.ip === data.ip
+                                        ? {
+                                            ...h,
+                                            mac: data.mac ?? h.mac,
+                                            vendor: data.vendor ?? h.vendor,
+                                            ...(data.device_type !== undefined ? {
+                                                device_type: data.device_type,
+                                                device_type_guess: data.device_type_guess,
+                                            } : {}),
+                                        }
+                                        : h),
+                                };
+                            }));
                         } else if (data.ip) {
                             // It's a host
                             setScanSessions(prev => prev.map(s => {
@@ -536,6 +651,8 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             createScanSession,
             closeScanSession,
             updateScanSession,
+            renameScanSession,
+            togglePinScanSession,
             setActiveSessionId,
             runPing,
             runTraceroute,

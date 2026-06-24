@@ -13,6 +13,8 @@ interface ScannerSettings {
     default_cidr: string;
     ping_timeout: number;
     concurrency: number;
+    /** Resolve manufacturer (MAC→vendor) during scans. Default on. */
+    online_vendor_lookup: boolean;
 }
 
 interface RemoteSettingsData {
@@ -60,7 +62,7 @@ interface Backup {
 
 const DEFAULT_SETTINGS: SettingsData = {
     general: { appearance_mode: 'System', ask_initial_info: true },
-    scanner: { default_cidr: '', ping_timeout: 200, concurrency: 50 },
+    scanner: { default_cidr: '', ping_timeout: 200, concurrency: 50, online_vendor_lookup: true },
     remote: { auto_add_trusted_hosts: false, default_credential_id: undefined, auto_login: false },
     dashboard: { status_update_interval: 60, ping_monitor_interval: 5, notify_offline: false, notify_online: false },
     networks: []
@@ -75,6 +77,12 @@ export function Settings() {
     // Backups State
     const [backups, setBackups] = useState<Backup[]>([]);
     const [backupStatus, setBackupStatus] = useState('');
+
+    // Vendor (OUI) database State
+    const [vendorInfo, setVendorInfo] = useState<{
+        present: boolean; complete: boolean; last_updated: string | null; count: number;
+    } | null>(null);
+    const [vendorUpdating, setVendorUpdating] = useState(false);
 
     // Confirmation Modal State
     const [confirmationModal, setConfirmationModal] = useState<{
@@ -97,6 +105,40 @@ export function Settings() {
 
     const { showToast } = useToast();
     const { refreshStatus: refreshVaultStatus } = useVault();
+
+    // Load vendor-DB status when the scanner tab is shown.
+    useEffect(() => {
+        if (activeTab !== 'scanner') return;
+        let cancelled = false;
+        (async () => {
+            try {
+                const res = await fetch(`${API_BASE}/network/vendors/info`);
+                const data = await res.json();
+                if (!cancelled) setVendorInfo(data);
+            } catch (e) {
+                console.warn('vendors/info fetch failed', e);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [activeTab]);
+
+    const handleUpdateVendors = async () => {
+        setVendorUpdating(true);
+        try {
+            const res = await fetch(`${API_BASE}/network/vendors/update`, { method: 'POST' });
+            const data = await res.json();
+            if (res.ok) {
+                showToast(data.message || 'Base de fabricantes atualizada.', 'success');
+                if (data.info) setVendorInfo(data.info);
+            } else {
+                showToast(data.detail || 'Falha ao atualizar base de fabricantes.', 'error');
+            }
+        } catch (e: any) {
+            showToast(`Erro: ${e?.message || 'falha de rede'}`, 'error');
+        } finally {
+            setVendorUpdating(false);
+        }
+    };
 
     const handleCreateVault = async () => {
         if (createVaultModal.password !== createVaultModal.confirmPassword) {
@@ -489,6 +531,57 @@ export function Settings() {
                                     onChange={(e) => setSettings({ ...settings, scanner: { ...settings.scanner, concurrency: parseInt(e.target.value) || 0 } })}
                                     className={clsx("w-full bg-zinc-950 border rounded-lg px-4 py-2 focus:outline-none focus:border-blue-500 transition-colors", isChanged('scanner', 'concurrency', settings.scanner.concurrency) ? "border-blue-500/50 text-white" : "border-zinc-700 text-zinc-500")}
                                 />
+                            </div>
+                        </div>
+
+                        {/* Manufacturer (MAC vendor) identification */}
+                        <div className="space-y-3 pt-2 border-t border-zinc-800/60">
+                            <label className="flex items-center justify-between gap-3 cursor-pointer">
+                                <span className="flex items-center gap-2">
+                                    <span className="text-sm font-medium text-zinc-300">Identificar fabricante no scan</span>
+                                    <HelpButton
+                                        title="Identificação de fabricante"
+                                        description="Resolve o fabricante de cada dispositivo pelo MAC address (via tabela ARP). Só funciona para hosts na MESMA sub-rede — em VLANs roteadas o MAC não é visível. Não identifica o modelo do dispositivo: o MAC só carrega o fabricante."
+                                    />
+                                </span>
+                                <input
+                                    type="checkbox"
+                                    checked={settings.scanner.online_vendor_lookup}
+                                    onChange={(e) => setSettings({ ...settings, scanner: { ...settings.scanner, online_vendor_lookup: e.target.checked } })}
+                                    className="w-4 h-4 accent-blue-500"
+                                />
+                            </label>
+
+                            <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-4 space-y-3">
+                                <div className="flex items-center justify-between gap-4">
+                                    <div className="text-xs text-zinc-400 space-y-0.5">
+                                        <p className="text-zinc-300 font-medium">Base de fabricantes (IEEE OUI)</p>
+                                        {vendorInfo ? (
+                                            <>
+                                                <p>{vendorInfo.count.toLocaleString('pt-BR')} registros{vendorInfo.complete ? '' : ' (incompleta)'}</p>
+                                                <p>Atualizada em: {vendorInfo.last_updated ? new Date(vendorInfo.last_updated).toLocaleDateString('pt-BR') : '—'}</p>
+                                            </>
+                                        ) : (
+                                            <p>Carregando status…</p>
+                                        )}
+                                    </div>
+                                    <button
+                                        onClick={handleUpdateVendors}
+                                        disabled={vendorUpdating}
+                                        className={clsx(
+                                            "flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors border whitespace-nowrap",
+                                            vendorUpdating
+                                                ? "bg-zinc-800 text-zinc-500 border-zinc-700 cursor-wait"
+                                                : "bg-zinc-800 hover:bg-blue-600 text-zinc-200 hover:text-white border-zinc-700 hover:border-blue-500"
+                                        )}
+                                    >
+                                        <Download size={15} />
+                                        {vendorUpdating ? 'Atualizando…' : 'Atualizar base'}
+                                    </button>
+                                </div>
+                                <p className="text-[11px] text-zinc-500 leading-relaxed">
+                                    A atualização baixa a lista oficial da IEEE (requer internet). Em rede corporativa com proxy, pode ser necessário configurar o proxy do sistema. O scan usa a base local — não baixa nada automaticamente.
+                                </p>
                             </div>
                         </div>
 

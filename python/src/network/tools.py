@@ -520,10 +520,12 @@ class NetworkTools:
     # CLI script, future feature) can't bypass it.
     _MAX_DISCOVERY_ADDRESSES = 65536  # /16
 
-    def discover_hosts(self, network, task_id, timeout=200, max_workers=50, source_ip=None):
+    def discover_hosts(self, network, task_id, timeout=200, max_workers=50, source_ip=None,
+                       resolve_vendors=True):
         """
         Realiza a descoberta de hosts na rede especificada.
         `source_ip` força a NIC de saída para todos os pings da varredura.
+        `resolve_vendors` liga/desliga a etapa pós-scan de ARP→fabricante.
         Yields status updates and found hosts.
         """
         import ipaddress
@@ -537,9 +539,45 @@ class NetworkTools:
         import subprocess
         from . import mac_utils
         from src.network.vendor_utils import VendorUtils
+        from src.network.device_type import infer_device_type
 
         # Notificar início
         yield {"status": "progress", "message": f"Iniciando varredura em {network}...", "progress": 0}
+
+        # Pre-load the OUI prefix dict ONCE, before the worker pool. The
+        # mac_vendor_lookup library does lookups via run_until_complete on a
+        # shared event loop, which is unsafe to call from N worker threads —
+        # but a plain dict read is thread-safe. load_prefixes() warms the dict;
+        # workers then call VendorUtils.get_vendor() which only reads it.
+        # Never blocks on the network.
+        try:
+            VendorUtils.load_prefixes()
+        except Exception as e:
+            logging.debug(f"Vendor prefix preload failed (non-fatal): {e}")
+
+        # Strong-signal ports probed per online host for device-type inference.
+        # connect_ex (no subprocess) on a short timeout; the 5 are checked
+        # concurrently inside the worker so it adds ~one timeout of latency, not
+        # five. Kept small on purpose — this is a type hint, not a port scanner.
+        _TYPE_PROBE_PORTS = [3389, 9100, 554, 445, 80]
+        _TYPE_PROBE_TIMEOUT = 0.35
+
+        def _probe_ports(ip_str):
+            open_ports = []
+            def _check(port):
+                try:
+                    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                        s.settimeout(_TYPE_PROBE_TIMEOUT)
+                        if s.connect_ex((ip_str, port)) == 0:
+                            return port
+                except Exception:
+                    return None
+                return None
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(_TYPE_PROBE_PORTS)) as pe:
+                for r in pe.map(_check, _TYPE_PROBE_PORTS):
+                    if r:
+                        open_ports.append(r)
+            return open_ports
 
         if network.num_addresses > self._MAX_DISCOVERY_ADDRESSES:
             yield {
@@ -595,10 +633,29 @@ class NetworkTools:
                     if not re.match(r"^\d+\.\d+\.\d+\.\d+$", hostname):
                         host_data["domain"] = '.'.join(parts[1:])
             
-            # 4. No MAC/Vendor resolution as requested
+            # 4. Light port probe (strong-signal ports only) for device-type
+            #    inference. Cheap connect_ex, runs concurrently inside the worker.
+            try:
+                open_ports = _probe_ports(ip_str)
+            except Exception as e:
+                logging.debug(f"Port probe failed for {ip_str}: {e}")
+                open_ports = []
+            host_data["ports"] = open_ports
+
+            # 5. MAC/vendor are resolved in a single ARP pass AFTER the scan
+            #    (see below) — one `arp -a` read cross-referenced by IP is far
+            #    cheaper than one subprocess per host, and avoids spawning N
+            #    arp.exe processes across the worker pool. Seed as None here;
+            #    vendor/type get a first pass from hostname+ports now and are
+            #    refined once the MAC (hence vendor) is known.
             host_data["mac"] = None
             host_data["vendor"] = None
-                
+            dtype, dguess = infer_device_type(
+                vendor=None, hostname=hostname, open_ports=open_ports
+            )
+            host_data["device_type"] = dtype
+            host_data["device_type_guess"] = dguess
+
             return host_data
 
         # Usar ThreadPoolExecutor
@@ -608,28 +665,78 @@ class NetworkTools:
             
             last_progress_update = 0
             found_ips_set = set()
-            
+            # Keep each found host's hostname+ports so the post-scan vendor pass
+            # can re-infer the type with the FULL signal (ports + vendor), never
+            # downgrading a confident port-based type to a vendor guess.
+            found_hosts_meta = {}
+
             for future in concurrent.futures.as_completed(future_to_ip):
                 try:
                     result = future.result()
                     scanned_count += 1
-                    
+
                     # Calcular progresso
                     progress = 5 + int((scanned_count / total_hosts) * 90)
-                    
+
                     # Atualizar a cada 5 hosts ou se o progresso mudou significativamente
                     if scanned_count % 5 == 0 or progress > last_progress_update:
                         yield {"status": "progress", "message": f"Varrendo... ({scanned_count}/{total_hosts})", "progress": progress}
                         last_progress_update = progress
-                    
+
                     if result:
                         found_count += 1
                         found_ips_set.add(result['ip'])
+                        found_hosts_meta[result['ip']] = {
+                            "hostname": result.get("hostname"),
+                            "ports": result.get("ports") or [],
+                        }
                         yield result
                         
                 except Exception as e:
                     logging.error(f"Error scanning host: {e}")
                     scanned_count += 1
+
+        # --- MAC / vendor enrichment pass -------------------------------------
+        # ONE `arp -a` read (no IP arg) returns the whole table that the scan's
+        # pings just populated. We cross-reference it by IP instead of spawning
+        # one arp.exe per host. Then resolve vendor from the pre-loaded prefix
+        # dict (thread-safe, in-memory) and refine the device type now that the
+        # vendor is known. Each enriched host is streamed as a `vendor_update`
+        # event the frontend merges into the existing card.
+        #
+        # NOTE (multi-VLAN): ARP only sees hosts on the SAME L2 segment. For a
+        # routed/cross-VLAN scan the target's MAC never enters our table (the
+        # gateway answers), so mac/vendor stay None there — expected, not a bug.
+        if found_ips_set and resolve_vendors:
+            yield {"status": "progress", "message": "Identificando fabricantes...", "progress": 96}
+            try:
+                arp_entries = mac_utils.get_mac_from_arp(None) or []
+            except Exception as e:
+                logging.debug(f"ARP table read failed: {e}")
+                arp_entries = []
+            ip_to_mac = {e["ip"]: e["mac"] for e in arp_entries if e.get("ip") and e.get("mac")}
+
+            for ip_str in found_ips_set:
+                mac = ip_to_mac.get(ip_str)
+                if not mac:
+                    continue
+                vendor = VendorUtils.get_vendor(mac)
+                update = {"status": "vendor_update", "ip": ip_str, "mac": mac, "vendor": vendor}
+                # Re-infer with the FULL signal (ports + vendor + hostname). Ports
+                # are a strong tell and take precedence inside infer_device_type,
+                # so adding the vendor never downgrades a confident port-based
+                # type. Only emit a type when it beats "Desconhecido".
+                meta = found_hosts_meta.get(ip_str, {})
+                dtype, dguess = infer_device_type(
+                    vendor=vendor,
+                    hostname=meta.get("hostname"),
+                    open_ports=meta.get("ports"),
+                )
+                if dtype != "Desconhecido":
+                    update["device_type"] = dtype
+                    update["device_type_guess"] = dguess
+                yield update
+        # ----------------------------------------------------------------------
 
         # Calculate Available IPs
         all_ips_str = [str(ip) for ip in hosts_to_scan]

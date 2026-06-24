@@ -16,7 +16,10 @@ import {
     ArrowUpDown,
     ArrowUp,
     ArrowDown,
-    Upload
+    Upload,
+    HelpCircle,
+    Pin,
+    PinOff
 } from 'lucide-react';
 import { Host } from '../../types';
 import { useTools } from '../../contexts/ToolsContext';
@@ -36,10 +39,26 @@ export const NetworkScanner: React.FC<NetworkScannerProps> = ({ onAddHost, exist
         createScanSession,
         closeScanSession,
         updateScanSession,
+        renameScanSession,
+        togglePinScanSession,
         setActiveSessionId,
         runScanSession,
         stopTool
     } = useTools();
+
+    // Inline-rename state: which tab is being renamed + its draft text.
+    const [renamingId, setRenamingId] = React.useState<string | null>(null);
+    const [renameDraft, setRenameDraft] = React.useState('');
+
+    const startRename = (session: { id: string; name?: string; cidr: string }) => {
+        setRenamingId(session.id);
+        setRenameDraft(session.name || session.cidr || '');
+    };
+    const commitRename = () => {
+        if (renamingId) renameScanSession(renamingId, renameDraft);
+        setRenamingId(null);
+        setRenameDraft('');
+    };
 
     const { networks } = useNetworks();
 
@@ -172,21 +191,27 @@ export const NetworkScanner: React.FC<NetworkScannerProps> = ({ onAddHost, exist
         let csvContent = '';
         let filename = '';
 
+        // RFC-4180 quoting: wrap in quotes and double any internal quote.
+        // Vendor names from IEEE can contain commas/quotes; the old `"${cell}"`
+        // produced malformed CSV for those.
+        const csvCell = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+
         if (viewMode === 'results') {
             if (activeSession.results.length === 0) return;
 
-            const headers = ['IP', 'Hostname', 'Vendor', 'MAC', 'Status'];
+            const headers = ['IP', 'Hostname', 'Fabricante', 'Tipo', 'MAC', 'Status'];
             const rows = activeSession.results.map(host => [
                 host.ip,
                 host.hostname || '',
                 host.vendor || '',
+                host.device_type ? `${host.device_type}${host.device_type_guess ? ' (provável)' : ''}` : '',
                 host.mac || '',
                 host.status
             ]);
 
             csvContent = [
-                headers.join(','),
-                ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+                headers.map(csvCell).join(','),
+                ...rows.map(row => row.map(csvCell).join(','))
             ].join('\n');
 
             filename = `scan_results_${activeSession.cidr.replace(/[\/\\]/g, '_')}_${new Date().toISOString().slice(0, 10)}.csv`;
@@ -197,8 +222,8 @@ export const NetworkScanner: React.FC<NetworkScannerProps> = ({ onAddHost, exist
             const rows = activeSession.availableRanges.map(range => [range]);
 
             csvContent = [
-                headers.join(','),
-                ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+                headers.map(csvCell).join(','),
+                ...rows.map(row => row.map(csvCell).join(','))
             ].join('\n');
 
             filename = `available_ips_${activeSession.cidr.replace(/[\/\\]/g, '_')}_${new Date().toISOString().slice(0, 10)}.csv`;
@@ -235,7 +260,7 @@ export const NetworkScanner: React.FC<NetworkScannerProps> = ({ onAddHost, exist
                 {scanSessions.map(session => (
                     <div
                         key={session.id}
-                        onClick={() => setActiveSessionId(session.id)}
+                        onClick={() => renamingId !== session.id && setActiveSessionId(session.id)}
                         className={`
                             group flex items-center gap-2 px-4 py-3 text-sm font-medium cursor-pointer border-r border-zinc-800/50 min-w-[160px] max-w-[240px] transition-colors
                             ${activeSessionId === session.id
@@ -244,15 +269,55 @@ export const NetworkScanner: React.FC<NetworkScannerProps> = ({ onAddHost, exist
                         `}
                     >
                         <div className="flex-1 truncate flex items-center gap-2">
-                            {session.isRunning ? <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" /> : <LayoutList size={14} />}
-                            <span className="truncate">{session.cidr || 'Nova Varredura'}</span>
+                            {session.pinned
+                                ? <Pin size={14} className="text-blue-400 shrink-0" fill="currentColor" />
+                                : session.isRunning
+                                    ? <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+                                    : <LayoutList size={14} className="shrink-0" />}
+                            {renamingId === session.id ? (
+                                <input
+                                    autoFocus
+                                    value={renameDraft}
+                                    onChange={(e) => setRenameDraft(e.target.value)}
+                                    onClick={(e) => e.stopPropagation()}
+                                    onBlur={commitRename}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter') commitRename();
+                                        else if (e.key === 'Escape') { setRenamingId(null); setRenameDraft(''); }
+                                    }}
+                                    placeholder={session.cidr || 'Nome da aba'}
+                                    className="flex-1 min-w-0 bg-zinc-950 border border-blue-500/50 rounded px-1.5 py-0.5 text-sm text-white outline-none"
+                                />
+                            ) : (
+                                <span
+                                    className="truncate"
+                                    title="Duplo-clique para renomear"
+                                    onDoubleClick={(e) => { e.stopPropagation(); startRename(session); }}
+                                >
+                                    {session.name || session.cidr || 'Nova Varredura'}
+                                </span>
+                            )}
                         </div>
-                        <button
-                            onClick={(e) => handleCloseSession(session.id, e)}
-                            className="opacity-0 group-hover:opacity-100 p-1 hover:bg-zinc-700 rounded-full transition-all"
-                        >
-                            <X size={12} />
-                        </button>
+                        {renamingId !== session.id && (
+                            <div className="flex items-center gap-0.5">
+                                <button
+                                    onClick={(e) => { e.stopPropagation(); togglePinScanSession(session.id); }}
+                                    className={`p-1 rounded-full transition-all hover:bg-zinc-700 ${session.pinned ? 'text-blue-400 opacity-100' : 'opacity-0 group-hover:opacity-100 text-zinc-400'}`}
+                                    title={session.pinned ? 'Desafixar aba' : 'Fixar aba'}
+                                >
+                                    {session.pinned ? <PinOff size={12} /> : <Pin size={12} />}
+                                </button>
+                                {!session.pinned && (
+                                    <button
+                                        onClick={(e) => handleCloseSession(session.id, e)}
+                                        className="opacity-0 group-hover:opacity-100 p-1 hover:bg-zinc-700 rounded-full transition-all"
+                                        title="Fechar aba"
+                                    >
+                                        <X size={12} />
+                                    </button>
+                                )}
+                            </div>
+                        )}
                     </div>
                 ))}
                 <button
@@ -444,6 +509,26 @@ export const NetworkScanner: React.FC<NetworkScannerProps> = ({ onAddHost, exist
                                                     <p className="text-zinc-400 text-xs truncate" title={host.hostname || 'Sem hostname'}>
                                                         {host.hostname || 'Unknown Host'}
                                                     </p>
+                                                    {host.vendor && host.vendor !== 'Desconhecido' && (
+                                                        <p className="text-zinc-500 text-[11px] truncate mt-0.5" title={`Fabricante: ${host.vendor}`}>
+                                                            {host.vendor}
+                                                        </p>
+                                                    )}
+                                                    {host.device_type && host.device_type !== 'Desconhecido' && (
+                                                        <div className="flex items-center gap-1 mt-1.5">
+                                                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                                                                {host.device_type}
+                                                            </span>
+                                                            {host.device_type_guess && (
+                                                                <span
+                                                                    title="Tipo provável, identificado por fabricante, hostname e/ou portas abertas. Pode estar incorreto."
+                                                                    className="text-zinc-500 hover:text-zinc-300 cursor-help"
+                                                                >
+                                                                    <HelpCircle size={12} />
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                    )}
                                                 </div>
 
                                                 <button
