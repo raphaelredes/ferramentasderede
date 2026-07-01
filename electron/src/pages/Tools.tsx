@@ -1,7 +1,21 @@
 import { useState, useRef, useEffect } from 'react';
-import { Play, Square, Terminal as TerminalIcon, Eraser, Network as NetworkIcon, Activity } from 'lucide-react';
+import { Play, Square, Terminal as TerminalIcon, Eraser, Network as NetworkIcon, Activity, Gauge, GitBranch, DoorOpen, Globe, Zap, Ruler, Globe2, Lock, Calculator, Clock, Router, Stethoscope, Compass, Wrench } from 'lucide-react';
 import { clsx } from 'clsx';
 import { NetworkScanner } from '../components/Tools/NetworkScanner';
+import { IperfPanel } from '../components/Tools/IperfPanel';
+import { MtrPanel } from '../components/Tools/MtrPanel';
+import { PortScanPanel } from '../components/Tools/PortScanPanel';
+import { DnsPanel } from '../components/Tools/DnsPanel';
+import { TrafficPanel } from '../components/Tools/TrafficPanel';
+import { TcpPingPanel } from '../components/Tools/TcpPingPanel';
+import { PmtuPanel } from '../components/Tools/PmtuPanel';
+import { PtrSweepPanel } from '../components/Tools/PtrSweepPanel';
+import { TlsPanel } from '../components/Tools/TlsPanel';
+import { SubnetPanel } from '../components/Tools/SubnetPanel';
+import { NtpPanel } from '../components/Tools/NtpPanel';
+import { SnmpPanel } from '../components/Tools/SnmpPanel';
+import { HttpPanel } from '../components/Tools/HttpPanel';
+import { ConnectionsPanel } from '../components/Tools/ConnectionsPanel';
 import { Host } from '../types';
 import { useTools } from '../contexts/ToolsContext';
 import { useToast } from '../contexts/ToastContext';
@@ -9,14 +23,71 @@ import { useNetworks } from '../hooks/useNetworks';
 import { API_BASE } from '../config/api';
 import type { NetworkConfig } from './Settings';
 
+// Tool identifiers across all categories.
+type ToolId =
+    | 'ping' | 'traceroute' | 'mtr' | 'tcp-ping' | 'pmtu'
+    | 'scanner' | 'ports' | 'ptr-sweep'
+    | 'dns' | 'tls'
+    | 'iperf' | 'traffic' | 'http'
+    | 'snmp' | 'ntp' | 'subnet' | 'connections';
+
+interface ToolDef { id: ToolId; label: string; icon: React.ReactNode; }
+interface ToolCategory { id: string; label: string; icon: React.ReactNode; tools: ToolDef[]; }
+
+// Two-level navigation: categories → tools. Keeps 16 tools navigable.
+const TOOL_CATEGORIES: ToolCategory[] = [
+    {
+        id: 'diag', label: 'Diagnóstico', icon: <Stethoscope size={16} />, tools: [
+            { id: 'ping', label: 'Ping', icon: <Activity size={16} /> },
+            { id: 'traceroute', label: 'Traceroute', icon: <NetworkIcon size={16} /> },
+            { id: 'mtr', label: 'MTR', icon: <GitBranch size={16} /> },
+            { id: 'tcp-ping', label: 'TCP Ping', icon: <Zap size={16} /> },
+            { id: 'pmtu', label: 'Path MTU', icon: <Ruler size={16} /> },
+        ],
+    },
+    {
+        id: 'disco', label: 'Descoberta', icon: <Compass size={16} />, tools: [
+            { id: 'scanner', label: 'Scanner de Rede', icon: <TerminalIcon size={16} /> },
+            { id: 'ports', label: 'Portas', icon: <DoorOpen size={16} /> },
+            { id: 'ptr-sweep', label: 'PTR Sweep', icon: <Globe2 size={16} /> },
+        ],
+    },
+    {
+        id: 'dns', label: 'DNS & Nomes', icon: <Globe size={16} />, tools: [
+            { id: 'dns', label: 'Consulta DNS', icon: <Globe size={16} /> },
+            { id: 'tls', label: 'Certificado TLS', icon: <Lock size={16} /> },
+        ],
+    },
+    {
+        id: 'banda', label: 'Banda & Web', icon: <Gauge size={16} />, tools: [
+            { id: 'iperf', label: 'Banda (iPerf)', icon: <Gauge size={16} /> },
+            { id: 'traffic', label: 'Tráfego', icon: <NetworkIcon size={16} /> },
+            { id: 'http', label: 'HTTP', icon: <Globe size={16} /> },
+        ],
+    },
+    {
+        id: 'infra', label: 'Infra & Cálculo', icon: <Wrench size={16} />, tools: [
+            { id: 'snmp', label: 'SNMP', icon: <Router size={16} /> },
+            { id: 'ntp', label: 'NTP', icon: <Clock size={16} /> },
+            { id: 'subnet', label: 'Sub-rede', icon: <Calculator size={16} /> },
+            { id: 'connections', label: 'Conexões', icon: <NetworkIcon size={16} /> },
+        ],
+    },
+];
+
 export function Tools() {
-    const [activeTab, setActiveTab] = useState<'ping' | 'traceroute' | 'scanner'>('ping');
+    const [activeTab, setActiveTab] = useState<ToolId>('ping');
+    const [activeCategory, setActiveCategory] = useState<string>('diag');
     const { showToast } = useToast();
 
     // Use Global Context
     const {
         pingState,
         traceState,
+        iperfServerState,
+        iperfClientState,
+        mtrState,
+        portState,
         runPing,
         runTraceroute,
         stopTool,
@@ -48,11 +119,13 @@ export function Tools() {
             const { type, target, sourceIp } = pendingAction;
 
             if (type === 'ping') {
+                setActiveCategory('diag');
                 setActiveTab('ping');
                 setLocalPingTarget(target);
                 if (sourceIp !== undefined) setPingSourceIp(sourceIp);
                 // Auto-run disabled per user request
             } else if (type === 'traceroute') {
+                setActiveCategory('diag');
                 setActiveTab('traceroute');
                 setLocalTraceTarget(target);
                 if (sourceIp !== undefined) setTraceSourceIp(sourceIp);
@@ -80,6 +153,20 @@ export function Tools() {
                 console.debug('Tools: pre-load /hosts failed (autocomplete dedupe will degrade gracefully):', err);
             });
     }, []);
+
+    // Running indicator per tool, for the category/tab dots. Tools whose running
+    // state lives in their own component (self-contained panels) report false
+    // here — their tab simply doesn't show a global dot, which is fine.
+    const toolIsRunning = (id: ToolId): boolean => {
+        switch (id) {
+            case 'ping': return pingState.isRunning;
+            case 'traceroute': return traceState.isRunning;
+            case 'mtr': return mtrState.isRunning;
+            case 'ports': return portState.isRunning;
+            case 'iperf': return iperfServerState.isRunning || iperfClientState.isRunning;
+            default: return false;
+        }
+    };
 
     const handleAddHost = async (host: Host) => {
         try {
@@ -219,30 +306,57 @@ export function Tools() {
                 <p className="text-zinc-400">Diagnóstico e verificação de conectividade.</p>
             </header>
 
-            <div className="flex gap-2 border-b border-zinc-800">
-                <button
-                    onClick={() => setActiveTab('ping')}
-                    className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'ping' ? 'border-blue-500 text-blue-500' : 'border-transparent text-zinc-400 hover:text-white'}`}
-                >
-                    <Activity size={16} />
-                    Ping
-                    {pingState.isRunning && <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />}
-                </button>
-                <button
-                    onClick={() => setActiveTab('traceroute')}
-                    className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'traceroute' ? 'border-purple-500 text-purple-500' : 'border-transparent text-zinc-400 hover:text-white'}`}
-                >
-                    <NetworkIcon size={16} />
-                    Traceroute
-                    {traceState.isRunning && <span className="w-2 h-2 rounded-full bg-purple-500 animate-pulse" />}
-                </button>
-                <button
-                    onClick={() => setActiveTab('scanner')}
-                    className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'scanner' ? 'border-green-500 text-green-500' : 'border-transparent text-zinc-400 hover:text-white'}`}
-                >
-                    <TerminalIcon size={16} />
-                    Scanner de Rede
-                </button>
+            {/* Level 1: categories */}
+            <div className="flex gap-2 flex-wrap shrink-0">
+                {TOOL_CATEGORIES.map(cat => {
+                    const isActive = activeCategory === cat.id;
+                    // Light up the category if any tool inside it is running.
+                    const catRunning = cat.tools.some(t => toolIsRunning(t.id));
+                    return (
+                        <button
+                            key={cat.id}
+                            onClick={() => {
+                                setActiveCategory(cat.id);
+                                // Jump to the category's first tool if the current
+                                // active tool isn't part of it.
+                                if (!cat.tools.some(t => t.id === activeTab)) {
+                                    setActiveTab(cat.tools[0].id);
+                                }
+                            }}
+                            className={clsx(
+                                'flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors border',
+                                isActive
+                                    ? 'bg-zinc-800 text-white border-zinc-700'
+                                    : 'bg-zinc-900/50 text-zinc-400 hover:text-white border-transparent hover:border-zinc-800'
+                            )}
+                        >
+                            {cat.icon}
+                            {cat.label}
+                            {catRunning && <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />}
+                        </button>
+                    );
+                })}
+            </div>
+
+            {/* Level 2: tools within the active category */}
+            <div className="flex gap-2 border-b border-zinc-800 overflow-x-auto custom-scrollbar shrink-0">
+                {(TOOL_CATEGORIES.find(c => c.id === activeCategory)?.tools ?? []).map(tool => {
+                    const isActive = activeTab === tool.id;
+                    return (
+                        <button
+                            key={tool.id}
+                            onClick={() => setActiveTab(tool.id)}
+                            className={clsx(
+                                'px-4 py-2 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap',
+                                isActive ? 'border-blue-500 text-blue-400' : 'border-transparent text-zinc-400 hover:text-white'
+                            )}
+                        >
+                            {tool.icon}
+                            {tool.label}
+                            {toolIsRunning(tool.id) && <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />}
+                        </button>
+                    );
+                })}
             </div>
 
             <div className="flex-1 min-h-0">
@@ -278,9 +392,28 @@ export function Tools() {
                     networks,
                 )}
 
+                {activeTab === 'mtr' && <MtrPanel />}
+                {activeTab === 'tcp-ping' && <TcpPingPanel />}
+                {activeTab === 'pmtu' && <PmtuPanel />}
+
                 {activeTab === 'scanner' && (
                     <NetworkScanner onAddHost={handleAddHost} existingHosts={existingHosts} />
                 )}
+
+                {activeTab === 'ports' && <PortScanPanel />}
+                {activeTab === 'ptr-sweep' && <PtrSweepPanel />}
+
+                {activeTab === 'dns' && <DnsPanel />}
+                {activeTab === 'tls' && <TlsPanel />}
+
+                {activeTab === 'iperf' && <IperfPanel />}
+                {activeTab === 'traffic' && <TrafficPanel />}
+                {activeTab === 'http' && <HttpPanel />}
+
+                {activeTab === 'snmp' && <SnmpPanel />}
+                {activeTab === 'ntp' && <NtpPanel />}
+                {activeTab === 'subnet' && <SubnetPanel />}
+                {activeTab === 'connections' && <ConnectionsPanel />}
             </div>
         </div>
     );

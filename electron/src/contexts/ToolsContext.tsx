@@ -91,10 +91,50 @@ export interface PendingAction {
     sourceIp?: string;
 }
 
+/** Options for a one-shot iperf client run. */
+export interface IperfClientOptions {
+    port?: number;
+    sourceIp?: string;
+    duration?: number;
+    reverse?: boolean;
+    udp?: boolean;
+}
+
+/** Options for starting the iperf server. */
+export interface IperfServerOptions {
+    port?: number;
+    sourceIp?: string;
+}
+
+/** One row of the MTR per-hop table. */
+export interface MtrHop {
+    hop: number;
+    address: string;
+    loss_pct: number;
+    sent: number;
+    last: number | null;
+    avg: number | null;
+    best: number | null;
+    worst: number | null;
+    jitter: number | null;
+}
+
+/** MTR runs continuously and replaces the whole hop table each cycle. */
+export interface MtrState {
+    isRunning: boolean;
+    target: string;
+    hops: MtrHop[];
+    error?: string;
+}
+
 interface ToolsContextType {
     // Independent States
     pingState: ToolState;
     traceState: ToolState;
+    iperfServerState: ToolState;
+    iperfClientState: ToolState;
+    mtrState: MtrState;
+    portState: ToolState;
     scanSessions: ScanSession[];
     activeSessionId: string | null;
     pendingAction: PendingAction | null;
@@ -116,9 +156,13 @@ interface ToolsContextType {
     runPing: (target: string, sourceIp?: string) => Promise<void>;
     runTraceroute: (target: string, sourceIp?: string) => Promise<void>;
     runScanSession: (sessionId: string) => Promise<void>;
+    startIperfServer: (opts?: IperfServerOptions) => Promise<void>;
+    runIperfClient: (target: string, opts?: IperfClientOptions) => Promise<void>;
+    runMtr: (target: string, sourceIp?: string) => Promise<void>;
+    runPortScan: (target: string, ports: string, mode?: 'top') => Promise<void>;
 
-    stopTool: (tool: 'ping' | 'traceroute' | 'scanner', sessionId?: string) => void;
-    clearToolOutput: (tool: 'ping' | 'traceroute') => void;
+    stopTool: (tool: 'ping' | 'traceroute' | 'scanner' | 'iperf-server' | 'iperf-client' | 'mtr' | 'ports', sessionId?: string) => void;
+    clearToolOutput: (tool: 'ping' | 'traceroute' | 'iperf-server' | 'iperf-client' | 'ports') => void;
     isRunning: boolean;
 
     // Completion State
@@ -133,6 +177,11 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     // Independent States
     const [pingState, setPingState] = useState<ToolState>({ isRunning: false, output: [], target: '8.8.8.8', isOffline: false });
     const [traceState, setTraceState] = useState<ToolState>({ isRunning: false, output: [], target: '8.8.8.8' });
+    // iperf server: this machine listens; iperf client: this machine probes a remote server.
+    const [iperfServerState, setIperfServerState] = useState<ToolState>({ isRunning: false, output: [], target: '' });
+    const [iperfClientState, setIperfClientState] = useState<ToolState>({ isRunning: false, output: [], target: '' });
+    const [mtrState, setMtrState] = useState<MtrState>({ isRunning: false, target: '', hops: [] });
+    const [portState, setPortState] = useState<ToolState>({ isRunning: false, output: [], target: '' });
 
     // Scanner State (Multi-Session) — rehydrated from localStorage (pinned tabs
     // and last layout survive restart; live scan state is never persisted).
@@ -170,7 +219,7 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         });
     }, []);
 
-    const isRunning = pingState.isRunning || traceState.isRunning || scanSessions.some(s => s.isRunning);
+    const isRunning = pingState.isRunning || traceState.isRunning || iperfServerState.isRunning || iperfClientState.isRunning || mtrState.isRunning || portState.isRunning || scanSessions.some(s => s.isRunning);
 
     // Abort Controllers (mapped by tool name or session ID)
     const abortControllers = useRef<{ [key: string]: AbortController | null }>({});
@@ -298,7 +347,7 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         isOffline: false
     });
 
-    const stopTool = useCallback((tool: 'ping' | 'traceroute' | 'scanner', sessionId?: string) => {
+    const stopTool = useCallback((tool: 'ping' | 'traceroute' | 'scanner' | 'iperf-server' | 'iperf-client' | 'mtr' | 'ports', sessionId?: string) => {
         const key = tool === 'scanner' && sessionId ? `scanner_${sessionId}` : tool;
 
         if (abortControllers.current[key]) {
@@ -338,14 +387,21 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             setPingState(prev => ({ ...prev, isRunning: false, output: trimOutput([...prev.output, summary]) }));
         }
         if (tool === 'traceroute') setTraceState(prev => ({ ...prev, isRunning: false, output: trimOutput([...prev.output, '\n[Cancelado pelo usuário]']) }));
+        if (tool === 'iperf-server') setIperfServerState(prev => ({ ...prev, isRunning: false, output: trimOutput([...prev.output, '\n[Servidor parado pelo usuário]']) }));
+        if (tool === 'iperf-client') setIperfClientState(prev => ({ ...prev, isRunning: false, output: trimOutput([...prev.output, '\n[Cancelado pelo usuário]']) }));
+        if (tool === 'mtr') setMtrState(prev => ({ ...prev, isRunning: false }));
+        if (tool === 'ports') setPortState(prev => ({ ...prev, isRunning: false, output: trimOutput([...prev.output, '\n[Cancelado pelo usuário]']) }));
         if (tool === 'scanner' && sessionId) {
             updateScanSession(sessionId, { isRunning: false, status: 'Cancelado pelo usuário.' });
         }
     }, [pingState.target, updateScanSession]);
 
-    const clearToolOutput = useCallback((tool: 'ping' | 'traceroute') => {
+    const clearToolOutput = useCallback((tool: 'ping' | 'traceroute' | 'iperf-server' | 'iperf-client' | 'ports') => {
         if (tool === 'ping') setPingState(prev => ({ ...prev, output: [], isOffline: false }));
         if (tool === 'traceroute') setTraceState(prev => ({ ...prev, output: [] }));
+        if (tool === 'iperf-server') setIperfServerState(prev => ({ ...prev, output: [] }));
+        if (tool === 'iperf-client') setIperfClientState(prev => ({ ...prev, output: [] }));
+        if (tool === 'ports') setPortState(prev => ({ ...prev, output: [] }));
     }, []);
 
     const runPing = useCallback(async (target: string, sourceIp?: string) => {
@@ -504,6 +560,187 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         }
     }, [traceState.isRunning]);
 
+    const startIperfServer = useCallback(async (opts?: IperfServerOptions) => {
+        // Race-free re-entrancy guard (see runMtr).
+        if (abortControllers.current['iperf-server']) return;
+        abortControllers.current['iperf-server'] = new AbortController();
+
+        const label = opts?.sourceIp ? `porta ${opts.port ?? 5201} (via ${opts.sourceIp})` : `porta ${opts?.port ?? 5201}`;
+        setIperfServerState(prev => ({ ...prev, isRunning: true, output: [`Iniciando servidor iperf na ${label}...`], target: String(opts?.port ?? 5201) }));
+
+        try {
+            const response = await fetch(`${API_BASE}/tools/iperf/server`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ task_id: 'iperf-server', port: opts?.port ?? 5201, source_ip: opts?.sourceIp }),
+                signal: abortControllers.current['iperf-server'].signal
+            });
+
+            if (!response.body) throw new Error("No response body");
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                const text = decoder.decode(value);
+                setIperfServerState(prev => ({ ...prev, output: trimOutput([...prev.output, text]) }));
+            }
+            markToolAsCompleted('iperf-server');
+        } catch (error: any) {
+            if (error.name !== 'AbortError') {
+                console.error('iperf server error:', error);
+                setIperfServerState(prev => ({ ...prev, output: trimOutput([...prev.output, `\nErro: ${error.message}`]) }));
+            }
+        } finally {
+            setIperfServerState(prev => ({ ...prev, isRunning: false }));
+            abortControllers.current['iperf-server'] = null;
+        }
+    }, [markToolAsCompleted]);
+
+    const runIperfClient = useCallback(async (target: string, opts?: IperfClientOptions) => {
+        // Race-free re-entrancy guard (see runMtr).
+        if (abortControllers.current['iperf-client']) return;
+        abortControllers.current['iperf-client'] = new AbortController();
+
+        setIperfClientState(prev => ({ ...prev, isRunning: true, output: [`Testando banda até ${target}...`], target }));
+
+        try {
+            const response = await fetch(`${API_BASE}/tools/iperf/client`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    target,
+                    task_id: 'iperf-client',
+                    port: opts?.port ?? 5201,
+                    source_ip: opts?.sourceIp,
+                    duration: opts?.duration ?? 10,
+                    reverse: opts?.reverse ?? false,
+                    udp: opts?.udp ?? false,
+                }),
+                signal: abortControllers.current['iperf-client'].signal
+            });
+
+            if (!response.body) throw new Error("No response body");
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                const text = decoder.decode(value);
+                setIperfClientState(prev => ({ ...prev, output: trimOutput([...prev.output, text]) }));
+            }
+            markToolAsCompleted('iperf-client');
+        } catch (error: any) {
+            if (error.name !== 'AbortError') {
+                console.error('iperf client error:', error);
+                setIperfClientState(prev => ({ ...prev, output: trimOutput([...prev.output, `\nErro: ${error.message}`]) }));
+            }
+        } finally {
+            setIperfClientState(prev => ({ ...prev, isRunning: false }));
+            abortControllers.current['iperf-client'] = null;
+        }
+    }, [markToolAsCompleted]);
+
+    const runMtr = useCallback(async (target: string, sourceIp?: string) => {
+        // Synchronous re-entrancy guard: a live run always holds a non-null
+        // controller. Checking state (mtrState.isRunning) is stale-closure prone
+        // and lets a fast double-click spawn two fetches, leaking the first
+        // AbortController. The ref check is race-free.
+        if (abortControllers.current['mtr']) return;
+        abortControllers.current['mtr'] = new AbortController();
+
+        setMtrState({ isRunning: true, target, hops: [], error: undefined });
+
+        try {
+            const response = await fetch(`${API_BASE}/tools/mtr`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ target, task_id: 'mtr', source_ip: sourceIp }),
+                signal: abortControllers.current['mtr'].signal
+            });
+
+            if (!response.body) throw new Error("No response body");
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+                for (const line of lines) {
+                    if (!line.trim()) continue;
+                    try {
+                        const data = JSON.parse(line);
+                        if (data.hops) {
+                            setMtrState(prev => ({ ...prev, hops: data.hops }));
+                        } else if (data.error) {
+                            setMtrState(prev => ({ ...prev, error: data.error }));
+                        }
+                        // {status:'started'} is informational — ignored.
+                    } catch (e) {
+                        console.debug('MTR JSON parse skip:', e);
+                    }
+                }
+            }
+            markToolAsCompleted('mtr');
+        } catch (error: any) {
+            if (error.name !== 'AbortError') {
+                console.error('MTR error:', error);
+                setMtrState(prev => ({ ...prev, error: error.message }));
+            }
+        } finally {
+            setMtrState(prev => ({ ...prev, isRunning: false }));
+            abortControllers.current['mtr'] = null;
+        }
+    }, [markToolAsCompleted]);
+
+    const runPortScan = useCallback(async (target: string, ports: string, mode?: 'top') => {
+        // Race-free re-entrancy guard (see runMtr).
+        if (abortControllers.current['ports']) return;
+        abortControllers.current['ports'] = new AbortController();
+
+        const header = mode === 'top' ? `Verificando portas comuns em ${target}...` : `Verificando portas em ${target}...`;
+        setPortState({ isRunning: true, output: [header], target });
+
+        try {
+            const response = await fetch(`${API_BASE}/tools/ports`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ target, ports: mode === 'top' ? undefined : ports, mode, task_id: 'ports' }),
+                signal: abortControllers.current['ports'].signal
+            });
+
+            if (!response.body) throw new Error("No response body");
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                const text = decoder.decode(value);
+                setPortState(prev => ({ ...prev, output: trimOutput([...prev.output, text]) }));
+            }
+            markToolAsCompleted('ports');
+        } catch (error: any) {
+            if (error.name !== 'AbortError') {
+                console.error('Port scan error:', error);
+                setPortState(prev => ({ ...prev, output: trimOutput([...prev.output, `\nErro: ${error.message}`]) }));
+            }
+        } finally {
+            setPortState(prev => ({ ...prev, isRunning: false }));
+            abortControllers.current['ports'] = null;
+        }
+    }, [markToolAsCompleted]);
+
     // Ref to access latest sessions in async functions
     const sessionsRef = useRef<ScanSession[]>([]);
     useEffect(() => {
@@ -644,6 +881,10 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         <ToolsContext.Provider value={{
             pingState,
             traceState,
+            iperfServerState,
+            iperfClientState,
+            mtrState,
+            portState,
             scanSessions,
             activeSessionId,
             setPingTarget,
@@ -657,6 +898,10 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             runPing,
             runTraceroute,
             runScanSession,
+            startIperfServer,
+            runIperfClient,
+            runMtr,
+            runPortScan,
             stopTool,
             clearToolOutput,
             isRunning,

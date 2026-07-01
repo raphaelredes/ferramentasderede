@@ -442,6 +442,96 @@ curl http://127.0.0.1:8000/network/interfaces</pre>
   <div class="meta">Persistência em <code>localStorage</code> versionada (chave <code>scanSessions</code>, <code>v:1</code>); JSON inválido é descartado sem quebrar a tela.</div>
 </div>
 
+<div class="test new">
+  <div class="row"><span class="id">T3.16</span><span class="title">⭐ Teste de banda (iPerf): servidor neste PC, cliente em outra VLAN</span><span class="badge badge-new">novo</span></div>
+  <div class="step">Conferir disponibilidade do binário: <pre>curl http://127.0.0.1:8000/tools/iperf/status</pre> deve retornar <code>{"available": true, "version": "iperf version 2..."}</code>.</div>
+  <div class="step">No app: <strong>Ferramentas → Banda (iPerf)</strong>, modo <strong>Servidor</strong>. Escolher "Escutar na rede" = a VLAN desejada, porta 5201, <strong>Iniciar servidor</strong>.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> a saída mostra "Server listening on ... port 5201". O quadro de comando exibe <code>iperf -c &lt;IP-deste-PC&gt; -p 5201</code> com o IP correto da rede selecionada; o botão de copiar funciona.</div>
+  <div class="step">Em <strong>outro computador</strong> de outra VLAN (com o iperf disponível), rodar o comando copiado.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> o servidor mostra ao vivo a conexão do cliente e a banda medida (Mbits/s) por intervalo. Clicar em <strong>Parar</strong> encerra o servidor (sem deixar processo iperf órfão — conferir no Gerenciador de Tarefas).</div>
+  <div class="meta">Multi-VLAN: o "Escutar na rede" faz bind via <code>-B</code> na NIC certa. Em máquina dual-NIC, o servidor só responde pela interface escolhida.</div>
+</div>
+
+<div class="test new">
+  <div class="row"><span class="id">T3.17</span><span class="title">Teste de banda (iPerf): modo cliente até um servidor existente</span><span class="badge badge-new">novo</span></div>
+  <div class="step">Ter um servidor iperf rodando em algum host da rede (pode ser outro PC com este app em modo Servidor, ou <code>iperf -s</code> avulso).</div>
+  <div class="step">No app: <strong>Ferramentas → Banda (iPerf)</strong>, modo <strong>Cliente</strong>. Informar o IP do servidor, porta, duração (ex.: 10s) e a rede de saída. <strong>Testar banda</strong>.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> saída streaming com a banda por intervalo e o resumo final. Marcar <strong>"Reverso"</strong> e repetir → mede o sentido inverso (servidor envia, este PC recebe). Marcar <strong>UDP</strong> → teste UDP com relatório de jitter/perda.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> alvo inválido (ex.: <code>-x</code> ou string com espaço) é recusado com erro; duração é limitada a 60s; porta fora de 1–65535 é rejeitada.</div>
+</div>
+
+<div class="test new">
+  <div class="row"><span class="id">T3.18</span><span class="title">⭐ MTR (Path Monitor): perda e latência salto a salto</span><span class="badge badge-new">novo</span></div>
+  <div class="step">No app: <strong>Ferramentas → MTR</strong>. Alvo <code>8.8.8.8</code>, escolher "Sair pela rede" = a VLAN desejada, <strong>Iniciar MTR</strong>.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> uma tabela aparece e se atualiza a cada ciclo, com uma linha por salto: #, Host, Perda%, Env, Último, Média, Melhor, Pior, Jitter (tempos em ms). A coluna Perda% fica verde em 0, âmbar até 20%, vermelha acima.</div>
+  <div class="step">Deixar rodando ~30s e observar a convergência das médias. Clicar em <strong>Parar</strong>.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> saltos que não respondem ao ICMP aparecem como <code>*</code> (normal em firewalls — não é falha da rota). Em multi-VLAN, trocar o source IP muda o primeiro salto (gateway da VLAN escolhida).</div>
+  <div class="meta">Python puro via icmplib — sem binário externo. Pode exigir privilégio para raw socket; o app roda como admin (uac_admin), com fallback para socket de datagrama.</div>
+</div>
+
+<div class="test new">
+  <div class="row"><span class="id">T3.19</span><span class="title">Teste de Portas (TCP)</span><span class="badge badge-new">novo</span></div>
+  <div class="step">No app: <strong>Ferramentas → Portas</strong>. Informar um host com serviços conhecidos. Testar uma lista (ex.: <code>80, 443, 445, 3389</code>) e uma faixa (ex.: <code>8000-8010</code>).</div>
+  <div class="expect">✅ <strong>Esperado:</strong> saída streaming indicando cada porta como aberta/fechada; as abertas destacadas. O botão <strong>"Portas comuns"</strong> varre as portas mais usadas sem precisar digitar.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> alvo inválido (string com espaço, começando com <code>-</code>) é recusado. <strong>Parar</strong> interrompe a varredura.</div>
+</div>
+
+<div class="test new">
+  <div class="row"><span class="id">T3.20</span><span class="title">⭐ Consulta DNS multi-domínio (servidor específico)</span><span class="badge badge-new">novo</span></div>
+  <div class="step">No app: <strong>Ferramentas → DNS</strong>. Consultar um hostname (direto → IP) e um IP (reverso → nome). Conferir a detecção automática pelo formato.</div>
+  <div class="step">Em ambiente multi-AD: consultar um nome curto que existe nos dois domínios, alternando o <strong>Servidor DNS</strong> (dropdown puxa os DNS das redes cadastradas).</div>
+  <div class="expect">✅ <strong>Esperado:</strong> o resultado muda conforme o servidor DNS escolhido — provando que a consulta foi ao domínio certo, não ao resolver padrão do SO. Histórico das últimas consultas listado, com o servidor usado em cada uma.</div>
+  <div class="meta">Endpoint /network/dns/resolve já existia (multi-domínio) — esta aba é a porta de entrada na UI. dns_server deve ser um IP literal.</div>
+</div>
+
+<div class="test new">
+  <div class="row"><span class="id">T3.21</span><span class="title">Monitor de tráfego por interface</span><span class="badge badge-new">novo</span></div>
+  <div class="step">No app: <strong>Ferramentas → Tráfego</strong>. <strong>Iniciar</strong>. Gerar tráfego (download de um arquivo grande, cópia de rede).</div>
+  <div class="expect">✅ <strong>Esperado:</strong> um card por NIC ativa mostrando Download e Upload em tempo real (bps/Kbps/Mbps/Gbps), atualizando a cada 1s. A NIC mais movimentada aparece primeiro. Em multi-VLAN, dá pra ver qual interface está carregando o tráfego.</div>
+  <div class="step">Clicar em <strong>Parar</strong> e sair da aba.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> o polling para (não fica consumindo em segundo plano). A taxa é calculada a partir do delta dos contadores acumulados (psutil), não de um valor instantâneo.</div>
+</div>
+
+<div class="test new">
+  <div class="row"><span class="id">T3.22</span><span class="title">Ferramentas reorganizadas em categorias</span><span class="badge badge-new">novo</span></div>
+  <div class="step">Abrir <strong>Ferramentas</strong>. Confirmar a navegação em 2 níveis: pílulas de categoria (Diagnóstico / Descoberta / DNS &amp; Nomes / Banda &amp; Web / Infra &amp; Cálculo) e, abaixo, as ferramentas da categoria ativa.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> clicar numa categoria troca o conjunto de abas. Ferramenta em execução (ping/MTR/iperf/portas) acende um ponto na aba E na categoria. Total de 16+ ferramentas sem poluir a tela.</div>
+</div>
+
+<div class="test new">
+  <div class="row"><span class="id">T3.23</span><span class="title">⭐ TCP Ping em host que bloqueia ICMP</span><span class="badge badge-new">novo</span></div>
+  <div class="step">Em <strong>Diagnóstico → TCP Ping</strong>, alvo = um host Windows que "não responde ping" (firewall AD), porta 3389 ou 445. Selecionar a rede de saída.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> mesmo sem ICMP, o TCP ping mostra "resposta de host:porta — tempo=Xms" e estatísticas. Porta fechada num host vivo aparece como "recusada (host vivo, porta fechada)".</div>
+</div>
+
+<div class="test new">
+  <div class="row"><span class="id">T3.24</span><span class="title">Certificado TLS — validade e expiração</span><span class="badge badge-new">novo</span></div>
+  <div class="step">Em <strong>DNS &amp; Nomes → Certificado TLS</strong>, consultar um host:443 interno (intranet/appliance).</div>
+  <div class="expect">✅ <strong>Esperado:</strong> mostra subject, emissor, SANs, validade e um selo colorido (verde/âmbar/vermelho) conforme dias até expirar. Funciona com cert auto-assinado/interno (não rejeita).</div>
+</div>
+
+<div class="test new">
+  <div class="row"><span class="id">T3.25</span><span class="title">⭐ SNMP em switch/roteador</span><span class="badge badge-new">novo</span></div>
+  <div class="step">Em <strong>Infra &amp; Cálculo → SNMP</strong>, host = um switch/roteador com SNMP habilitado, community read-only (ex.: "public"), v2c.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> retorna sysName, descrição, uptime, localização, contato e nº de interfaces. Host sem SNMP / community errada → erro claro "Sem resposta SNMP" (sem travar).</div>
+</div>
+
+<div class="test new">
+  <div class="row"><span class="id">T3.26</span><span class="title">NTP — offset e risco Kerberos</span><span class="badge badge-new">novo</span></div>
+  <div class="step">Em <strong>Infra &amp; Cálculo → NTP</strong>, consultar um DC/servidor de tempo do domínio.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> mostra offset (ms), delay, stratum e referência. Se o offset passar de 5 min, exibe alerta vermelho de risco de falha no Kerberos.</div>
+</div>
+
+<div class="test new">
+  <div class="row"><span class="id">T3.27</span><span class="title">PTR Sweep, Path MTU, Sub-rede, HTTP e Conexões</span><span class="badge badge-new">novo</span></div>
+  <div class="step"><strong>Descoberta → PTR Sweep</strong>: varrer um /24 → tabela de IP→nome ao vivo com barra de progresso; respeita o DNS da rede.</div>
+  <div class="step"><strong>Diagnóstico → Path MTU</strong>: alvo 8.8.8.8 → descobre o MTU do caminho (1500 em LAN; menor indica túnel/VPN).</div>
+  <div class="step"><strong>Infra → Sub-rede</strong>: CIDR 10.20.30.0/24 → rede/broadcast/máscara/wildcard/faixa; dividir em /26 lista 4 sub-redes.</div>
+  <div class="step"><strong>Banda &amp; Web → HTTP</strong>: GET numa URL interna → status + TTFB + tempo total.</div>
+  <div class="step"><strong>Infra → Conexões</strong>: lista conexões TCP/UDP com processo/PID; filtro por IP/porta/processo funciona.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> todas Python puro (sem binário externo); cancelar (onde aplicável) interrompe de verdade.</div>
+</div>
+
 <hr>
 <h2 id="sec-stab">4. Estabilidade &amp; performance</h2>
 

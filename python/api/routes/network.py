@@ -414,6 +414,72 @@ class ToolRequest(BaseModel):
     task_id: Optional[str] = None
     source_ip: Optional[str] = None  # NIC source for ping/traceroute (multi-VLAN)
 
+class IperfServerRequest(BaseModel):
+    port: Optional[int] = 5201
+    source_ip: Optional[str] = None  # NIC to bind the listener to (multi-VLAN)
+    task_id: Optional[str] = None
+
+class IperfClientRequest(BaseModel):
+    target: str
+    port: Optional[int] = 5201
+    source_ip: Optional[str] = None  # NIC source for the egress (multi-VLAN)
+    duration: Optional[int] = 10
+    reverse: Optional[bool] = False  # server transmits, client receives
+    udp: Optional[bool] = False
+    task_id: Optional[str] = None
+
+class PortScanRequest(BaseModel):
+    target: str
+    # Either a list/range string ("80, 443, 8000-8100") OR mode="top" for the
+    # common-ports scan. `ports` wins when both are present.
+    ports: Optional[str] = None
+    mode: Optional[str] = None       # "top" | "all" | None (use `ports`)
+    task_id: Optional[str] = None
+
+class MtrRequest(BaseModel):
+    target: str
+    source_ip: Optional[str] = None
+    task_id: Optional[str] = None
+
+class TlsCheckRequest(BaseModel):
+    host: str
+    port: Optional[int] = 443
+
+class TcpPingRequest(BaseModel):
+    target: str
+    port: int
+    count: Optional[int] = 4
+    source_ip: Optional[str] = None
+    task_id: Optional[str] = None
+
+class PmtuRequest(BaseModel):
+    target: str
+    source_ip: Optional[str] = None
+    task_id: Optional[str] = None
+
+class PtrSweepRequest(BaseModel):
+    cidr: str
+    dns_server: Optional[str] = None
+    task_id: Optional[str] = None
+
+class SubnetCalcRequest(BaseModel):
+    cidr: str
+    split_prefix: Optional[int] = None
+
+class NtpRequest(BaseModel):
+    server: str
+
+class SnmpRequest(BaseModel):
+    host: str
+    community: Optional[str] = "public"
+    port: Optional[int] = 161
+    version: Optional[str] = "2c"
+
+class HttpCheckRequest(BaseModel):
+    url: str
+    method: Optional[str] = "GET"
+    verify_tls: Optional[bool] = True
+
 class DiscoveryRequest(BaseModel):
     cidr: str
     task_id: Optional[str] = None
@@ -797,6 +863,13 @@ def resolve_via_specific_dns(req: DnsResolveRequest):
         ip = dns_resolver.resolve_hostname(req.name, req.dns_server, req.domain)
         return {"name": req.name, "ip": ip, "dns_server": req.dns_server, "domain": req.domain}
     if req.ip:
+        # Validate as a real IP (v4 or v6) so a malformed value returns a clear
+        # 400 instead of silently yielding fqdn:null (dns.reversename would
+        # raise internally and the resolver would just return None).
+        try:
+            ipaddress.ip_address(req.ip)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="`ip` deve ser um endereço IP válido.")
         fqdn = dns_resolver.resolve_ip(req.ip, req.dns_server)
         return {"ip": req.ip, "fqdn": fqdn, "dns_server": req.dns_server}
     raise HTTPException(status_code=400, detail="Informe `name` ou `ip`.")
@@ -953,6 +1026,253 @@ def run_traceroute(request: ToolRequest):
         except Exception as e:
             yield f"Erro ao executar traceroute: {str(e)}\n".encode('utf-8')
     return StreamingResponse(event_generator(), media_type="text/plain")
+
+def _validate_port(value) -> int:
+    """Coerce + validate a TCP/UDP port to 1..65535. Raises 400 on bad input."""
+    try:
+        port = int(value)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Porta inválida.")
+    if not (1 <= port <= 65535):
+        raise HTTPException(status_code=400, detail="Porta deve estar entre 1 e 65535.")
+    return port
+
+
+@router.get("/tools/iperf/status")
+def iperf_status():
+    """Whether the bundled iperf binary is available, plus its version. The
+    frontend uses this to enable/disable the bandwidth tab with a clear
+    message instead of failing mid-stream."""
+    return net_tools.get_iperf_info()
+
+
+@router.post("/tools/iperf/server")
+def run_iperf_server(request: IperfServerRequest):
+    """Start iperf in SERVER mode. This machine becomes the bandwidth-test
+    destination; operators on other VLANs run `iperf -c <this_ip>` against it.
+
+    Runs until stopped via /tools/stop (or the client disconnects, which tears
+    down the StreamingResponse and terminates the process)."""
+    port = _validate_port(request.port if request.port is not None else 5201)
+    _validate_optional_source_ip(request.source_ip)
+    task_id = request.task_id or f"iperf_server_{time.time()}"
+    source_ip = request.source_ip
+
+    def event_generator():
+        try:
+            iterator = net_tools.run_iperf_server(task_id, port=port, source_ip=source_ip)
+            for item in iterator:
+                line = item[0] if isinstance(item, tuple) else str(item)
+                if line:
+                    yield line.encode('utf-8')
+        except Exception as e:
+            yield f"Erro ao executar servidor iperf: {str(e)}\n".encode('utf-8')
+    return StreamingResponse(event_generator(), media_type="text/plain")
+
+
+@router.post("/tools/iperf/client")
+def run_iperf_client(request: IperfClientRequest):
+    """Run iperf in CLIENT mode against an existing iperf server on the network
+    (the inverse of /tools/iperf/server). Measures bandwidth from this machine
+    to `target`."""
+    target = request.target
+    _validate_tool_target(target)
+    _validate_optional_source_ip(request.source_ip)
+    port = _validate_port(request.port if request.port is not None else 5201)
+    task_id = request.task_id or f"iperf_client_{time.time()}"
+    source_ip = request.source_ip
+
+    def event_generator():
+        try:
+            iterator = net_tools.run_iperf_client(
+                target, task_id, port=port, source_ip=source_ip,
+                duration=request.duration, reverse=bool(request.reverse),
+                udp=bool(request.udp),
+            )
+            for item in iterator:
+                line = item[0] if isinstance(item, tuple) else str(item)
+                if line:
+                    yield line.encode('utf-8')
+        except Exception as e:
+            yield f"Erro ao executar cliente iperf: {str(e)}\n".encode('utf-8')
+    return StreamingResponse(event_generator(), media_type="text/plain")
+
+
+@router.post("/tools/mtr")
+def run_mtr(request: MtrRequest):
+    """MTR-style path monitor: streams a per-hop table (latency/jitter/loss)
+    every cycle until stopped via /tools/stop. Uses OS-native tracert + ping."""
+    target = request.target
+    _validate_tool_target(target)
+    _validate_optional_source_ip(request.source_ip)
+    task_id = request.task_id or f"mtr_{time.time()}"
+    source_ip = request.source_ip
+
+    def event_generator():
+        try:
+            for line in net_tools.run_mtr(target, task_id, source_ip=source_ip):
+                # mtr module already yields NDJSON strings.
+                yield (line if isinstance(line, str) else str(line)).encode('utf-8')
+        except Exception as e:
+            yield (json.dumps({"error": str(e)}) + "\n").encode('utf-8')
+    return StreamingResponse(event_generator(), media_type="application/x-ndjson")
+
+
+@router.post("/tools/ports")
+def scan_ports(request: PortScanRequest):
+    """Test TCP ports on a host. `mode='top'` scans common ports, `mode='all'`
+    scans 1-65535, otherwise `ports` is a list/range string ('80,443,8000-8100').
+    All three underlying calls are line generators; we stream them as-is."""
+    target = request.target
+    _validate_tool_target(target)
+    task_id = request.task_id or f"ports_{time.time()}"
+
+    def event_generator():
+        try:
+            mode = (request.mode or "").lower()
+            if mode not in ("top", "all") and (not request.ports or not request.ports.strip()):
+                yield "Informe portas (ex.: 80, 443, 8000-8100) ou um modo.\n".encode('utf-8')
+                return
+            # run_port_scan registers a stop event under task_id so /tools/stop
+            # can actually cancel the scan (the bare generators couldn't be).
+            line_gen = net_tools.run_port_scan(target, task_id, ports_str=request.ports, mode=mode)
+            for line in line_gen:
+                yield (line if isinstance(line, str) else str(line)).encode('utf-8')
+        except Exception as e:
+            yield f"Erro ao testar portas: {str(e)}\n".encode('utf-8')
+    return StreamingResponse(event_generator(), media_type="text/plain")
+
+
+@router.get("/network/traffic")
+def network_traffic():
+    """Cumulative per-NIC byte/packet counters + server timestamp. The frontend
+    diffs successive snapshots to compute throughput (multi-VLAN: one row per
+    NIC). Stateless — sampling cadence is the client's choice."""
+    return net_tools.get_traffic_snapshot()
+
+
+# ---- TLS certificate inspector ----
+@router.post("/tools/tls")
+def tls_check(request: TlsCheckRequest):
+    """Inspect the TLS certificate served by host:port (subject/SAN/expiry)."""
+    if not _is_safe_remote_target(request.host):
+        raise HTTPException(status_code=400, detail="Host inválido.")
+    port = _validate_port(request.port if request.port is not None else 443)
+    from src.network import tls_check as _tls
+    return _tls.check_certificate(request.host, port)
+
+
+# ---- TCP ping ----
+@router.post("/tools/tcp-ping")
+def tcp_ping(request: TcpPingRequest):
+    """TCP-connect ping: liveness + latency for ICMP-blocking hosts."""
+    _validate_tool_target(request.target)
+    _validate_optional_source_ip(request.source_ip)
+    port = _validate_port(request.port)
+    task_id = request.task_id or f"tcpping_{time.time()}"
+
+    def event_generator():
+        try:
+            for line in net_tools.run_tcp_ping(request.target, port, task_id,
+                                                count=request.count, source_ip=request.source_ip):
+                yield (line if isinstance(line, str) else str(line)).encode('utf-8')
+        except Exception as e:
+            yield f"Erro no TCP ping: {str(e)}\n".encode('utf-8')
+    return StreamingResponse(event_generator(), media_type="text/plain")
+
+
+# ---- Path MTU discovery ----
+@router.post("/tools/pmtu")
+def pmtu(request: PmtuRequest):
+    """Discover the largest unfragmented packet to the target (path MTU)."""
+    _validate_tool_target(request.target)
+    _validate_optional_source_ip(request.source_ip)
+    task_id = request.task_id or f"pmtu_{time.time()}"
+
+    def event_generator():
+        try:
+            for line in net_tools.run_pmtu(request.target, task_id, source_ip=request.source_ip):
+                yield (line if isinstance(line, str) else str(line)).encode('utf-8')
+        except Exception as e:
+            yield f"Erro no PMTU: {str(e)}\n".encode('utf-8')
+    return StreamingResponse(event_generator(), media_type="text/plain")
+
+
+# ---- Reverse-DNS (PTR) sweep ----
+@router.post("/tools/ptr-sweep")
+def ptr_sweep(request: PtrSweepRequest):
+    """Resolve every host in a CIDR to a name (VLAN inventory). NDJSON stream."""
+    if request.dns_server:
+        import ipaddress as _ip
+        try:
+            _ip.ip_address(request.dns_server)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="dns_server deve ser um endereço IP.")
+    task_id = request.task_id or f"ptrsweep_{time.time()}"
+
+    def event_generator():
+        try:
+            for line in net_tools.run_ptr_sweep(request.cidr, task_id, dns_server=request.dns_server):
+                yield (line if isinstance(line, str) else str(line)).encode('utf-8')
+        except Exception as e:
+            yield (json.dumps({"error": str(e)}) + "\n").encode('utf-8')
+    return StreamingResponse(event_generator(), media_type="application/x-ndjson")
+
+
+# ---- Subnet calculator ----
+@router.post("/tools/subnet")
+def subnet_calc(request: SubnetCalcRequest):
+    """CIDR math: network/broadcast/usable range/mask/wildcard, optional split."""
+    from src.network import subnet_calc as _sc
+    result = _sc.calc(request.cidr, split_prefix=request.split_prefix)
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error", "CIDR inválido."))
+    return result
+
+
+# ---- NTP query ----
+@router.post("/tools/ntp")
+def ntp_query(request: NtpRequest):
+    """Query an NTP server for clock offset/stratum (Kerberos skew check)."""
+    if not _is_safe_remote_target(request.server):
+        raise HTTPException(status_code=400, detail="Servidor NTP inválido.")
+    from src.network import ntp_tool
+    return ntp_tool.query(request.server)
+
+
+# ---- SNMP system query (async: pysnmp 7.x is asyncio) ----
+@router.post("/tools/snmp")
+async def snmp_query(request: SnmpRequest):
+    """Read the SNMP system group from a network device (switch/router)."""
+    if not _is_safe_remote_target(request.host):
+        raise HTTPException(status_code=400, detail="Host SNMP inválido.")
+    port = _validate_port(request.port if request.port is not None else 161)
+    from src.network import snmp_tool
+    return await snmp_tool.query_system(
+        request.host, community=request.community or "public",
+        port=port, version=request.version or "2c",
+    )
+
+
+# ---- Local connections (netstat-like) ----
+@router.get("/tools/connections")
+def local_connections(kind: str = "inet"):
+    """Active local TCP/UDP connections with owning process (netstat -ano +
+    process name). `kind`: 'inet' | 'tcp' | 'udp'."""
+    from src.network import netstat
+    if kind not in ("inet", "tcp", "udp"):
+        kind = "inet"
+    return {"connections": netstat.get_connections(kind=kind)}
+
+
+# ---- HTTP endpoint health/latency ----
+@router.post("/tools/http")
+def http_check(request: HttpCheckRequest):
+    """GET/HEAD a URL with timing (TTFB/total) and status."""
+    from src.network import http_check as _http
+    return _http.check(request.url, method=request.method or "GET",
+                       verify_tls=request.verify_tls if request.verify_tls is not None else True)
+
 
 @router.post("/tools/stop")
 def stop_tool(request: StopRequest):
@@ -1254,8 +1574,17 @@ def check_status(ip: str):
                     modified = True
                 elif is_online and (not h.ip or h.ip == "N/A"):
                     try:
-                        resolved_ip, _ = net_tools.resolve_ip_and_hostname(ip)
-                        if resolved_ip and resolved_ip != "N/A":
+                        # `ip` here is the host's address (may be a hostname when
+                        # cadastrado por nome). We want to fill h.ip with the
+                        # resolved IPv4. Forward-resolve via dns_resolver.
+                        # NOTE: the previous code did
+                        #   `resolved_ip, _ = net_tools.resolve_ip_and_hostname(ip)`
+                        # which always raised — that method returns a single
+                        # HOSTNAME (not a 2-tuple, and not an IP), so the unpack
+                        # threw every time and this enrichment never ran.
+                        from src.network import dns_resolver
+                        resolved_ip = dns_resolver.resolve_hostname(ip)
+                        if resolved_ip and resolved_ip != ip and resolved_ip != "N/A":
                             h.ip = resolved_ip
                             modified = True
                     except Exception as e:

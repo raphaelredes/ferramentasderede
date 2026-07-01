@@ -18,6 +18,8 @@ import src.network.scanner as scanner
 import src.network.ping as ping
 import src.network.traceroute as traceroute_module
 import src.network.mac_utils as mac_utils
+import src.network.iperf as iperf
+import src.network.mtr as mtr
 from src.network.vendor_utils import VendorUtils
 
 class NetworkTools:
@@ -40,6 +42,10 @@ class NetworkTools:
 
         # Controle de execução de comandos (Multi-Task)
         self._active_tasks = {} # { task_id: process }
+        # Cooperative-cancellation events for pure-Python streamers (MTR, traffic
+        # monitor) that have no subprocess to terminate. stop_command sets the
+        # event; the generator loop checks it and exits.
+        self._stop_events = {} # { task_id: threading.Event }
         self._tasks_lock = threading.RLock()
 
         # Executor dedicado para resoluções DNS para evitar bloqueio
@@ -53,6 +59,19 @@ class NetworkTools:
         return ping.check_host_status(
             ip_address, self._status_cache, self._cache_timeout,
             timeout=timeout, source_ip=source_ip,
+        )
+
+    def check_host_status_detailed(self, ip_address, count=1, is_wan=False,
+                                   resolve_names=False, fast_mode=False):
+        """Status + latência detalhados de um host. Delegado para o módulo ping.
+
+        Existia como função-módulo em `ping.py` mas o endpoint legado
+        `/network/status` chamava `net_tools.check_host_status_detailed(...)`,
+        que não existia na classe — levantava AttributeError→500. Este wrapper
+        fecha esse buraco."""
+        return ping.check_host_status_detailed(
+            ip_address, count=count, is_wan=is_wan,
+            resolve_names=resolve_names, fast_mode=fast_mode,
         )
 
     def check_port(self, ip_address, port, timeout=1):
@@ -115,7 +134,12 @@ class NetworkTools:
         pass
 
     def stop_command(self, task_id):
-        """Para o comando em execução identificado por task_id."""
+        """Para o comando em execução identificado por task_id.
+
+        Cobre dois tipos de tarefa: as que têm subprocesso (ping/traceroute/
+        iperf — terminate/kill) e as puramente Python (MTR/tráfego — sinaliza
+        um threading.Event que o gerador observa).
+        """
         with self._tasks_lock:
             process = self._active_tasks.get(task_id)
             if process:
@@ -129,6 +153,10 @@ class NetworkTools:
                     logging.debug(f"cancel_task: terminate/kill failed for {task_id}: {e}")
                 if task_id in self._active_tasks:
                     del self._active_tasks[task_id]
+            # Pure-Python streamers: flip their cancellation event.
+            event = self._stop_events.get(task_id)
+            if event is not None:
+                event.set()
 
     def run_traceroute(self, target_ip):
         """Executa traceroute e gera (line, ip_found, process) por iteração.
@@ -179,8 +207,163 @@ class NetworkTools:
         """Gera estatísticas baseadas no output capturado do ping contínuo."""
         return ping.generate_ping_statistics_from_output(output_lines, target)
 
-    def test_specific_ports(self, target_ip, ports_str):
-        """Testa uma lista de portas e gera a saída no estilo de terminal, sempre concluindo com status claro."""
+    def run_iperf_server(self, task_id, port=iperf.DEFAULT_IPERF_PORT, source_ip=None):
+        """Executa o iperf2 em modo servidor, gerando a saída linha por linha.
+
+        Registra o processo em `_active_tasks[task_id]` para que `/tools/stop`
+        possa pará-lo. Mesmo padrão de `continuous_ping`.
+        """
+        generator = iperf.run_server(port=port, source_ip=source_ip)
+        try:
+            first_yield = next(generator)
+            if isinstance(first_yield, tuple) and len(first_yield) == 2:
+                line, process = first_yield
+                if process is not None:
+                    with self._tasks_lock:
+                        self._active_tasks[task_id] = process
+                # The binary-missing path yields a message + None process.
+                if line:
+                    yield line
+            for item in generator:
+                yield item[0] if isinstance(item, tuple) else item
+        except StopIteration:
+            pass
+        except Exception as e:
+            yield f"Erro ao iniciar servidor iperf: {str(e)}\n"
+        finally:
+            with self._tasks_lock:
+                if task_id in self._active_tasks:
+                    del self._active_tasks[task_id]
+
+    def run_iperf_client(self, target, task_id, port=iperf.DEFAULT_IPERF_PORT,
+                         source_ip=None, duration=10, reverse=False, udp=False):
+        """Executa o iperf2 em modo cliente contra `target`, gerando a saída
+        linha por linha. Registra o processo para cancelamento via `/tools/stop`.
+        """
+        generator = iperf.run_client(
+            target, port=port, source_ip=source_ip,
+            duration=duration, reverse=reverse, udp=udp,
+        )
+        try:
+            first_yield = next(generator)
+            if isinstance(first_yield, tuple) and len(first_yield) == 2:
+                line, process = first_yield
+                if process is not None:
+                    with self._tasks_lock:
+                        self._active_tasks[task_id] = process
+                if line:
+                    yield line
+            for item in generator:
+                yield item[0] if isinstance(item, tuple) else item
+        except StopIteration:
+            pass
+        except Exception as e:
+            yield f"Erro ao iniciar cliente iperf: {str(e)}\n"
+        finally:
+            with self._tasks_lock:
+                if task_id in self._active_tasks:
+                    del self._active_tasks[task_id]
+
+    def get_iperf_info(self):
+        """Disponibilidade + versão do binário iperf (para a UI)."""
+        return iperf.get_iperf_info()
+
+    def get_traffic_snapshot(self):
+        """Snapshot de contadores de tráfego por NIC (psutil). O frontend
+        calcula as taxas diferenciando duas amostras."""
+        from src.network import traffic
+        return traffic.get_traffic_snapshot()
+
+    def run_tcp_ping(self, target, port, task_id, count=4, source_ip=None):
+        """TCP ping (stdlib socket). Streaming de linhas. Cancelável via
+        _stop_events (checa entre as tentativas)."""
+        from src.network import tcp_ping
+        stop_event = threading.Event()
+        with self._tasks_lock:
+            self._stop_events[task_id] = stop_event
+        try:
+            for line in tcp_ping.tcp_ping_stream(target, port, count=count, source_ip=source_ip):
+                if stop_event.is_set():
+                    yield "\n[Cancelado pelo usuário]\n"
+                    return
+                yield line
+        finally:
+            with self._tasks_lock:
+                self._stop_events.pop(task_id, None)
+
+    def run_pmtu(self, target, task_id, source_ip=None):
+        """Path MTU discovery (ping -f). Streaming de linhas."""
+        from src.network import pmtu
+        stop_event = threading.Event()
+        with self._tasks_lock:
+            self._stop_events[task_id] = stop_event
+        try:
+            for line in pmtu.discover_pmtu(target, source_ip=source_ip):
+                if stop_event.is_set():
+                    yield "\n[Cancelado pelo usuário]\n"
+                    return
+                yield line
+        finally:
+            with self._tasks_lock:
+                self._stop_events.pop(task_id, None)
+
+    def run_ptr_sweep(self, cidr, task_id, dns_server=None):
+        """Reverse-DNS sweep de um CIDR. Streaming NDJSON. Cancelável."""
+        from src.network import ptr_sweep
+        stop_event = threading.Event()
+        with self._tasks_lock:
+            self._stop_events[task_id] = stop_event
+        try:
+            yield from ptr_sweep.ptr_sweep(cidr, dns_server=dns_server, stop_event=stop_event)
+        finally:
+            with self._tasks_lock:
+                self._stop_events.pop(task_id, None)
+
+    def run_mtr(self, target, task_id, source_ip=None):
+        """MTR-style path monitor (tracert + ping nativos). Registra um threading.Event para
+        cancelamento cooperativo via `stop_command` (não há subprocesso).
+        Gera linhas NDJSON, uma tabela de hops por ciclo.
+        """
+        stop_event = threading.Event()
+        with self._tasks_lock:
+            self._stop_events[task_id] = stop_event
+        try:
+            yield from mtr.run_mtr(target, source_ip=source_ip, stop_event=stop_event)
+        finally:
+            with self._tasks_lock:
+                if task_id in self._stop_events:
+                    del self._stop_events[task_id]
+
+    def run_port_scan(self, target_ip, task_id, ports_str=None, mode=None):
+        """Wrapper de cancelamento para os testes de porta. Registra um
+        threading.Event em `_stop_events[task_id]` (igual ao MTR) e o repassa
+        para o gerador escolhido, para que `/tools/stop` interrompa de verdade.
+
+        `mode`: 'top' (portas comuns), 'all' (1-65535), ou None (usa ports_str).
+        """
+        stop_event = threading.Event()
+        with self._tasks_lock:
+            self._stop_events[task_id] = stop_event
+        try:
+            m = (mode or "").lower()
+            if m == "top":
+                gen = scanner.scan_top_ports(target_ip, stop_event=stop_event)
+            elif m == "all":
+                gen = scanner.scan_all_ports(target_ip, stop_event=stop_event)
+            else:
+                gen = self.test_specific_ports(target_ip, ports_str, stop_event=stop_event)
+            yield from gen
+        finally:
+            with self._tasks_lock:
+                if task_id in self._stop_events:
+                    del self._stop_events[task_id]
+
+    def test_specific_ports(self, target_ip, ports_str, stop_event=None):
+        """Testa uma lista de portas e gera a saída no estilo de terminal, sempre concluindo com status claro.
+
+        `stop_event` (threading.Event) permite cancelamento cooperativo no loop
+        serial — importante para faixas grandes (ex.: 1-1000 contra um host que
+        dropa tudo levaria centenas de segundos)."""
         ports_to_test = []
         try:
             parts = re.split(r'[,\s]+', ports_str)
@@ -206,6 +389,9 @@ class NetworkTools:
 
         yield f"Iniciando teste de porta(s) em {target_ip}...\n\n"
         for port in ports_to_test:
+            if stop_event is not None and stop_event.is_set():
+                yield "\nTeste cancelado.\n"
+                return
             yield f"Testando porta {port}... "
             try:
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:

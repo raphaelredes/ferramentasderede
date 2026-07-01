@@ -20,14 +20,20 @@ def _safe_scan_target(value: str) -> bool:
     return bool(_re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", value))
 
 
-def scan_top_ports(target_ip):
-    """Escaneia as portas mais comuns usando threads paralelas para máxima velocidade."""
+def scan_top_ports(target_ip, stop_event=None):
+    """Escaneia as portas mais comuns usando threads paralelas para máxima velocidade.
+
+    `stop_event` (threading.Event) permite cancelamento cooperativo: quando
+    setado, paramos de coletar resultados e encerramos. O `with` do executor
+    aguarda as threads em vôo (timeout curto de 0.3s cada), então o aborto é
+    quase imediato.
+    """
     if not _safe_scan_target(target_ip):
         yield "Endereço de destino inválido.\n"
         return
     open_ports = []
     yield f"Iniciando varredura das portas mais comuns em {target_ip}...\n"
-    
+
     def scan_port(port):
         """Função para escanear uma porta individual."""
         try:
@@ -39,22 +45,29 @@ def scan_top_ports(target_ip):
             # Connect failures in port scan are expected for closed/filtered ports;
             # silencing here keeps the hot loop fast (logging 65535 misses would flood).
             return port, False
-    
+
     # Usar ThreadPoolExecutor para escaneamento paralelo
     max_workers = min(20, len(TOP_60_PORTS))  # Máximo 20 threads para portas comuns
-    
+
+    cancelled = False
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         # Submeter todas as portas para escaneamento
         future_to_port = {executor.submit(scan_port, port): port for port in TOP_60_PORTS}
-        
+
         # Processar resultados conforme ficam prontos
         for future in concurrent.futures.as_completed(future_to_port):
+            if stop_event is not None and stop_event.is_set():
+                cancelled = True
+                break
             port, is_open = future.result()
             if is_open:
                 service = port_number_to_name.get(port, "Desconhecido")
                 open_ports.append((port, service))
                 # NÃO exibir portas abertas durante o escaneamento - apenas coletar
-    
+
+    if cancelled:
+        yield "\nVarredura cancelada.\n"
+        return
     yield "\nVarredura concluída.\n"
     if open_ports:
         yield f"Total de portas abertas encontradas: {len(open_ports)}\n"
@@ -64,8 +77,12 @@ def scan_top_ports(target_ip):
     else:
         yield "Nenhuma porta aberta encontrada nas portas comuns.\n"
 
-def scan_all_ports(target_ip):
-    """Escaneia todas as portas TCP (1-65535) usando threads paralelas para máxima velocidade."""
+def scan_all_ports(target_ip, stop_event=None):
+    """Escaneia todas as portas TCP (1-65535) usando threads paralelas para máxima velocidade.
+
+    `stop_event` (threading.Event) permite cancelamento cooperativo — crítico
+    aqui, pois um scan completo pode levar minutos.
+    """
     if not _safe_scan_target(target_ip):
         yield "Endereço de destino inválido.\n"
         return
@@ -102,6 +119,9 @@ def scan_all_ports(target_ip):
         
         # Processar resultados conforme ficam prontos
         for future in concurrent.futures.as_completed(future_to_port):
+            if stop_event is not None and stop_event.is_set():
+                yield "\nVarredura cancelada.\n"
+                return
             port, is_open = future.result()
             scanned_count += 1
             current_time = time.time()

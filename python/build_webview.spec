@@ -39,6 +39,12 @@ added_files = [
     (frontend_dist, 'gui'),
     ('src/system/scripts/*.ps1', 'src/system/scripts'),
     ('../electron/package.json', '.'),
+    # Bundled iperf2 binary (+ its BSD license) for the bandwidth-test tab.
+    # Resolved at runtime via sys.frozen/_MEIPASS in src/network/iperf.py.
+    ('bin/*', 'bin'),
+    # Third-party license attributions (compliance — MIT/BSD/Apache require the
+    # notice in binary redistribution; LGPL/MPL items documented here too).
+    ('../THIRD-PARTY-LICENSES.txt', '.'),
 ]
 
 from PyInstaller.utils.hooks import collect_submodules, collect_all, collect_data_files
@@ -72,6 +78,11 @@ dns_hiddenimports = collect_submodules('dns')
 pypsrp_hiddenimports = collect_submodules('pypsrp')
 crypto_hiddenimports = collect_submodules('cryptography')
 
+# pysnmp (SNMP tool) + its pyasn1 dep load MIB/codec modules lazily — the
+# static analyzer misses them. collect_submodules pulls the whole tree.
+pysnmp_hiddenimports = collect_submodules('pysnmp')
+pyasn1_hiddenimports = collect_submodules('pyasn1')
+
 # setuptools >= 80 unbundled jaraco.* / more_itertools / importlib_* —
 # pkg_resources now imports them as real top-level packages at runtime via
 # the pyi_rth_pkgres hook, and PyInstaller's static analyzer misses them.
@@ -99,6 +110,8 @@ hidden_imports = list(set(
     + dns_hiddenimports
     + pypsrp_hiddenimports
     + crypto_hiddenimports
+    + pysnmp_hiddenimports
+    + pyasn1_hiddenimports
     + pkg_resources_extras_hiddenimports
 ))
 
@@ -135,8 +148,15 @@ a = Analysis(
         'dns.reversename',
         'dns.exception',
         'mac_vendor_lookup',
-        'icmplib',
         'psutil',
+        # SNMP + NTP tools (Sprint: more network tools)
+        'ntplib',
+        'pysnmp',
+        'pysnmp.hlapi',
+        'pysnmp.hlapi.v3arch',
+        'pysnmp.hlapi.v3arch.asyncio',
+        'pyasn1',
+        'pyasn1.codec.ber',
         # WinRM / remote
         'pypsrp',
         'pypsrp.host',
@@ -187,6 +207,16 @@ a = Analysis(
         'src.network.interfaces',
         'src.network.dns_resolver',
         'src.network.ping',
+        'src.network.iperf',
+        'src.network.mtr',
+        'src.network.traffic',
+        'src.network.tls_check',
+        'src.network.tcp_ping',
+        'src.network.pmtu',
+        'src.network.netstat',
+        'src.network.snmp_tool',
+        'src.network.ntp_tool',
+        'src.network.http_check',
         'src.network.traceroute',
         'src.network.scanner',
         'src.network.monitor',
@@ -210,11 +240,15 @@ a = Analysis(
         # Test / build tooling
         'pytest',
         'setuptools',
-        # Legacy GUI stack — replaced by webview, no need to bundle
+        # Legacy GUI stack — replaced by webview, no need to bundle.
+        # Pillow/PIL is dev-only (customtkinter, requirements-dev.txt) and nothing
+        # in the runtime imports it — excluding it slims the bundle and keeps the
+        # distributed .exe aligned with the declared runtime dependencies.
         'tkinter',
         'tkinter.ttk',
         'customtkinter',
-        'PIL._tkinter_finder',
+        'PIL',
+        'Pillow',
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,

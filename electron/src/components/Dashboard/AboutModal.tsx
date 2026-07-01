@@ -67,13 +67,32 @@ export function AboutModal({ isOpen, onClose }: AboutModalProps) {
                                 {[
                                     'Python', 'FastAPI', 'SQLite',
                                     'React', 'TypeScript', 'Tailwind CSS',
-                                    'Electron', 'WinRM', 'PowerShell',
+                                    'Electron', 'WinRM', 'PowerShell', 'iPerf',
                                 ].map((tech) => (
                                     <span key={tech} className="px-2 py-1 bg-zinc-800 rounded text-xs text-zinc-300 border border-zinc-700">
                                         {tech}
                                     </span>
                                 ))}
                             </div>
+                        </div>
+
+                        <div className="p-4 bg-zinc-950/50 rounded-xl border border-zinc-800/50">
+                            <p className="text-sm text-zinc-500 mb-2 uppercase tracking-wider font-semibold">Atribuições</p>
+                            <p className="text-xs text-zinc-400 leading-relaxed">
+                                Os testes de banda utilizam o <strong className="text-zinc-300">iPerf</strong> (iperf2),
+                                © Board of Trustees of the University of Illinois — NLANR/DAST,
+                                licença NCSA (BSD-like). As ferramentas de rede usam ainda
+                                <strong className="text-zinc-300"> pysnmp</strong>/<strong className="text-zinc-300">pyasn1</strong> (BSD),
+                                <strong className="text-zinc-300"> ntplib</strong> (MIT),
+                                <strong className="text-zinc-300"> dnspython</strong> (ISC),
+                                <strong className="text-zinc-300"> psutil</strong> (BSD) e
+                                <strong className="text-zinc-300"> cryptography</strong> (Apache/BSD).
+                                Todas as bibliotecas têm licença permissiva.
+                            </p>
+                            <p className="text-[11px] text-zinc-600 mt-2 leading-relaxed">
+                                Avisos completos de licenças de terceiros acompanham o aplicativo
+                                em <span className="font-mono text-zinc-500">THIRD-PARTY-LICENSES.txt</span>.
+                            </p>
                         </div>
                     </div>
 

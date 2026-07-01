@@ -61,11 +61,10 @@ def check_host_status(ip_address, cache=None, cache_timeout=30, timeout=None, so
     except Exception:
         return False
 
-try:
-    from icmplib import ping as icmp_ping
-    ICMPLIB_AVAILABLE = True
-except ImportError:
-    ICMPLIB_AVAILABLE = False
+# NOTE: this module used to use icmplib (LGPL-3.0) as a fast ICMP path. It was
+# removed to keep the distributed portable 100% permissively licensed — every
+# ping path now uses the OS-native `ping` via subprocess (which was already the
+# fallback and produces the same result dict). No behavior change for callers.
 
 def parse_ping_output(output):
     """Extrai a latência (ms) da saída do comando ping."""
@@ -82,8 +81,8 @@ def parse_ping_output(output):
     return None
 
 def check_host_status_detailed(ip_address, count=1, is_wan=False, resolve_names=False, fast_mode=False):
-    """Verifica status e latência de um host usando icmplib (rápido) ou subprocess (lento)."""
-    
+    """Verifica status e latência de um host via `ping` nativo do SO (subprocess)."""
+
     # Definir timeout baseado no modo (Burst vs Normal) e Tipo de Rede (LAN vs WAN)
     # Burst Mode (count > 1):
     #   - LAN: 200ms (Rápido)
@@ -96,32 +95,7 @@ def check_host_status_detailed(ip_address, count=1, is_wan=False, resolve_names=
         # Se fast_mode, usar timeout agressivo de 500ms
         timeout_val = 0.5 if fast_mode else 1.0
 
-    # Tentar icmplib primeiro (muito mais rápido) - APENAS SE NÃO PRECISAR RESOLVER NOMES
-    # icmplib não suporta resolução de nomes reversa (ping -a) nativamente da mesma forma que o ping do Windows
-    if ICMPLIB_AVAILABLE and not resolve_names:
-        try:
-            # privileged=False tenta usar datagram sockets (não requer admin no Linux, mas pode falhar no Windows sem admin)
-            # Se falhar, tentamos o método antigo.
-            # Intervalo menor para burst
-            interval = 0.2 if count > 1 else 0.2
-            host = icmp_ping(ip_address, count=count, interval=interval, timeout=timeout_val, privileged=False)
-            
-            if host.is_alive:
-                return {
-                    'online': True,
-                    'latency': host.avg_rtt,
-                    'packet_loss': int(host.packet_loss * host.packets_sent), # icmplib retorna float 0.0-1.0
-                    'packet_loss_pct': host.packet_loss * 100,
-                    'total_packets': host.packets_sent,
-                    'resolved_hostname': None,
-                    'domain': None
-                }
-        except Exception as e:
-            # Se der erro (ex: permissão), cai para o fallback
-            # logging.debug(f"icmplib falhou para {ip_address}, usando fallback: {e}")
-            pass
-
-    # Fallback para o método antigo (subprocess)
+    # `ping` nativo do SO (único caminho — o atalho icmplib/LGPL foi removido).
     try:
         # Converter timeout para formato do comando ping
         # OTIMIZAÇÃO: Timeout máximo de 1000ms para garantir updates rápidos
