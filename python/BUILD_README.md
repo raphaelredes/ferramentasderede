@@ -57,6 +57,20 @@ O **único** spec PyInstaller que importa é `build_webview.spec`. Ele empaca:
 
 Em vez de empacotar Chromium (Electron), o portátil usa **WebView2** do próprio Windows para renderizar o frontend React. Isso reduz ~360 MB para ~40 MB e melhora muito o tempo de boot (~1s vs ~5s).
 
+## Primeira execução num PC recém-formatado (WebView2 + admin)
+
+O WebView2 é um componente do Windows: **Windows 11 já vem com ele**; um **Windows 10 recém-formatado / sem updates / LTSC** pode não ter. Sem esse runtime o pywebview 6.1 não tem fallback e o app não renderiza.
+
+Como o portátil lida com isso (`main_webview.py:preflight_webview2`):
+
+1. Detecta o WebView2 pelo registro (GUID Evergreen `{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}` em `HKLM\...\EdgeUpdate\Clients`, 64/32-bit e HKCU).
+2. Se existe → abre direto.
+3. Se falta → mostra um diálogo em PT-BR e, ao confirmar, roda o **bootstrapper oficial da Microsoft embarcado** em `bin/MicrosoftEdgeWebview2Setup.exe` (~1,6 MB, assinado). Ele baixa e instala o runtime — **precisa de internet nessa primeira vez**. Sem internet, o app orienta o usuário a instalar manualmente em vez de travar.
+
+Decisão de projeto (2026-07-01): **um único .exe autoinstalável**, sem variante offline. Embarcar o runtime completo (~180 MB) foi descartado — os PCs-alvo têm internet na 1ª execução. Se um dia surgir necessidade air-gapped, o gancho `WEBVIEW2_BROWSER_EXECUTABLE_FOLDER` (`_wire_bundled_webview2`) já existe: basta dropar uma cópia fixed-version do runtime em `webview2_runtime/` ao lado do exe.
+
+**Sem admin:** o `.spec` usa `uac_admin=False`. Uma auditoria confirmou que nada local precisa de elevação (ping/tracert nativos, escrita só em `%APPDATA%`, WinRM remoto usa credenciais do alvo). Isso permite que usuários corporativos **sem** senha de admin abram o app.
+
 ## Solução de problemas
 
 ### "Frontend não encontrado em ../electron/dist/"
@@ -67,7 +81,8 @@ Você esqueceu de rodar `vite build` antes. Use `build_system.bat` da raiz, que 
 - Pare o `python main.py` se estiver rodando em dev mode
 
 ### Executável não inicia ao dar duplo-clique
-- Verifique se o Windows tem o **Edge WebView2 Runtime** instalado (em Windows 11 já vem; em Windows 10 antigo pode precisar instalar)
+- Se faltar o **Edge WebView2 Runtime**, o app agora **detecta e oferece instalar** (bootstrapper embarcado; requer internet na 1ª vez) — não trava mais em silêncio. Ver "Primeira execução num PC recém-formatado" acima.
+- Se o app fica preso na tela "Inicializando sistema..." (splash estático, sem avançar), rode-o com `NT_WEBVIEW_DEBUG=1` e abra o DevTools (botão direito → Inspecionar) para ver o erro no Console.
 - Veja `%TEMP%\network_tools_debug.log` para erros do main process
 - Veja `%APPDATA%\FerramentasDeRede\errors.log` para erros do backend
 

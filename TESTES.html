@@ -300,6 +300,41 @@ curl http://127.0.0.1:8000/network/interfaces</pre>
   <div class="expect">✅ <strong>Esperado:</strong> primeiro retorna <code>{"status":"online","version":"&lt;versão atual&gt;"}</code> onde a versão coincide com <code>electron/package.json</code>. Segundo retorna JSON com a lista de NICs IPv4 ativas.</div>
 </div>
 
+<div class="test new">
+  <div class="row"><span class="id">T2.4</span><span class="title">Servidor estático entrega o JS com MIME correto (não trava em "Inicializando sistema...")</span><span class="badge badge-new">novo</span></div>
+  <pre>curl -sI http://127.0.0.1:5174/index.html
+# achar o nome do bundle: assets/index-XXXX.js
+curl -sI http://127.0.0.1:5174/assets/index-&lt;hash&gt;.js | findstr /I Content-Type</pre>
+  <div class="expect">✅ <strong>Esperado:</strong> o header do <code>.js</code> é <code>Content-Type: text/javascript</code> (e o <code>.css</code> é <code>text/css</code>). <strong>Regressão que isto cobre:</strong> em PCs recém-formatados / com política corporativa, a chave de registro <code>HKCR\.js</code> costuma estar como <code>text/plain</code>; o servidor estático herdava esse valor via <code>mimetypes</code> e o WebView2 recusava executar o módulo ES — o app ficava PRESO PARA SEMPRE na tela "Inicializando sistema..." (só o logo girando). O <code>guess_type</code> em <code>main_webview.py</code> agora fixa o tipo, ignorando o registro da máquina.</div>
+</div>
+
+<div class="test new">
+  <div class="row"><span class="id">T2.5</span><span class="title">PC recém-formatado sem WebView2: o app instala sozinho</span><span class="badge badge-new">novo</span></div>
+  <pre># Num Windows limpo (ex.: Windows Sandbox) SEM o WebView2 Runtime e COM internet:
+# 1) confirmar que o runtime NÃO está instalado
+reg query "HKLM\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" /v pv
+# 2) rodar o .exe e clicar "Sim" no diálogo "Instalar componente necessario"
+# 3) após a instalação, reconferir:
+reg query "HKLM\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" /v pv</pre>
+  <div class="expect">✅ <strong>Esperado:</strong> antes, o <code>reg query</code> falha (chave ausente). O app mostra um diálogo em PT-BR oferecendo instalar. Ao confirmar, ele roda o <strong>bootstrapper embarcado</strong> (<code>bin/MicrosoftEdgeWebview2Setup.exe</code>) e o WebView2 é instalado (o segundo <code>reg query</code> retorna um <code>pv</code> como <code>149.x</code>); a interface abre. <strong>NUNCA</strong> trava em silêncio. Sem internet, o app orienta a instalação manual em vez de travar.</div>
+</div>
+
+<div class="test new">
+  <div class="row"><span class="id">T2.6</span><span class="title">App abre SEM pedir admin (usuário sem privilégio)</span><span class="badge badge-new">novo</span></div>
+  <pre># Logado como usuário PADRÃO (sem senha de admin), dar duplo-clique no .exe.</pre>
+  <div class="expect">✅ <strong>Esperado:</strong> o app abre <strong>sem</strong> prompt de UAC / sem pedir credencial de administrador. Regressão coberta: com <code>uac_admin=True</code> (antigo), um usuário corporativo sem admin não conseguia nem abrir. Auditoria confirmou que nada local precisa de elevação → <code>uac_admin=False</code> no <code>build_webview.spec</code>.</div>
+</div>
+
+<div class="test new">
+  <div class="row"><span class="id">T2.7</span><span class="title">Como reproduzir "PC formatado" sem formatar (Windows Sandbox)</span><span class="badge badge-new">novo</span></div>
+  <pre># Windows Sandbox (Win Pro/Enterprise) sobe um Windows limpo e descartável.
+# A imagem base do Sandbox tem .NET 4.8 mas NÃO tem WebView2 — reprodução perfeita.
+# Habilitar (uma vez, como admin) e reiniciar:
+Enable-WindowsOptionalFeature -Online -FeatureName "Containers-DisposableClientVM" -All
+# Criar um .wsb que mapeia a pasta do .exe e roda; abrir o .exe dentro do Sandbox.</pre>
+  <div class="expect">✅ <strong>Esperado:</strong> dentro do Sandbox limpo, o app dispara o fluxo do T2.5 (detecta ausência → instala → abre). É o banco de testes recomendado antes de distribuir um build para PCs novos.</div>
+</div>
+
 <hr>
 <h2 id="sec-multi">3. Multi-domínio / Multi-VLAN ⭐</h2>
 

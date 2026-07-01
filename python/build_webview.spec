@@ -279,5 +279,14 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon='assets\\logo_fixed.ico',
-    uac_admin=True,
+    # No admin required. A full privilege audit found NOTHING local needs
+    # elevation: ping/traceroute use native ping.exe/tracert.exe (not raw
+    # sockets), port scan uses plain TCP connect, netstat degrades gracefully
+    # without admin, all system/service/registry writes happen REMOTELY via
+    # WinRM with the remote's credentials, and all local file I/O targets
+    # per-user %APPDATA%. Requiring admin only hurt: on a managed PC whose user
+    # lacks admin rights the app could not launch at all, and every launch
+    # forced a UAC prompt. Elevate a specific operation on demand if one ever
+    # needs it — do not elevate the whole process.
+    uac_admin=False,
 )

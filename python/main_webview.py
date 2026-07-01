@@ -7,7 +7,180 @@ import psutil
 import time
 import atexit
 import signal
+import winreg
+import ctypes
 from api.server import app
+
+# --- Fresh-Windows runtime pre-flight ---------------------------------------
+# pywebview 6.1 has ONLY the WebView2/EdgeChromium backend on Windows (there is
+# no MSHTML fallback). If the Microsoft Edge WebView2 Runtime is absent — which
+# happens on freshly-imaged / unpatched / LTSC / air-gapped Windows 10 (every
+# Windows 11 ships it in-box) — then webview.start() raises deep inside pythonnet
+# and the process dies with NO window and NO message. The bundle ships only the
+# WebView2 *loader* (WebView2Loader.dll), not the runtime itself, so it cannot
+# render on its own. We therefore (1) optionally wire a bundled fixed-version
+# runtime for offline builds, (2) verify a usable runtime exists, and (3) if not,
+# show an actionable dialog instead of hanging silently.
+
+# Evergreen WebView2 client GUID (verified on-machine; do NOT confuse with the
+# ...E38 GUID that floats around online — that one is wrong).
+_WEBVIEW2_GUID = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+
+
+def _wire_bundled_webview2():
+    """Point WebView2 at a bundled fixed-version runtime, if one is shipped.
+
+    Looks in _MEIPASS/webview2_runtime (onefile), next to the exe, and next to
+    this source file (dev). Sets WEBVIEW2_BROWSER_EXECUTABLE_FOLDER so pywebview
+    uses it — the guarantee of a true offline first boot. Returns True if wired.
+    No-op (returns False) when no bundled runtime is present, so the default
+    ~34 MB build simply falls back to the system runtime. An operator override
+    of the env var is always respected."""
+    if os.environ.get("WEBVIEW2_BROWSER_EXECUTABLE_FOLDER"):
+        return True
+    candidates = []
+    if getattr(sys, "frozen", False):
+        candidates.append(os.path.join(sys._MEIPASS, "webview2_runtime"))
+        candidates.append(os.path.join(os.path.dirname(sys.executable), "webview2_runtime"))
+    else:
+        candidates.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "webview2_runtime"))
+    for folder in candidates:
+        if os.path.isfile(os.path.join(folder, "msedgewebview2.exe")):
+            os.environ["WEBVIEW2_BROWSER_EXECUTABLE_FOLDER"] = folder
+            print(f"Using bundled WebView2 runtime: {folder}")
+            return True
+    return False
+
+
+def _system_webview2_version():
+    """Return the installed Evergreen WebView2 version string, or None.
+
+    Checks the per-machine 64-bit view (WOW6432Node holds the 32-bit-registered
+    client on 64-bit Windows), the plain per-machine view, and the per-user hive.
+    Any non-empty, non-zero 'pv' means a runtime is present."""
+    roots = (
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients"),
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\EdgeUpdate\Clients"),
+        (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\EdgeUpdate\Clients"),
+    )
+    for hive, base in roots:
+        try:
+            with winreg.OpenKey(hive, base + "\\" + _WEBVIEW2_GUID) as key:
+                pv, _ = winreg.QueryValueEx(key, "pv")
+                if pv and pv != "0.0.0.0":
+                    return pv
+        except OSError:
+            continue
+    return None
+
+
+def _message_box(text, title, flags=0x10):
+    """Best-effort native dialog (MB_ICONERROR default). Never raises — we may be
+    a console-less GUI process, so print() is the only other channel."""
+    try:
+        ctypes.windll.user32.MessageBoxW(None, text, title, flags)
+    except Exception as e:
+        print(f"MessageBox failed: {e}")
+
+
+def _bundled_bootstrapper_path():
+    """Return the path to the embedded WebView2 Evergreen Bootstrapper, or None.
+
+    We ship the ~1.6 MB official Microsoft bootstrapper in bin/ (packaged by the
+    spec's ('bin/*','bin') rule), so a fresh PC with internet can install the
+    runtime WITHOUT the app first having to download the installer itself — the
+    installer is already inside the .exe. It still pulls the actual runtime from
+    Microsoft at run time (that ~180 MB is what we deliberately do NOT bundle)."""
+    if getattr(sys, "frozen", False):
+        base = sys._MEIPASS
+    else:
+        base = os.path.dirname(os.path.abspath(__file__))
+    path = os.path.join(base, "bin", "MicrosoftEdgeWebview2Setup.exe")
+    return path if os.path.isfile(path) else None
+
+
+def _install_webview2():
+    """Install the Evergreen runtime, preferring the embedded bootstrapper.
+
+    Runs the bundled MicrosoftEdgeWebview2Setup.exe (falling back to downloading
+    it from Microsoft's permanent fwlink if, for any reason, it isn't bundled).
+    Returns True only if a runtime is present afterwards. Requires internet: the
+    bootstrapper downloads the runtime payload from Microsoft."""
+    import subprocess
+    setup = _bundled_bootstrapper_path()
+    try:
+        if setup is None:
+            # Fallback: the installer wasn't bundled — fetch it on the fly.
+            import urllib.request
+            import tempfile
+            setup = os.path.join(tempfile.gettempdir(), "MicrosoftEdgeWebview2Setup.exe")
+            print("Bundled bootstrapper missing; downloading from Microsoft...")
+            urllib.request.urlretrieve("https://go.microsoft.com/fwlink/p/?LinkId=2124703", setup)
+        else:
+            print(f"Running bundled WebView2 bootstrapper: {setup}")
+        # //silent //install → unattended per-machine install (bootstrapper accepts
+        # both / and // forms; //silent avoids its own UI). check=False: we verify
+        # success by re-reading the registry, not by exit code.
+        subprocess.run([setup, "/silent", "/install"], check=False)
+        return _system_webview2_version() is not None
+    except Exception as e:
+        print(f"WebView2 install failed: {e}")
+        return False
+
+
+def preflight_webview2():
+    """Guarantee a WebView2 runtime is reachable before webview.start().
+
+    Order: bundled fixed-version → installed system Evergreen → offer to install
+    via the embedded bootstrapper (needs internet) → guided fallback. Returns
+    True if the app may proceed, False if it must exit. This converts the
+    fresh-Windows silent-death into an actionable path to a working app."""
+    if _wire_bundled_webview2():
+        return True
+
+    version = _system_webview2_version()
+    if version:
+        print(f"System WebView2 runtime found: {version}")
+        return True
+
+    print("WebView2 runtime not found.")
+    # MB_YESNO | MB_ICONWARNING = 0x34
+    resp = 0
+    try:
+        resp = ctypes.windll.user32.MessageBoxW(
+            None,
+            "Para exibir a interface, o Ferramentas de Rede precisa do componente\n"
+            "Microsoft Edge WebView2 Runtime, que nao esta instalado neste computador.\n\n"
+            "Deseja instalar agora? O instalador ja vem incluido no aplicativo;\n"
+            "so e necessaria conexao com a internet para concluir (poucos minutos).",
+            "Instalar componente necessario",
+            0x34,
+        )
+    except Exception as e:
+        print(f"MessageBox failed: {e}")
+
+    if resp == 6:  # IDYES → run the embedded bootstrapper (falls back to download)
+        if _install_webview2():
+            print("WebView2 runtime installed successfully.")
+            return True
+        _message_box(
+            "Nao foi possivel instalar o WebView2 automaticamente.\n"
+            "Verifique a conexao com a internet e tente novamente, ou instale\n"
+            "manualmente a partir de:\n"
+            "https://developer.microsoft.com/microsoft-edge/webview2/",
+            "WebView2 Runtime",
+        )
+        return False
+
+    # User declined or the dialog itself failed: guide and exit rather than hang.
+    _message_box(
+        "O aplicativo nao pode iniciar sem o WebView2 Runtime.\n"
+        "Instale-o a partir de:\n"
+        "https://developer.microsoft.com/microsoft-edge/webview2/",
+        "WebView2 Runtime ausente",
+    )
+    return False
+
 
 def kill_port_process(port):
     """Kills process listening on the specified port if it looks like our server."""
@@ -116,9 +289,48 @@ def main():
         webview_port = int(os.environ.get("NT_WEBVIEW_PORT", "5174") or "5174")
         kill_port_process(webview_port)
 
+        # Deterministic MIME map for the web assets we serve. SimpleHTTPRequestHandler
+        # derives Content-Type from the `mimetypes` module, which on Windows seeds
+        # itself from the registry (HKCR\.js "Content Type"). On locked-down /
+        # freshly-imaged corporate PCs that key is frequently set to "text/plain"
+        # (AV, JS-hardening GPOs, or another app that claimed the .js extension).
+        # When our bundled ES module (`<script type="module">`) is served as
+        # text/plain, WebView2 refuses to execute it (strict module MIME checking),
+        # React never mounts, and the app hangs forever on the static splash. We
+        # therefore pin the correct types ourselves instead of trusting the host.
+        _STATIC_MIME = {
+            ".js": "text/javascript",
+            ".mjs": "text/javascript",
+            ".css": "text/css",
+            ".html": "text/html; charset=utf-8",
+            ".json": "application/json",
+            ".map": "application/json",
+            ".svg": "image/svg+xml",
+            ".png": "image/png",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".gif": "image/gif",
+            ".webp": "image/webp",
+            ".ico": "image/x-icon",
+            ".woff": "font/woff",
+            ".woff2": "font/woff2",
+            ".ttf": "font/ttf",
+        }
+
         class Handler(http.server.SimpleHTTPRequestHandler):
             def __init__(self, *args, **kwargs):
                 super().__init__(*args, directory=os.path.dirname(gui_path), **kwargs)
+
+            def guess_type(self, path):
+                """Pin web-asset MIME types independent of the host registry.
+
+                See _STATIC_MIME above for why the stdlib default is unsafe here.
+                Falls back to the base implementation for anything not pinned."""
+                _, ext = os.path.splitext(path)
+                pinned = _STATIC_MIME.get(ext.lower())
+                if pinned:
+                    return pinned
+                return super().guess_type(path)
 
             # Quiet the request log
             def log_message(self, format, *args):
@@ -325,6 +537,12 @@ def main():
     except Exception:
         _window_title = 'Ferramentas de Rede'
 
+    # Fresh-Windows guarantee: ensure a WebView2 runtime is reachable (bundled
+    # or system) BEFORE we try to render. On a machine without it, this exits
+    # with clear guidance instead of the previous silent crash / eternal splash.
+    if not preflight_webview2():
+        sys.exit(1)
+
     # Create the window
     window = webview.create_window(
         _window_title,
@@ -335,14 +553,27 @@ def main():
         min_size=(1024, 768),
         js_api=Api()
     )
-    
+
     # Register the shim injection.
     # `debug` is opt-in via NT_WEBVIEW_DEBUG=1. When enabled, pywebview exposes
     # the WebView2 DevTools (right-click → Inspecionar), which is the only way
     # to capture network requests / console logs from inside the portable .exe.
     # Off by default so production users don't see a "Inspecionar" item.
     _debug = os.environ.get("NT_WEBVIEW_DEBUG", "").strip() in ("1", "true", "yes")
-    webview.start(func=initialize_shim, args=window, debug=_debug)
+    # Last line of defense: even with the pre-flight, a corrupt/partial runtime
+    # can still make WebView2 init throw. Surface it instead of dying silently.
+    try:
+        webview.start(func=initialize_shim, args=window, debug=_debug)
+    except Exception as e:
+        print(f"FATAL: WebView2 initialization failed: {e}")
+        _message_box(
+            "Falha ao inicializar a interface (WebView2):\n\n"
+            f"{e}\n\n"
+            "Verifique se o Microsoft Edge WebView2 Runtime esta instalado e "
+            "atualizado, ou reinicie o computador.",
+            "Erro de inicializacao",
+        )
+        sys.exit(1)
 
 if __name__ == '__main__':
     main()
