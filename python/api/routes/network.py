@@ -963,16 +963,13 @@ def vendors_update():
     return {"status": "success", "message": message, "info": VendorUtils.get_database_info()}
 
 
-def _validate_tool_target(target: str) -> None:
+def _validate_tool_target(target: str) -> str:
     """Reject targets that look like CLI flags or contain shell metacharacters.
-
-    The /tools/ping and /tools/traceroute endpoints pass `target` as an argv
-    element (no shell), so this isn't RCE — but a value starting with `-` is
-    interpreted as an option by ping.exe/tracert.exe and triggers help output
-    instead of a real probe, and arbitrary strings exfiltrate via the system
-    DNS resolver. Use the same shape as `_is_safe_remote_target`."""
-    if not _is_safe_remote_target(target):
+    Auto-sanitizes URLs, protocols (http/https/etc.), paths, and trailing slashes."""
+    clean_target, _ = _sanitize_target_host_and_port(target)
+    if not _is_safe_remote_target(clean_target):
         raise HTTPException(status_code=400, detail="Endereço de destino inválido.")
+    return clean_target
 
 
 def _validate_optional_source_ip(value):
@@ -987,11 +984,11 @@ def _validate_optional_source_ip(value):
 
 @router.post("/tools/ping")
 def run_ping(request: ToolRequest):
-    target = request.target
-    _validate_tool_target(target)
+    target = _validate_tool_target(request.target)
     _validate_optional_source_ip(request.source_ip)
     task_id = request.task_id or f"ping_{time.time()}"
     source_ip = request.source_ip
+
 
     def event_generator():
         try:
@@ -1008,8 +1005,7 @@ def run_ping(request: ToolRequest):
 
 @router.post("/tools/traceroute")
 def run_traceroute(request: ToolRequest):
-    target = request.target
-    _validate_tool_target(target)
+    target = _validate_tool_target(request.target)
     _validate_optional_source_ip(request.source_ip)
     task_id = request.task_id or f"traceroute_{time.time()}"
     source_ip = request.source_ip
@@ -1075,8 +1071,7 @@ def run_iperf_client(request: IperfClientRequest):
     """Run iperf in CLIENT mode against an existing iperf server on the network
     (the inverse of /tools/iperf/server). Measures bandwidth from this machine
     to `target`."""
-    target = request.target
-    _validate_tool_target(target)
+    target = _validate_tool_target(request.target)
     _validate_optional_source_ip(request.source_ip)
     port = _validate_port(request.port if request.port is not None else 5201)
     task_id = request.task_id or f"iperf_client_{time.time()}"
@@ -1102,8 +1097,7 @@ def run_iperf_client(request: IperfClientRequest):
 def run_mtr(request: MtrRequest):
     """MTR-style path monitor: streams a per-hop table (latency/jitter/loss)
     every cycle until stopped via /tools/stop. Uses OS-native tracert + ping."""
-    target = request.target
-    _validate_tool_target(target)
+    target = _validate_tool_target(request.target)
     _validate_optional_source_ip(request.source_ip)
     task_id = request.task_id or f"mtr_{time.time()}"
     source_ip = request.source_ip
@@ -1123,8 +1117,7 @@ def scan_ports(request: PortScanRequest):
     """Test TCP ports on a host. `mode='top'` scans common ports, `mode='all'`
     scans 1-65535, otherwise `ports` is a list/range string ('80,443,8000-8100').
     All three underlying calls are line generators; we stream them as-is."""
-    target = request.target
-    _validate_tool_target(target)
+    target = _validate_tool_target(request.target)
     task_id = request.task_id or f"ports_{time.time()}"
 
     def event_generator():
@@ -1151,29 +1144,69 @@ def network_traffic():
     return net_tools.get_traffic_snapshot()
 
 
+def _sanitize_target_host_and_port(raw_host: str, default_port: int = 443) -> tuple[str, int]:
+    """Smart sanitizer for host input: strips http://, https://, ssl://, paths,
+    query strings, trailing slashes, whitespace, and extracts port if present."""
+    import urllib.parse
+    import re
+
+    if not raw_host:
+        return "", default_port
+
+    s = raw_host.strip().strip("'\"")
+    # Check if there is a scheme
+    if not re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", s):
+        if not s.startswith("//"):
+            s = "//" + s
+
+    try:
+        parsed = urllib.parse.urlsplit(s)
+        clean_host = parsed.hostname or ""
+        clean_port = parsed.port if parsed.port is not None else default_port
+    except Exception:
+        clean_host = re.sub(r"^[a-zA-Z]+://", "", raw_host.strip()).split("/")[0].split("?")[0].split("#")[0]
+        if ":" in clean_host and not clean_host.startswith("["):
+            parts = clean_host.split(":")
+            clean_host = parts[0]
+            try:
+                clean_port = int(parts[1])
+            except ValueError:
+                clean_port = default_port
+        else:
+            clean_port = default_port
+
+    clean_host = clean_host.strip().rstrip(".").strip()
+    return clean_host, clean_port
+
+
 # ---- TLS certificate inspector ----
 @router.post("/tools/tls")
 def tls_check(request: TlsCheckRequest):
     """Inspect the TLS certificate served by host:port (subject/SAN/expiry)."""
-    if not _is_safe_remote_target(request.host):
+    clean_host, detected_port = _sanitize_target_host_and_port(
+        request.host,
+        request.port if request.port is not None else 443
+    )
+    if not _is_safe_remote_target(clean_host):
         raise HTTPException(status_code=400, detail="Host inválido.")
-    port = _validate_port(request.port if request.port is not None else 443)
+    port = _validate_port(detected_port)
     from src.network import tls_check as _tls
-    return _tls.check_certificate(request.host, port)
+    return _tls.check_certificate(clean_host, port)
+
 
 
 # ---- TCP ping ----
 @router.post("/tools/tcp-ping")
 def tcp_ping(request: TcpPingRequest):
     """TCP-connect ping: liveness + latency for ICMP-blocking hosts."""
-    _validate_tool_target(request.target)
+    clean_target = _validate_tool_target(request.target)
     _validate_optional_source_ip(request.source_ip)
     port = _validate_port(request.port)
     task_id = request.task_id or f"tcpping_{time.time()}"
 
     def event_generator():
         try:
-            for line in net_tools.run_tcp_ping(request.target, port, task_id,
+            for line in net_tools.run_tcp_ping(clean_target, port, task_id,
                                                 count=request.count, source_ip=request.source_ip):
                 yield (line if isinstance(line, str) else str(line)).encode('utf-8')
         except Exception as e:
@@ -1185,13 +1218,13 @@ def tcp_ping(request: TcpPingRequest):
 @router.post("/tools/pmtu")
 def pmtu(request: PmtuRequest):
     """Discover the largest unfragmented packet to the target (path MTU)."""
-    _validate_tool_target(request.target)
+    clean_target = _validate_tool_target(request.target)
     _validate_optional_source_ip(request.source_ip)
     task_id = request.task_id or f"pmtu_{time.time()}"
 
     def event_generator():
         try:
-            for line in net_tools.run_pmtu(request.target, task_id, source_ip=request.source_ip):
+            for line in net_tools.run_pmtu(clean_target, task_id, source_ip=request.source_ip):
                 yield (line if isinstance(line, str) else str(line)).encode('utf-8')
         except Exception as e:
             yield f"Erro no PMTU: {str(e)}\n".encode('utf-8')

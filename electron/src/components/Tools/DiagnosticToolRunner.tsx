@@ -44,6 +44,15 @@ export function DiagnosticToolRunner({
                         value={target}
                         onChange={(e) => setTarget(e.target.value)}
                         onFocus={() => { if (target === '8.8.8.8') setTarget(''); }}
+                        onBlur={() => {
+                            if (target) {
+                                let clean = target.trim().replace(/^['"]|['"]$/g, '');
+                                clean = clean.replace(/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//, '').split('/')[0].split('?')[0].split('#')[0];
+                                if (clean.includes(':') && !clean.startsWith('[')) clean = clean.split(':')[0];
+                                clean = clean.replace(/\.+$/, '').trim();
+                                if (clean && clean !== target) setTarget(clean);
+                            }
+                        }}
                         placeholder="8.8.8.8"
                         className={`w-full bg-zinc-950 border border-zinc-700 rounded-lg px-4 py-2 focus:outline-none focus:border-blue-500 transition-colors font-mono placeholder:text-zinc-500 ${target === '8.8.8.8' ? 'text-zinc-500' : 'text-white'}`}
                         onKeyDown={(e) => {

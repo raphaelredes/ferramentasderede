@@ -15,6 +15,43 @@ interface CertResult {
     tls_version?: string; cipher?: string; signature_algorithm?: string;
 }
 
+/** Helper para sanitizar URLs e hosts: remove http://, https://, ssl://, caminhos, barras finais e detecta porta */
+function parseSmartTarget(raw: string, defaultPort = 443): { host: string; port: number } {
+    let s = raw.trim().replace(/^['"]|['"]$/g, '');
+    if (!s) return { host: '', port: defaultPort };
+
+    // Remove esquema (http://, https://, ssl://, tls://)
+    s = s.replace(/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//, '');
+
+    // Remove caminhos, query strings e fragmentos
+    s = s.split('/')[0].split('?')[0].split('#')[0];
+
+    // Detecta se a porta veio junto no host (host:porta ou [ipv6]:porta)
+    let port = defaultPort;
+    if (s.includes(':') && !s.startsWith('[')) {
+        const parts = s.split(':');
+        s = parts[0];
+        const parsedPort = parseInt(parts[1], 10);
+        if (!isNaN(parsedPort) && parsedPort >= 1 && parsedPort <= 65535) {
+            port = parsedPort;
+        }
+    } else if (s.startsWith('[') && s.includes(']:')) {
+        const match = s.match(/^\[(.*?)\]:(\d+)$/);
+        if (match) {
+            s = match[1];
+            const parsedPort = parseInt(match[2], 10);
+            if (!isNaN(parsedPort) && parsedPort >= 1 && parsedPort <= 65535) {
+                port = parsedPort;
+            }
+        }
+    }
+
+    // Remove pontos finais e espaços residuais
+    s = s.replace(/\.+$/, '').trim();
+
+    return { host: s, port };
+}
+
 /** TLS certificate inspector for host:port (validity / SAN / expiry). */
 export function TlsPanel() {
     const { showToast } = useToast();
@@ -24,14 +61,16 @@ export function TlsPanel() {
     const [busy, setBusy] = useState(false);
 
     const check = async () => {
-        const h = host.trim();
-        if (!h) { showToast('Informe o host.', 'error'); return; }
-        const p = parseInt(port, 10) || 443;
+        const parsed = parseSmartTarget(host, parseInt(port, 10) || 443);
+        if (!parsed.host) { showToast('Informe o host.', 'error'); return; }
+
+        setHost(parsed.host);
+        setPort(parsed.port.toString());
         setBusy(true); setResult(null);
         try {
             const res = await fetch(`${API_BASE}/tools/tls`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ host: h, port: p }),
+                body: JSON.stringify({ host: parsed.host, port: parsed.port }),
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
@@ -64,7 +103,20 @@ export function TlsPanel() {
             <div className="flex gap-4 items-end bg-zinc-900 p-4 rounded-xl border border-zinc-800">
                 <div className="flex-1 space-y-2">
                     <label className="text-sm font-medium text-zinc-400">Host</label>
-                    <input type="text" value={host} onChange={e => setHost(e.target.value)} placeholder="intranet.dominio.local"
+                    <input type="text" value={host}
+                        onChange={e => setHost(e.target.value)}
+                        onBlur={() => {
+                            if (host) {
+                                const p = parseSmartTarget(host, parseInt(port, 10) || 443);
+                                if (p.host && p.host !== host) {
+                                    setHost(p.host);
+                                    if (p.port !== 443 || port === '443') {
+                                        setPort(p.port.toString());
+                                    }
+                                }
+                            }
+                        }}
+                        placeholder="echamados.betim.mg.gov.br ou https://site.com.br"
                         onKeyDown={e => { if (e.key === 'Enter' && !busy) check(); }}
                         className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500 font-mono placeholder:text-zinc-500" />
                 </div>
@@ -77,6 +129,7 @@ export function TlsPanel() {
                     <Search size={18} /> Verificar
                 </button>
             </div>
+
 
             <div className="flex-1 bg-black rounded-xl border border-zinc-800 p-5 overflow-auto custom-scrollbar">
                 {!result ? (
