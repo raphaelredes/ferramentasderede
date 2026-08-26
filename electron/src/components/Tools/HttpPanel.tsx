@@ -1,8 +1,9 @@
-import { useState } from 'react';
 import { Globe, Search } from 'lucide-react';
 import { clsx } from 'clsx';
 import { API_BASE } from '../../config/api';
 import { useToast } from '../../contexts/ToastContext';
+import { usePersistedState } from '../../hooks/usePersistedState';
+import { LastExecutionBadge } from './LastExecutionBadge';
 
 interface HttpResult {
     ok: boolean; error?: string;
@@ -14,16 +15,17 @@ interface HttpResult {
 /** HTTP endpoint health/latency (TTFB/total, status) via requests. */
 export function HttpPanel() {
     const { showToast } = useToast();
-    const [url, setUrl] = useState('');
-    const [method, setMethod] = useState('GET');
-    const [verifyTls, setVerifyTls] = useState(true);
-    const [result, setResult] = useState<HttpResult | null>(null);
+    const [url, setUrl] = usePersistedState('http_tool_url', '');
+    const [method, setMethod] = usePersistedState('http_tool_method', 'GET');
+    const [verifyTls, setVerifyTls] = usePersistedState('http_tool_verify_tls', true);
+    const [result, setResult, clearResult] = usePersistedState<HttpResult | null>('http_tool_result', null);
+    const [lastRunAt, setLastRunAt] = usePersistedState<string | null>('http_tool_last_run', null);
     const [busy, setBusy] = useState(false);
 
     const check = async () => {
         const u = url.trim();
         if (!u) { showToast('Informe uma URL.', 'error'); return; }
-        setBusy(true); setResult(null);
+        setBusy(true);
         try {
             const res = await fetch(`${API_BASE}/tools/http`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -32,10 +34,12 @@ export function HttpPanel() {
             const data = await res.json();
             if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
             setResult(data);
+            setLastRunAt(new Date().toISOString());
         } catch (e: any) {
             showToast('Erro: ' + e.message, 'error');
         } finally { setBusy(false); }
     };
+
 
     const statusColor = (s?: number) => {
         if (!s) return 'text-zinc-300';
@@ -79,7 +83,16 @@ export function HttpPanel() {
                 </label>
             </div>
 
+            {result && lastRunAt && (
+                <LastExecutionBadge
+                    timestamp={lastRunAt}
+                    target={url ? `${method} ${url}` : null}
+                    onClear={() => { clearResult(); setLastRunAt(null); }}
+                />
+            )}
+
             <div className="flex-1 overflow-auto custom-scrollbar">
+
                 {!result ? (
                     <div className="h-full flex flex-col items-center justify-center text-zinc-600">
                         <Globe size={48} className="mb-4 opacity-20" />

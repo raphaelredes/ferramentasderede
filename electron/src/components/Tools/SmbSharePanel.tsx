@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { FolderGit2, Play, AlertCircle, HardDrive } from 'lucide-react';
 import { API_BASE } from '../../config/api';
 import { useToast } from '../../contexts/ToastContext';
+import { usePersistedState } from '../../hooks/usePersistedState';
+import { LastExecutionBadge } from './LastExecutionBadge';
 
 interface SMBShare {
     name: string;
@@ -13,16 +15,15 @@ interface SMBShare {
 
 export function SmbSharePanel() {
     const { showToast } = useToast();
-    const [target, setTarget] = useState('192.168.1.1');
+    const [target, setTarget] = usePersistedState('smb_tool_target', '192.168.1.1');
     const [loading, setLoading] = useState(false);
-    const [shares, setShares] = useState<SMBShare[]>([]);
-    const [errorMsg, setErrorMsg] = useState<string | null>(null);
+    const [shares, setShares, clearShares] = usePersistedState<SMBShare[]>('smb_tool_shares', []);
+    const [errorMsg, setErrorMsg] = usePersistedState<string | null>('smb_tool_error_msg', null);
+    const [lastRunAt, setLastRunAt] = usePersistedState<string | null>('smb_tool_last_run', null);
 
     const scanShares = async () => {
         if (!target.trim()) return;
         setLoading(true);
-        setErrorMsg(null);
-        setShares([]);
 
         try {
             const res = await fetch(`${API_BASE}/l2/smb-shares`, {
@@ -34,9 +35,12 @@ export function SmbSharePanel() {
             const data = await res.json();
             if (data.shares && data.shares.length > 0) {
                 setShares(data.shares);
+                setErrorMsg(null);
+                setLastRunAt(new Date().toISOString());
                 showToast(`${data.shares.length} compartilhamentos encontrados!`, 'success');
             } else {
                 setErrorMsg(data.error || 'Nenhum compartilhamento detectado.');
+                setLastRunAt(new Date().toISOString());
                 showToast('Nenhum compartilhamento listado.', 'warning');
             }
         } catch (err: any) {
@@ -46,6 +50,7 @@ export function SmbSharePanel() {
             setLoading(false);
         }
     };
+
 
     return (
         <div className="bg-zinc-900/60 rounded-xl p-5 border border-zinc-800 space-y-5">
@@ -77,7 +82,16 @@ export function SmbSharePanel() {
                 </button>
             </div>
 
+            {(shares.length > 0 || errorMsg) && lastRunAt && (
+                <LastExecutionBadge
+                    timestamp={lastRunAt}
+                    target={target || null}
+                    onClear={() => { clearShares(); setErrorMsg(null); setLastRunAt(null); }}
+                />
+            )}
+
             {errorMsg && (
+
                 <div className="p-4 bg-zinc-950 border border-zinc-800 rounded-xl flex items-center gap-3 text-amber-400 text-xs">
                     <AlertCircle size={18} className="shrink-0" />
                     <span>{errorMsg}</span>

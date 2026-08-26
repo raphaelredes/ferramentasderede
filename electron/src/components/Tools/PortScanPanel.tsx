@@ -1,8 +1,9 @@
-import { useRef, useEffect, useState } from 'react';
+import { useRef, useEffect } from 'react';
 import { Play, Square, Eraser, DoorOpen } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useTools } from '../../contexts/ToolsContext';
 import { useToast } from '../../contexts/ToastContext';
+import { usePersistedState } from '../../hooks/usePersistedState';
 
 /**
  * TCP port tester. Backed by high-concurrency ThreadPoolExecutor and adaptive timeouts.
@@ -11,9 +12,10 @@ export function PortScanPanel() {
     const { portState, runPortScan, stopTool, clearToolOutput } = useTools();
     const { showToast } = useToast();
 
-    const [target, setTarget] = useState('');
-    const [ports, setPorts] = useState('80, 443, 3389, 445');
+    const [target, setTarget] = usePersistedState('port_scan_tool_target', '');
+    const [ports, setPorts] = usePersistedState('port_scan_tool_ports', '80, 443, 3389, 445');
     const outputEndRef = useRef<HTMLDivElement>(null);
+
 
     useEffect(() => {
         outputEndRef.current?.scrollIntoView({ behavior: 'smooth' });

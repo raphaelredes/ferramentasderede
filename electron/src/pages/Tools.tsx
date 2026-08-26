@@ -27,6 +27,7 @@ import { Host } from '../types';
 import { useTools } from '../contexts/ToolsContext';
 import { useToast } from '../contexts/ToastContext';
 import { useNetworks } from '../hooks/useNetworks';
+import { usePersistedState } from '../hooks/usePersistedState';
 import { API_BASE } from '../config/api';
 
 // Tool identifiers across all categories.
@@ -90,11 +91,11 @@ const TOOL_CATEGORIES: ToolCategory[] = [
 ];
 
 export function Tools() {
-    const [activeTab, setActiveTab] = useState<ToolId>('ping');
-    const [activeCategory, setActiveCategory] = useState<string>('diag');
+
+    const [activeTab, setActiveTab] = usePersistedState<ToolId>('tools_active_tab', 'ping');
+    const [activeCategory, setActiveCategory] = usePersistedState<string>('tools_active_category', 'diag');
     const [helpModalToolId, setHelpModalToolId] = useState<ToolId | null>(null);
     const { showToast } = useToast();
-
 
     const {
         pingState,
@@ -113,13 +114,14 @@ export function Tools() {
         markActionAsProcessed
     } = useTools();
 
-    const [localPingTarget, setLocalPingTarget] = useState('8.8.8.8');
-    const [localTraceTarget, setLocalTraceTarget] = useState('8.8.8.8');
-    const [pingSourceIp, setPingSourceIp] = useState<string>('');
-    const [traceSourceIp, setTraceSourceIp] = useState<string>('');
+    const [localPingTarget, setLocalPingTarget] = usePersistedState('tools_local_ping_target', '8.8.8.8');
+    const [localTraceTarget, setLocalTraceTarget] = usePersistedState('tools_local_trace_target', '8.8.8.8');
+    const [pingSourceIp, setPingSourceIp] = usePersistedState<string>('tools_ping_source_ip', '');
+    const [traceSourceIp, setTraceSourceIp] = usePersistedState<string>('tools_trace_source_ip', '');
 
     const { networks } = useNetworks();
     const [existingHosts, setExistingHosts] = useState<Host[]>([]);
+
 
     useEffect(() => {
         if (pendingAction) {

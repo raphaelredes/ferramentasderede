@@ -1,22 +1,24 @@
-import { useRef, useEffect, useState } from 'react';
+import { useRef, useEffect } from 'react';
 import { Play, Square, Eraser, Zap } from 'lucide-react';
 import { useStreamingTool } from './useStreamingTool';
 import { useToast } from '../../contexts/ToastContext';
 import { useNetworks } from '../../hooks/useNetworks';
+import { usePersistedState } from '../../hooks/usePersistedState';
+import { LastExecutionBadge } from './LastExecutionBadge';
 
 /**
  * TCP ping: liveness + latency via TCP handshake, for hosts that block ICMP
  * (the AD-domain default). Streaming text output.
  */
 export function TcpPingPanel() {
-    const { output, isRunning, run, stop, clear } = useStreamingTool('/tools/tcp-ping', 'tcp-ping');
+    const { output, isRunning, run, stop, clear, lastRunAt } = useStreamingTool('/tools/tcp-ping', 'tcp-ping');
     const { showToast } = useToast();
     const { networks } = useNetworks();
 
-    const [target, setTarget] = useState('');
-    const [port, setPort] = useState('3389');
-    const [count, setCount] = useState('4');
-    const [sourceIp, setSourceIp] = useState('');
+    const [target, setTarget] = usePersistedState('tcp_ping_tool_target', '');
+    const [port, setPort] = usePersistedState('tcp_ping_tool_port', '3389');
+    const [count, setCount] = usePersistedState('tcp_ping_tool_count', '4');
+    const [sourceIp, setSourceIp] = usePersistedState('tcp_ping_tool_source_ip', '');
     const endRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [output]);
@@ -29,6 +31,7 @@ export function TcpPingPanel() {
         let n = parseInt(count, 10); if (!n || n < 1) n = 4; if (n > 100) n = 100;
         run({ target: t, port: p, count: n, source_ip: sourceIp || undefined });
     };
+
 
     return (
         <div className="flex-1 flex flex-col space-y-4 min-h-0">
@@ -67,7 +70,17 @@ export function TcpPingPanel() {
                     </button>
                 )}
             </div>
+
+            {output.length > 0 && lastRunAt && (
+                <LastExecutionBadge
+                    timestamp={lastRunAt}
+                    target={target ? `${target}:${port}` : null}
+                    onClear={clear}
+                />
+            )}
+
             <div className="flex-1 bg-black rounded-xl border border-zinc-800 p-4 overflow-hidden flex flex-col relative font-mono text-sm">
+
                 <button onClick={clear} disabled={isRunning} title="Limpar" className="absolute top-2 right-2 z-10 p-2 text-zinc-500 hover:text-white rounded-lg hover:bg-zinc-800 disabled:opacity-30">
                     <Eraser size={16} />
                 </button>

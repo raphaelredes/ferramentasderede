@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { ShieldAlert, RefreshCw, AlertTriangle, CheckCircle } from 'lucide-react';
 import { API_BASE } from '../../config/api';
 import { useToast } from '../../contexts/ToastContext';
+import { usePersistedState } from '../../hooks/usePersistedState';
+import { LastExecutionBadge } from './LastExecutionBadge';
 
 interface ARPEntry {
     interface: string;
@@ -21,11 +23,11 @@ interface ARPConflict {
 export function ArpConflictPanel({ defaultSourceIp }: { defaultSourceIp?: string }) {
     const { showToast } = useToast();
     const [loading, setLoading] = useState(false);
-    const [entries, setEntries] = useState<ARPEntry[]>([]);
-    const [conflicts, setConflicts] = useState<ARPConflict[]>([]);
-    const [lastChecked, setLastChecked] = useState<string | null>(null);
+    const [entries, setEntries, clearEntries] = usePersistedState<ARPEntry[]>('arp_tool_entries', []);
+    const [conflicts, setConflicts, clearConflicts] = usePersistedState<ARPConflict[]>('arp_tool_conflicts', []);
+    const [lastChecked, setLastChecked] = usePersistedState<string | null>('arp_tool_last_checked', null);
 
-    const checkArp = async () => {
+    const checkArp = async (manual = false) => {
         setLoading(true);
         try {
             const url = defaultSourceIp ? `${API_BASE}/l2/arp-conflicts?interface_ip=${defaultSourceIp}` : `${API_BASE}/l2/arp-conflicts`;
@@ -34,23 +36,28 @@ export function ArpConflictPanel({ defaultSourceIp }: { defaultSourceIp?: string
             const data = await res.json();
             setEntries(data.entries || []);
             setConflicts(data.conflicts || []);
-            setLastChecked(new Date().toLocaleTimeString());
+            setLastChecked(new Date().toISOString());
             
-            if (data.conflicts && data.conflicts.length > 0) {
-                showToast(`Alerta: ${data.conflicts.length} conflito(s) de IP detectado(s)!`, 'error');
-            } else {
-                showToast('Tabela ARP auditada. Nenhum conflito encontrado.', 'success');
+            if (manual) {
+                if (data.conflicts && data.conflicts.length > 0) {
+                    showToast(`Alerta: ${data.conflicts.length} conflito(s) de IP detectado(s)!`, 'error');
+                } else {
+                    showToast('Tabela ARP auditada. Nenhum conflito encontrado.', 'success');
+                }
             }
         } catch (err: any) {
-            showToast(`Erro na auditoria ARP: ${err.message}`, 'error');
+            if (manual) showToast(`Erro na auditoria ARP: ${err.message}`, 'error');
         } finally {
             setLoading(false);
         }
     };
 
     useEffect(() => {
-        checkArp();
+        if (!entries.length) {
+            checkArp(false);
+        }
     }, [defaultSourceIp]);
+
 
     return (
         <div className="bg-zinc-900/60 rounded-xl p-5 border border-zinc-800 space-y-5">
@@ -63,7 +70,7 @@ export function ArpConflictPanel({ defaultSourceIp }: { defaultSourceIp?: string
                     </div>
                 </div>
                 <button
-                    onClick={checkArp}
+                    onClick={() => checkArp(true)}
                     disabled={loading}
                     className="flex items-center gap-2 px-3.5 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-medium rounded-lg shadow transition-colors"
                 >
@@ -72,7 +79,16 @@ export function ArpConflictPanel({ defaultSourceIp }: { defaultSourceIp?: string
                 </button>
             </div>
 
+            {(entries.length > 0 || conflicts.length > 0) && lastChecked && (
+                <LastExecutionBadge
+                    timestamp={lastChecked}
+                    target={`${entries.length} entradas`}
+                    onClear={() => { clearEntries(); clearConflicts(); setLastChecked(null); }}
+                />
+            )}
+
             {conflicts.length > 0 ? (
+
                 <div className="p-4 bg-rose-950/40 border border-rose-800/80 rounded-xl space-y-3">
                     <div className="flex items-center gap-2 text-rose-400 font-bold text-sm">
                         <AlertTriangle size={18} />

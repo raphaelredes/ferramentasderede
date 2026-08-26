@@ -6,6 +6,8 @@ import { useTools } from '../../contexts/ToolsContext';
 import { useToast } from '../../contexts/ToastContext';
 import { useNetworks } from '../../hooks/useNetworks';
 
+import { usePersistedState } from '../../hooks/usePersistedState';
+
 interface IperfStatus {
     available: boolean;
     version: string | null;
@@ -34,19 +36,20 @@ export function IperfPanel() {
     const { showToast } = useToast();
     const { networks } = useNetworks();
 
-    const [mode, setMode] = useState<'server' | 'client'>('server');
+    const [mode, setMode] = usePersistedState<'server' | 'client'>('iperf_tool_mode', 'server');
 
     // Server form
-    const [serverPort, setServerPort] = useState('5201');
-    const [serverSourceIp, setServerSourceIp] = useState('');
+    const [serverPort, setServerPort] = usePersistedState('iperf_tool_server_port', '5201');
+    const [serverSourceIp, setServerSourceIp] = usePersistedState('iperf_tool_server_source_ip', '');
 
     // Client form
-    const [clientTarget, setClientTarget] = useState('');
-    const [clientPort, setClientPort] = useState('5201');
-    const [clientSourceIp, setClientSourceIp] = useState('');
-    const [clientDuration, setClientDuration] = useState('10');
-    const [clientReverse, setClientReverse] = useState(false);
-    const [clientUdp, setClientUdp] = useState(false);
+    const [clientTarget, setClientTarget] = usePersistedState('iperf_tool_client_target', '');
+    const [clientPort, setClientPort] = usePersistedState('iperf_tool_client_port', '5201');
+    const [clientSourceIp, setClientSourceIp] = usePersistedState('iperf_tool_client_source_ip', '');
+    const [clientDuration, setClientDuration] = usePersistedState('iperf_tool_client_duration', '10');
+    const [clientReverse, setClientReverse] = usePersistedState('iperf_tool_client_reverse', false);
+    const [clientUdp, setClientUdp] = usePersistedState('iperf_tool_client_udp', false);
+
 
     const [status, setStatus] = useState<IperfStatus | null>(null);
     const [copied, setCopied] = useState(false);

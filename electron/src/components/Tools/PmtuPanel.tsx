@@ -1,17 +1,19 @@
-import { useRef, useEffect, useState } from 'react';
+import { useRef, useEffect } from 'react';
 import { Play, Square, Eraser, Ruler } from 'lucide-react';
 import { useStreamingTool } from './useStreamingTool';
 import { useToast } from '../../contexts/ToastContext';
 import { useNetworks } from '../../hooks/useNetworks';
+import { usePersistedState } from '../../hooks/usePersistedState';
+import { LastExecutionBadge } from './LastExecutionBadge';
 
 /** Path MTU discovery — finds the largest unfragmented packet to a target. */
 export function PmtuPanel() {
-    const { output, isRunning, run, stop, clear } = useStreamingTool('/tools/pmtu', 'pmtu');
+    const { output, isRunning, run, stop, clear, lastRunAt } = useStreamingTool('/tools/pmtu', 'pmtu');
     const { showToast } = useToast();
     const { networks } = useNetworks();
 
-    const [target, setTarget] = useState('8.8.8.8');
-    const [sourceIp, setSourceIp] = useState('');
+    const [target, setTarget] = usePersistedState('pmtu_tool_target', '8.8.8.8');
+    const [sourceIp, setSourceIp] = usePersistedState('pmtu_tool_source_ip', '');
     const endRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [output]);
@@ -50,7 +52,17 @@ export function PmtuPanel() {
                     </button>
                 )}
             </div>
+
+            {output.length > 0 && lastRunAt && (
+                <LastExecutionBadge
+                    timestamp={lastRunAt}
+                    target={target || null}
+                    onClear={clear}
+                />
+            )}
+
             <div className="flex-1 bg-black rounded-xl border border-zinc-800 p-4 overflow-hidden flex flex-col relative font-mono text-sm">
+
                 <button onClick={clear} disabled={isRunning} title="Limpar" className="absolute top-2 right-2 z-10 p-2 text-zinc-500 hover:text-white rounded-lg hover:bg-zinc-800 disabled:opacity-30">
                     <Eraser size={16} />
                 </button>

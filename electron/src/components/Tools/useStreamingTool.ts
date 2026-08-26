@@ -5,26 +5,63 @@ import { API_BASE } from '../../config/api';
  * Small reusable hook for the self-contained streaming tool panels (TCP ping,
  * PMTU, PTR sweep). Handles: POST + ReadableStream reader, an output-line
  * buffer with a cap, an AbortController, a race-free re-entrancy guard, the
- * /tools/stop call, and cleanup on unmount.
- *
- * `onLine` (optional) lets a caller parse each decoded chunk (e.g. NDJSON);
- * when omitted, raw text chunks are appended to `output`.
+ * /tools/stop call, cleanup on unmount, and localStorage persistence.
  */
 const OUTPUT_CAP = 2000;
 const TRIM_MARKER = '[... linhas mais antigas removidas — buffer limitado a 2000 ...]';
 
 export function useStreamingTool(endpoint: string, taskId: string) {
-    const [output, setOutput] = useState<string[]>([]);
+    const storageKey = `streaming_tool_out_${taskId}`;
+    const timestampKey = `streaming_tool_time_${taskId}`;
+
+    const [output, setOutputState] = useState<string[]>(() => {
+        try {
+            const raw = localStorage.getItem(storageKey);
+            return raw ? JSON.parse(raw) : [];
+        } catch {
+            return [];
+        }
+    });
+
+    const [lastRunAt, setLastRunAt] = useState<string | null>(() => {
+        try {
+            return localStorage.getItem(timestampKey);
+        } catch {
+            return null;
+        }
+    });
+
     const [isRunning, setIsRunning] = useState(false);
     const abortRef = useRef<AbortController | null>(null);
     const runningRef = useRef(false);
+
+    const setOutput = useCallback((updater: string[] | ((prev: string[]) => string[])) => {
+        setOutputState(prev => {
+            const next = typeof updater === 'function' ? updater(prev) : updater;
+            try {
+                localStorage.setItem(storageKey, JSON.stringify(next));
+            } catch (e) {
+                console.warn(e);
+            }
+            return next;
+        });
+    }, [storageKey]);
 
     const trim = (arr: string[]) =>
         arr.length > OUTPUT_CAP ? [TRIM_MARKER, ...arr.slice(-(OUTPUT_CAP - 1))] : arr;
 
     const clear = useCallback(() => {
-        if (!runningRef.current) setOutput([]);
-    }, []);
+        if (!runningRef.current) {
+            setOutputState([]);
+            setLastRunAt(null);
+            try {
+                localStorage.removeItem(storageKey);
+                localStorage.removeItem(timestampKey);
+            } catch (e) {
+                console.warn(e);
+            }
+        }
+    }, [storageKey, timestampKey]);
 
     const stop = useCallback(() => {
         if (abortRef.current) { abortRef.current.abort(); abortRef.current = null; }
@@ -51,7 +88,10 @@ export function useStreamingTool(endpoint: string, taskId: string) {
         abortRef.current = new AbortController();
         runningRef.current = true;
         setIsRunning(true);
-        setOutput([]);
+        setOutputState([]);
+        const now = new Date().toISOString();
+        setLastRunAt(now);
+        try { localStorage.setItem(timestampKey, now); } catch {}
 
         try {
             const res = await fetch(`${API_BASE}${endpoint}`, {
@@ -82,10 +122,11 @@ export function useStreamingTool(endpoint: string, taskId: string) {
             setIsRunning(false);
             abortRef.current = null;
         }
-    }, [endpoint, taskId]);
+    }, [endpoint, taskId, setOutput, timestampKey]);
 
     // Abort on unmount so a late .then can't setState on a dead component.
     useEffect(() => () => { if (abortRef.current) abortRef.current.abort(); }, []);
 
-    return { output, setOutput, isRunning, run, stop, clear };
+    return { output, setOutput, isRunning, run, stop, clear, lastRunAt };
 }
+

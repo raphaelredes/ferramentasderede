@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { Router, Play, RefreshCw, Radio, Server, Activity, Network } from 'lucide-react';
 import { API_BASE } from '../../config/api';
 import { useToast } from '../../contexts/ToastContext';
+import { usePersistedState } from '../../hooks/usePersistedState';
+import { LastExecutionBadge } from './LastExecutionBadge';
 
 interface L2Data {
     protocol: string;
@@ -22,13 +24,12 @@ interface L2Data {
 export function LldpCdpPanel({ defaultSourceIp }: { defaultSourceIp?: string }) {
     const { showToast } = useToast();
     const [listening, setListening] = useState(false);
-    const [l2Result, setL2Result] = useState<L2Data | null>(null);
-    const [rawMessage, setRawMessage] = useState<string | null>(null);
+    const [l2Result, setL2Result, clearL2Result] = usePersistedState<L2Data | null>('lldp_cdp_tool_result', null);
+    const [rawMessage, setRawMessage] = usePersistedState<string | null>('lldp_cdp_tool_message', null);
+    const [lastRunAt, setLastRunAt] = usePersistedState<string | null>('lldp_cdp_tool_last_run', null);
 
     const startListening = async () => {
         setListening(true);
-        setL2Result(null);
-        setRawMessage(null);
 
         try {
             const res = await fetch(`${API_BASE}/l2/lldp-listen`, {
@@ -40,9 +41,12 @@ export function LldpCdpPanel({ defaultSourceIp }: { defaultSourceIp?: string }) 
             const data = await res.json();
             if (data.success && data.data) {
                 setL2Result(data.data);
+                setRawMessage(null);
+                setLastRunAt(new Date().toISOString());
                 showToast('Descoberta L2 e Switch concluída com sucesso!', 'success');
             } else {
                 setRawMessage(data.message || 'Nenhum frame LLDP/CDP capturado.');
+                setLastRunAt(new Date().toISOString());
                 showToast('Nenhum anúncio detectado no tempo limite.', 'warning');
             }
         } catch (err: any) {
@@ -52,6 +56,7 @@ export function LldpCdpPanel({ defaultSourceIp }: { defaultSourceIp?: string }) 
             setListening(false);
         }
     };
+
 
     return (
         <div className="bg-zinc-900/60 rounded-xl p-5 border border-zinc-800 space-y-5">
@@ -73,7 +78,16 @@ export function LldpCdpPanel({ defaultSourceIp }: { defaultSourceIp?: string }) 
                 </button>
             </div>
 
+            {(l2Result || rawMessage) && lastRunAt && (
+                <LastExecutionBadge
+                    timestamp={lastRunAt}
+                    target={l2Result?.switch_name || l2Result?.protocol || null}
+                    onClear={() => { clearL2Result(); setRawMessage(null); setLastRunAt(null); }}
+                />
+            )}
+
             {listening && (
+
                 <div className="flex items-center gap-3 p-4 bg-blue-950/40 border border-blue-800/60 rounded-xl text-blue-300 text-xs">
                     <Radio size={20} className="animate-pulse text-blue-400 shrink-0" />
                     <span>Escutando pacotes multicast LLDP/CDP e inspecionando enlace físico do switch/gateway...</span>

@@ -1,7 +1,8 @@
-import { useState } from 'react';
 import { Router, Search } from 'lucide-react';
 import { API_BASE } from '../../config/api';
 import { useToast } from '../../contexts/ToastContext';
+import { usePersistedState } from '../../hooks/usePersistedState';
+import { LastExecutionBadge } from './LastExecutionBadge';
 
 interface SnmpResult {
     ok: boolean; error?: string;
@@ -12,16 +13,17 @@ interface SnmpResult {
 /** SNMP system query for switches/routers (sysDescr/sysName/uptime/ifNumber). */
 export function SnmpPanel() {
     const { showToast } = useToast();
-    const [host, setHost] = useState('');
-    const [community, setCommunity] = useState('public');
-    const [version, setVersion] = useState('2c');
-    const [result, setResult] = useState<SnmpResult | null>(null);
+    const [host, setHost] = usePersistedState('snmp_tool_host', '');
+    const [community, setCommunity] = usePersistedState('snmp_tool_community', 'public');
+    const [version, setVersion] = usePersistedState('snmp_tool_version', '2c');
+    const [result, setResult, clearResult] = usePersistedState<SnmpResult | null>('snmp_tool_result', null);
+    const [lastRunAt, setLastRunAt] = usePersistedState<string | null>('snmp_tool_last_run', null);
     const [busy, setBusy] = useState(false);
 
     const query = async () => {
         const h = host.trim();
         if (!h) { showToast('Informe o host SNMP.', 'error'); return; }
-        setBusy(true); setResult(null);
+        setBusy(true);
         try {
             const res = await fetch(`${API_BASE}/tools/snmp`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -30,6 +32,7 @@ export function SnmpPanel() {
             const data = await res.json();
             if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
             setResult(data);
+            setLastRunAt(new Date().toISOString());
         } catch (e: any) {
             showToast('Erro: ' + e.message, 'error');
         } finally { setBusy(false); }
@@ -69,7 +72,16 @@ export function SnmpPanel() {
                 </button>
             </div>
 
+            {result && lastRunAt && (
+                <LastExecutionBadge
+                    timestamp={lastRunAt}
+                    target={host || null}
+                    onClear={() => { clearResult(); setLastRunAt(null); }}
+                />
+            )}
+
             <div className="flex-1 bg-black rounded-xl border border-zinc-800 p-5 overflow-auto custom-scrollbar">
+
                 {!result ? (
                     <div className="h-full flex flex-col items-center justify-center text-zinc-600">
                         <Router size={48} className="mb-4 opacity-20" />

@@ -1,7 +1,8 @@
-import { useState } from 'react';
 import { Calculator, Binary } from 'lucide-react';
 import { API_BASE } from '../../config/api';
 import { useToast } from '../../contexts/ToastContext';
+import { usePersistedState } from '../../hooks/usePersistedState';
+import { LastExecutionBadge } from './LastExecutionBadge';
 
 interface SubnetResult {
     ok: boolean; error?: string;
@@ -14,9 +15,10 @@ interface SubnetResult {
 /** Subnet/CIDR calculator (pure stdlib ipaddress on the backend). */
 export function SubnetPanel() {
     const { showToast } = useToast();
-    const [cidr, setCidr] = useState('');
-    const [splitPrefix, setSplitPrefix] = useState('');
-    const [result, setResult] = useState<SubnetResult | null>(null);
+    const [cidr, setCidr] = usePersistedState('subnet_tool_cidr', '');
+    const [splitPrefix, setSplitPrefix] = usePersistedState('subnet_tool_split_prefix', '');
+    const [result, setResult, clearResult] = usePersistedState<SubnetResult | null>('subnet_tool_result', null);
+    const [lastRunAt, setLastRunAt] = usePersistedState<string | null>('subnet_tool_last_run', null);
 
     const calc = async () => {
         const c = cidr.trim();
@@ -31,10 +33,12 @@ export function SubnetPanel() {
             const data = await res.json();
             if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
             setResult(data);
+            setLastRunAt(new Date().toISOString());
         } catch (e: any) {
             showToast('Erro: ' + e.message, 'error');
         }
     };
+
 
     const Cell = ({ label, value }: { label: string; value?: React.ReactNode }) => (
         <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-3">
@@ -62,7 +66,16 @@ export function SubnetPanel() {
                 </button>
             </div>
 
+            {result && lastRunAt && (
+                <LastExecutionBadge
+                    timestamp={lastRunAt}
+                    target={cidr || null}
+                    onClear={() => { clearResult(); setLastRunAt(null); }}
+                />
+            )}
+
             <div className="flex-1 overflow-auto custom-scrollbar">
+
                 {!result ? (
                     <div className="h-full flex flex-col items-center justify-center text-zinc-600">
                         <Binary size={48} className="mb-4 opacity-20" />

@@ -3,6 +3,8 @@ import { RefreshCw, Network as NetworkIcon, Cpu } from 'lucide-react';
 import { clsx } from 'clsx';
 import { API_BASE } from '../../config/api';
 import { useToast } from '../../contexts/ToastContext';
+import { usePersistedState } from '../../hooks/usePersistedState';
+import { LastExecutionBadge } from './LastExecutionBadge';
 
 interface Conn {
     proto: string; local: string; remote: string;
@@ -12,10 +14,11 @@ interface Conn {
 /** Local connection table (netstat -ano + process name) via psutil. */
 export function ConnectionsPanel() {
     const { showToast } = useToast();
-    const [conns, setConns] = useState<Conn[]>([]);
-    const [kind, setKind] = useState<'inet' | 'tcp' | 'udp'>('inet');
+    const [conns, setConns, clearConns] = usePersistedState<Conn[]>('connections_tool_data', []);
+    const [kind, setKind] = usePersistedState<'inet' | 'tcp' | 'udp'>('connections_tool_kind', 'inet');
+    const [filter, setFilter] = usePersistedState('connections_tool_filter', '');
+    const [lastRunAt, setLastRunAt] = usePersistedState<string | null>('connections_tool_last_run', null);
     const [busy, setBusy] = useState(false);
-    const [filter, setFilter] = useState('');
 
     const load = useCallback(async (k: 'inet' | 'tcp' | 'udp') => {
         setBusy(true);
@@ -24,12 +27,18 @@ export function ConnectionsPanel() {
             const data = await res.json();
             if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
             setConns(data.connections || []);
+            setLastRunAt(new Date().toISOString());
         } catch (e: any) {
             showToast('Erro ao listar conexões: ' + e.message, 'error');
         } finally { setBusy(false); }
-    }, [showToast]);
+    }, [showToast, setConns, setLastRunAt]);
 
-    useEffect(() => { load(kind); }, [kind, load]);
+    useEffect(() => {
+        if (!conns.length) {
+            load(kind);
+        }
+    }, [kind, load]);
+
 
     const f = filter.trim().toLowerCase();
     const shown = f
@@ -63,7 +72,16 @@ export function ConnectionsPanel() {
                 </button>
             </div>
 
+            {conns.length > 0 && lastRunAt && (
+                <LastExecutionBadge
+                    timestamp={lastRunAt}
+                    target={`${conns.length} conexões ativas`}
+                    onClear={() => { clearConns(); setLastRunAt(null); }}
+                />
+            )}
+
             <div className="flex-1 bg-black rounded-xl border border-zinc-800 overflow-hidden flex flex-col">
+
                 {shown.length === 0 ? (
                     <div className="flex-1 flex flex-col items-center justify-center text-zinc-600">
                         <NetworkIcon size={48} className="mb-4 opacity-20" />

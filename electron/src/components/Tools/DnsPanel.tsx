@@ -1,8 +1,9 @@
-import { useState } from 'react';
 import { Search, Globe, ArrowRight, Server } from 'lucide-react';
 import { API_BASE } from '../../config/api';
 import { useToast } from '../../contexts/ToastContext';
 import { useNetworks } from '../../hooks/useNetworks';
+import { usePersistedState } from '../../hooks/usePersistedState';
+import { LastExecutionBadge } from './LastExecutionBadge';
 
 interface DnsResult {
     kind: 'forward' | 'reverse';
@@ -21,9 +22,10 @@ export function DnsPanel() {
     const { showToast } = useToast();
     const { networks } = useNetworks();
 
-    const [query, setQuery] = useState('');
-    const [dnsServer, setDnsServer] = useState('');     // '' = system resolver
-    const [results, setResults] = useState<DnsResult[]>([]);
+    const [query, setQuery] = usePersistedState('dns_tool_query', '');
+    const [dnsServer, setDnsServer] = usePersistedState('dns_tool_server', '');     // '' = system resolver
+    const [results, setResults, clearResults] = usePersistedState<DnsResult[]>('dns_tool_results', []);
+    const [lastRunAt, setLastRunAt] = usePersistedState<string | null>('dns_tool_last_run', null);
     const [busy, setBusy] = useState(false);
 
     // Networks that actually have a DNS server configured (offer them as quick picks).
@@ -61,6 +63,7 @@ export function DnsPanel() {
                 ? { kind: 'reverse', query: q, answer: data.fqdn ?? null, dnsServer: dnsServer || null }
                 : { kind: 'forward', query: q, answer: data.ip ?? null, dnsServer: dnsServer || null };
             setResults(prev => [result, ...prev].slice(0, 20));
+            setLastRunAt(new Date().toISOString());
             if (!result.answer) showToast('Sem resposta (NXDOMAIN ou sem registro).', 'info');
         } catch (e: any) {
             showToast('Erro na consulta: ' + e.message, 'error');
@@ -68,6 +71,7 @@ export function DnsPanel() {
             setBusy(false);
         }
     };
+
 
     return (
         <div className="flex-1 flex flex-col space-y-4 min-h-0">
@@ -113,6 +117,14 @@ export function DnsPanel() {
                 </p>
             </div>
 
+            {results.length > 0 && lastRunAt && (
+                <LastExecutionBadge
+                    timestamp={lastRunAt}
+                    target={results[0]?.query}
+                    onClear={() => { clearResults(); setLastRunAt(null); }}
+                />
+            )}
+
             <div className="flex-1 bg-black rounded-xl border border-zinc-800 overflow-hidden flex flex-col">
                 {results.length === 0 ? (
                     <div className="flex-1 flex flex-col items-center justify-center text-zinc-600">
@@ -121,6 +133,7 @@ export function DnsPanel() {
                     </div>
                 ) : (
                     <div className="flex-1 overflow-auto custom-scrollbar p-3 space-y-2">
+
                         {results.map((r, i) => (
                             <div key={i} className="flex items-center gap-3 bg-zinc-950/60 border border-zinc-800 rounded-lg px-4 py-2.5 font-mono text-sm">
                                 <span className="text-xs uppercase tracking-wide text-zinc-600 w-16 shrink-0">{r.kind === 'forward' ? 'Direto' : 'Reverso'}</span>

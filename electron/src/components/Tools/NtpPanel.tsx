@@ -1,8 +1,9 @@
-import { useState } from 'react';
 import { Clock, AlertTriangle, Search } from 'lucide-react';
 import { clsx } from 'clsx';
 import { API_BASE } from '../../config/api';
 import { useToast } from '../../contexts/ToastContext';
+import { usePersistedState } from '../../hooks/usePersistedState';
+import { LastExecutionBadge } from './LastExecutionBadge';
 
 interface NtpResult {
     ok: boolean; error?: string;
@@ -14,14 +15,15 @@ interface NtpResult {
 /** NTP query — clock offset/stratum. Skew breaks Kerberos in AD. */
 export function NtpPanel() {
     const { showToast } = useToast();
-    const [server, setServer] = useState('');
-    const [result, setResult] = useState<NtpResult | null>(null);
+    const [server, setServer] = usePersistedState('ntp_tool_server', '');
+    const [result, setResult, clearResult] = usePersistedState<NtpResult | null>('ntp_tool_result', null);
+    const [lastRunAt, setLastRunAt] = usePersistedState<string | null>('ntp_tool_last_run', null);
     const [busy, setBusy] = useState(false);
 
     const query = async () => {
         const s = server.trim();
         if (!s) { showToast('Informe um servidor NTP.', 'error'); return; }
-        setBusy(true); setResult(null);
+        setBusy(true);
         try {
             const res = await fetch(`${API_BASE}/tools/ntp`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ server: s }),
@@ -29,6 +31,7 @@ export function NtpPanel() {
             const data = await res.json();
             if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
             setResult(data);
+            setLastRunAt(new Date().toISOString());
         } catch (e: any) {
             showToast('Erro: ' + e.message, 'error');
         } finally { setBusy(false); }
@@ -55,7 +58,16 @@ export function NtpPanel() {
                 </button>
             </div>
 
+            {result && lastRunAt && (
+                <LastExecutionBadge
+                    timestamp={lastRunAt}
+                    target={server || null}
+                    onClear={() => { clearResult(); setLastRunAt(null); }}
+                />
+            )}
+
             <div className="flex-1 overflow-auto custom-scrollbar">
+
                 {!result ? (
                     <div className="h-full flex flex-col items-center justify-center text-zinc-600">
                         <Clock size={48} className="mb-4 opacity-20" />

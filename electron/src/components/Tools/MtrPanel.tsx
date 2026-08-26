@@ -1,9 +1,10 @@
-import { useState } from 'react';
 import { Play, Square, Activity, GitBranch } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useTools } from '../../contexts/ToolsContext';
 import { useToast } from '../../contexts/ToastContext';
 import { useNetworks } from '../../hooks/useNetworks';
+import { usePersistedState } from '../../hooks/usePersistedState';
+import { LastExecutionBadge } from './LastExecutionBadge';
 
 /**
  * MTR-style path monitor. Streams a per-hop table (latency / jitter / loss)
@@ -15,8 +16,9 @@ export function MtrPanel() {
     const { showToast } = useToast();
     const { networks } = useNetworks();
 
-    const [target, setTarget] = useState('8.8.8.8');
-    const [sourceIp, setSourceIp] = useState('');
+    const [target, setTarget] = usePersistedState('mtr_tool_target', '8.8.8.8');
+    const [sourceIp, setSourceIp] = usePersistedState('mtr_tool_source_ip', '');
+
 
     const start = () => {
         const t = target.trim();

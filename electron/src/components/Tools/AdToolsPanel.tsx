@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { ShieldAlert, CheckCircle, XCircle, Clock, Server, Play } from 'lucide-react';
 import { API_BASE } from '../../config/api';
 import { useToast } from '../../contexts/ToastContext';
+import { usePersistedState } from '../../hooks/usePersistedState';
+import { LastExecutionBadge } from './LastExecutionBadge';
 
 interface ADPortResult {
     port: number;
@@ -31,22 +33,24 @@ interface ADSRVResult {
 
 export function AdToolsPanel({ defaultSourceIp }: { defaultSourceIp?: string }) {
     const { showToast } = useToast();
-    const [subTab, setSubTab] = useState<'ports' | 'srv' | 'skew'>('ports');
+    const [subTab, setSubTab] = usePersistedState<'ports' | 'srv' | 'skew'>('ad_tool_subtab', 'ports');
     const [loading, setLoading] = useState(false);
+    const [lastRunAt, setLastRunAt] = usePersistedState<string | null>('ad_tool_last_run', null);
 
     // Port Matrix State
-    const [dcTarget, setDcTarget] = useState('dc01.corp.local');
-    const [portResults, setPortResults] = useState<ADPortResult[]>([]);
-    const [portSummary, setPortSummary] = useState<{ total: number; open: number; status: string } | null>(null);
+    const [dcTarget, setDcTarget] = usePersistedState('ad_tool_dc_target', 'dc01.corp.local');
+    const [portResults, setPortResults, clearPortResults] = usePersistedState<ADPortResult[]>('ad_tool_port_results', []);
+    const [portSummary, setPortSummary] = usePersistedState<{ total: number; open: number; status: string } | null>('ad_tool_port_summary', null);
 
     // SRV Records State
-    const [domainTarget, setDomainTarget] = useState('corp.local');
-    const [customDns, setCustomDns] = useState('');
-    const [srvResults, setSrvResults] = useState<ADSRVResult[]>([]);
+    const [domainTarget, setDomainTarget] = usePersistedState('ad_tool_domain_target', 'corp.local');
+    const [customDns, setCustomDns] = usePersistedState('ad_tool_custom_dns', '');
+    const [srvResults, setSrvResults, clearSrvResults] = usePersistedState<ADSRVResult[]>('ad_tool_srv_results', []);
 
     // Time Skew State
-    const [skewTarget, setSkewTarget] = useState('dc01.corp.local');
-    const [skewResult, setSkewResult] = useState<any>(null);
+    const [skewTarget, setSkewTarget] = usePersistedState('ad_tool_skew_target', 'dc01.corp.local');
+    const [skewResult, setSkewResult, clearSkewResult] = usePersistedState<any>('ad_tool_skew_result', null);
+
 
     const runPortTest = async () => {
         if (!dcTarget.trim()) return;
@@ -61,6 +65,7 @@ export function AdToolsPanel({ defaultSourceIp }: { defaultSourceIp?: string }) 
             const data = await res.json();
             setPortResults(data.results || []);
             setPortSummary({ total: data.total_ports, open: data.open_ports, status: data.status });
+            setLastRunAt(new Date().toISOString());
             showToast('Matriz de portas AD concluída!', 'success');
         } catch (err: any) {
             showToast(`Erro ao testar portas AD: ${err.message}`, 'error');
@@ -81,6 +86,7 @@ export function AdToolsPanel({ defaultSourceIp }: { defaultSourceIp?: string }) 
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const data = await res.json();
             setSrvResults(data.results || []);
+            setLastRunAt(new Date().toISOString());
             showToast('Registros SRV consultados!', 'success');
         } catch (err: any) {
             showToast(`Erro ao consultar SRV: ${err.message}`, 'error');
@@ -101,6 +107,7 @@ export function AdToolsPanel({ defaultSourceIp }: { defaultSourceIp?: string }) 
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const data = await res.json();
             setSkewResult(data);
+            setLastRunAt(new Date().toISOString());
             showToast('Verificação de desvio concluída!', 'success');
         } catch (err: any) {
             showToast(`Erro no teste de Time Skew: ${err.message}`, 'error');
@@ -108,6 +115,17 @@ export function AdToolsPanel({ defaultSourceIp }: { defaultSourceIp?: string }) 
             setLoading(false);
         }
     };
+
+    const clearActiveTabResults = () => {
+        if (subTab === 'ports') { clearPortResults(); setPortSummary(null); }
+        else if (subTab === 'srv') { clearSrvResults(); }
+        else if (subTab === 'skew') { clearSkewResult(); }
+    };
+
+    const hasActiveResults = (subTab === 'ports' && portResults.length > 0) ||
+        (subTab === 'srv' && srvResults.length > 0) ||
+        (subTab === 'skew' && skewResult !== null);
+
 
     return (
         <div className="bg-zinc-900/60 rounded-xl p-5 border border-zinc-800 space-y-5">
@@ -138,8 +156,18 @@ export function AdToolsPanel({ defaultSourceIp }: { defaultSourceIp?: string }) 
                 </div>
             </div>
 
+            {hasActiveResults && lastRunAt && (
+                <LastExecutionBadge
+                    timestamp={lastRunAt}
+                    target={subTab === 'ports' ? dcTarget : subTab === 'srv' ? domainTarget : skewTarget}
+                    onClear={clearActiveTabResults}
+                />
+            )}
+
             {subTab === 'ports' && (
+
                 <div className="space-y-4">
+
                     <div className="flex flex-wrap items-center gap-3">
                         <input
                             type="text"

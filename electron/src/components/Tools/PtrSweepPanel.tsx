@@ -3,6 +3,8 @@ import { Play, Square, Globe2, Server } from 'lucide-react';
 import { useStreamingTool } from './useStreamingTool';
 import { useToast } from '../../contexts/ToastContext';
 import { useNetworks } from '../../hooks/useNetworks';
+import { usePersistedState } from '../../hooks/usePersistedState';
+import { LastExecutionBadge } from './LastExecutionBadge';
 
 interface PtrRow { ip: string; hostname: string; }
 
@@ -12,11 +14,12 @@ export function PtrSweepPanel() {
     const { showToast } = useToast();
     const { networks } = useNetworks();
 
-    const [cidr, setCidr] = useState('');
-    const [dnsServer, setDnsServer] = useState('');
-    const [rows, setRows] = useState<PtrRow[]>([]);
+    const [cidr, setCidr] = usePersistedState('ptr_sweep_tool_cidr', '');
+    const [dnsServer, setDnsServer] = usePersistedState('ptr_sweep_tool_dns_server', '');
+    const [rows, setRows, clearRows] = usePersistedState<PtrRow[]>('ptr_sweep_tool_rows', []);
     const [progress, setProgress] = useState(0);
-    const [summary, setSummary] = useState<string | null>(null);
+    const [summary, setSummary] = usePersistedState<string | null>('ptr_sweep_tool_summary', null);
+    const [lastRunAt, setLastRunAt] = usePersistedState<string | null>('ptr_sweep_tool_last_run', null);
     const bufferRef = useRef('');
 
     const dnsNetworks = networks.filter(n => n.dns_server);
@@ -36,22 +39,27 @@ export function PtrSweepPanel() {
                 } else if (d.done) {
                     setProgress(100);
                     setSummary(`Concluído: ${d.resolved} de ${d.total} endereços resolveram.`);
+                    setLastRunAt(new Date().toISOString());
                 } else if (d.cancelled) {
                     setSummary(`Cancelado: ${d.resolved} resolvidos.`);
+                    setLastRunAt(new Date().toISOString());
                 } else if (d.error) {
                     setSummary(`Erro: ${d.error}`);
+                    setLastRunAt(new Date().toISOString());
                     showToast(d.error, 'error');
                 }
             } catch { /* partial line; ignore */ }
         }
-    }, [showToast]);
+    }, [showToast, setRows, setSummary, setLastRunAt]);
 
     const start = () => {
         const c = cidr.trim();
         if (!c) { showToast('Informe um CIDR (ex.: 10.0.30.0/24).', 'error'); return; }
         setRows([]); setProgress(0); setSummary(null); bufferRef.current = '';
+        setLastRunAt(new Date().toISOString());
         run({ cidr: c, dns_server: dnsServer || undefined }, handleChunk);
     };
+
 
     return (
         <div className="flex-1 flex flex-col space-y-4 min-h-0">
@@ -90,7 +98,17 @@ export function PtrSweepPanel() {
                 </div>
             )}
 
+            {(rows.length > 0 || summary) && lastRunAt && (
+                <LastExecutionBadge
+                    timestamp={lastRunAt}
+                    target={cidr || null}
+                    onClear={() => { clearRows(); setSummary(null); setLastRunAt(null); }}
+                />
+            )}
+
             <div className="flex-1 bg-black rounded-xl border border-zinc-800 overflow-hidden flex flex-col">
+
+
                 {rows.length === 0 ? (
                     <div className="flex-1 flex flex-col items-center justify-center text-zinc-600">
                         <Globe2 size={48} className="mb-4 opacity-20" />

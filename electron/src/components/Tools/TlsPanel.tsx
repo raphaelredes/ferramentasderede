@@ -1,8 +1,9 @@
-import { useState } from 'react';
 import { Search, ShieldCheck, ShieldAlert, ShieldX, Lock } from 'lucide-react';
 import { clsx } from 'clsx';
 import { API_BASE } from '../../config/api';
 import { useToast } from '../../contexts/ToastContext';
+import { usePersistedState } from '../../hooks/usePersistedState';
+import { LastExecutionBadge } from './LastExecutionBadge';
 
 interface CertResult {
     ok: boolean;
@@ -55,9 +56,10 @@ function parseSmartTarget(raw: string, defaultPort = 443): { host: string; port:
 /** TLS certificate inspector for host:port (validity / SAN / expiry). */
 export function TlsPanel() {
     const { showToast } = useToast();
-    const [host, setHost] = useState('');
-    const [port, setPort] = useState('443');
-    const [result, setResult] = useState<CertResult | null>(null);
+    const [host, setHost] = usePersistedState('tls_tool_host', '');
+    const [port, setPort] = usePersistedState('tls_tool_port', '443');
+    const [result, setResult, clearResult] = usePersistedState<CertResult | null>('tls_tool_result', null);
+    const [lastRunAt, setLastRunAt] = usePersistedState<string | null>('tls_tool_last_run', null);
     const [busy, setBusy] = useState(false);
 
     const check = async () => {
@@ -66,7 +68,7 @@ export function TlsPanel() {
 
         setHost(parsed.host);
         setPort(parsed.port.toString());
-        setBusy(true); setResult(null);
+        setBusy(true);
         try {
             const res = await fetch(`${API_BASE}/tools/tls`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -75,10 +77,12 @@ export function TlsPanel() {
             const data = await res.json();
             if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
             setResult(data);
+            setLastRunAt(new Date().toISOString());
         } catch (e: any) {
             showToast('Erro: ' + e.message, 'error');
         } finally { setBusy(false); }
     };
+
 
     const expiryBadge = () => {
         if (!result?.ok) return null;
@@ -131,7 +135,16 @@ export function TlsPanel() {
             </div>
 
 
+            {result && lastRunAt && (
+                <LastExecutionBadge
+                    timestamp={lastRunAt}
+                    target={host ? `${host}:${port}` : null}
+                    onClear={() => { clearResult(); setLastRunAt(null); }}
+                />
+            )}
+
             <div className="flex-1 bg-black rounded-xl border border-zinc-800 p-5 overflow-auto custom-scrollbar">
+
                 {!result ? (
                     <div className="h-full flex flex-col items-center justify-center text-zinc-600">
                         <Lock size={48} className="mb-4 opacity-20" />

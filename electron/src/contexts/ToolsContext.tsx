@@ -39,40 +39,40 @@ interface ScanSession {
     pinned?: boolean;
 }
 
-// localStorage persistence. Only the durable shape is saved (no live scan
-// state) so a reopened tab comes back "Pronto", ready to re-scan, never showing
-// stale results. Versioned so a future shape change discards old data cleanly
-// instead of propagating undefined into fields the code assumes present.
+// localStorage persistence. Saves layout and discovered hosts so the user
+// can see past scans on app reopen or tab switch.
 const SCAN_SESSIONS_STORAGE_KEY = 'scanSessions';
-const SCAN_SESSIONS_SCHEMA_VERSION = 1;
+const SCAN_SESSIONS_SCHEMA_VERSION = 2;
 
-type PersistedSession = Pick<ScanSession, 'id' | 'cidr' | 'name' | 'pinned' | 'sourceIp' | 'mode'>;
+type PersistedSession = Pick<ScanSession, 'id' | 'cidr' | 'name' | 'pinned' | 'sourceIp' | 'mode' | 'results' | 'availableRanges' | 'availableCount'>;
 
 function loadPersistedSessions(): { sessions: ScanSession[]; activeId: string | null } {
     try {
         const raw = localStorage.getItem(SCAN_SESSIONS_STORAGE_KEY);
         if (!raw) return { sessions: [], activeId: null };
         const parsed = JSON.parse(raw);
-        if (!parsed || parsed.v !== SCAN_SESSIONS_SCHEMA_VERSION || !Array.isArray(parsed.sessions)) {
+        if (!parsed || (parsed.v !== 1 && parsed.v !== 2) || !Array.isArray(parsed.sessions)) {
             return { sessions: [], activeId: null };
         }
         const sessions: ScanSession[] = (parsed.sessions as PersistedSession[])
             .filter(s => s && typeof s.id === 'string')
-            .map(s => ({
-                id: s.id,
-                cidr: s.cidr || '',
-                name: s.name,
-                pinned: !!s.pinned,
-                sourceIp: s.sourceIp,
-                mode: s.mode,
-                // Volatile fields always reset on rehydrate.
-                results: [],
-                status: 'Pronto',
-                progress: 0,
-                isRunning: false,
-                availableRanges: [],
-                availableCount: undefined,
-            }));
+            .map(s => {
+                const res = Array.isArray(s.results) ? s.results : [];
+                return {
+                    id: s.id,
+                    cidr: s.cidr || '',
+                    name: s.name,
+                    pinned: !!s.pinned,
+                    sourceIp: s.sourceIp,
+                    mode: s.mode,
+                    results: res,
+                    status: res.length > 0 ? `Concluído (${res.length} hosts)` : 'Pronto',
+                    progress: res.length > 0 ? 100 : 0,
+                    isRunning: false,
+                    availableRanges: Array.isArray(s.availableRanges) ? s.availableRanges : [],
+                    availableCount: s.availableCount,
+                };
+            });
         const activeId = typeof parsed.activeId === 'string' && sessions.some(s => s.id === parsed.activeId)
             ? parsed.activeId
             : (sessions[0]?.id ?? null);
@@ -82,6 +82,38 @@ function loadPersistedSessions(): { sessions: ScanSession[]; activeId: string | 
         return { sessions: [], activeId: null };
     }
 }
+
+function loadToolState(key: string, defaultTarget: string): ToolState {
+    try {
+        const raw = localStorage.getItem(`tool_state_${key}`);
+        if (raw) {
+            const parsed = JSON.parse(raw);
+            return {
+                isRunning: false,
+                output: Array.isArray(parsed.output) ? parsed.output : [],
+                target: parsed.target || defaultTarget,
+                isOffline: !!parsed.isOffline,
+            };
+        }
+    } catch {}
+    return { isRunning: false, output: [], target: defaultTarget, isOffline: false };
+}
+
+function loadMtrState(): MtrState {
+    try {
+        const raw = localStorage.getItem('tool_state_mtr');
+        if (raw) {
+            const parsed = JSON.parse(raw);
+            return {
+                isRunning: false,
+                target: parsed.target || '',
+                hops: Array.isArray(parsed.hops) ? parsed.hops : [],
+            };
+        }
+    } catch {}
+    return { isRunning: false, target: '', hops: [] };
+}
+
 
 export interface PendingAction {
     type: 'ping' | 'traceroute';
@@ -175,16 +207,16 @@ const ToolsContext = createContext<ToolsContextType | undefined>(undefined);
 
 export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     // Independent States
-    const [pingState, setPingState] = useState<ToolState>({ isRunning: false, output: [], target: '8.8.8.8', isOffline: false });
-    const [traceState, setTraceState] = useState<ToolState>({ isRunning: false, output: [], target: '8.8.8.8' });
+    const [pingState, setPingState] = useState<ToolState>(() => loadToolState('ping', '8.8.8.8'));
+    const [traceState, setTraceState] = useState<ToolState>(() => loadToolState('trace', '8.8.8.8'));
     // iperf server: this machine listens; iperf client: this machine probes a remote server.
-    const [iperfServerState, setIperfServerState] = useState<ToolState>({ isRunning: false, output: [], target: '' });
-    const [iperfClientState, setIperfClientState] = useState<ToolState>({ isRunning: false, output: [], target: '' });
-    const [mtrState, setMtrState] = useState<MtrState>({ isRunning: false, target: '', hops: [] });
-    const [portState, setPortState] = useState<ToolState>({ isRunning: false, output: [], target: '' });
+    const [iperfServerState, setIperfServerState] = useState<ToolState>(() => loadToolState('iperf_server', ''));
+    const [iperfClientState, setIperfClientState] = useState<ToolState>(() => loadToolState('iperf_client', ''));
+    const [mtrState, setMtrState] = useState<MtrState>(loadMtrState);
+    const [portState, setPortState] = useState<ToolState>(() => loadToolState('port', ''));
 
-    // Scanner State (Multi-Session) — rehydrated from localStorage (pinned tabs
-    // and last layout survive restart; live scan state is never persisted).
+    // Scanner State (Multi-Session) — rehydrated from localStorage (pinned tabs,
+    // layout and discovered hosts survive restart).
     const [scanSessions, setScanSessions] = useState<ScanSession[]>(() => loadPersistedSessions().sessions);
     const [activeSessionId, setActiveSessionId] = useState<string | null>(() => loadPersistedSessions().activeId);
 
@@ -225,24 +257,11 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const abortControllers = useRef<{ [key: string]: AbortController | null }>({});
     const { showToast } = useToast();
 
-    // Cap on the streamed output buffers. A continuous ping running for hours
-    // would otherwise grow these arrays without bound — not a hard leak
-    // (operator can clear), but every appended line triggers a render that
-    // re-concats the full array. 2000 lines is ~33 minutes of 1Hz ping output,
-    // well past anyone's debugging horizon.
-    //
-    // When the cap fires, prepend a marker line so the operator knows older
-    // entries were dropped. The marker itself gets dropped on the next
-    // overflow — that's fine, a fresh marker re-appears.
     const OUTPUT_CAP = 2000;
     const TRIM_MARKER = '[... linhas mais antigas removidas — buffer limitado a 2000 ...]';
     const trimOutput = (arr: string[]) =>
         arr.length > OUTPUT_CAP ? [TRIM_MARKER, ...arr.slice(-(OUTPUT_CAP - 1))] : arr;
 
-    // On provider unmount (Electron close, HMR reload), abort every in-flight
-    // fetch so their `.then` chains don't fire setState on a dead component.
-    // The cleanup runs once because the deps array is empty; abortControllers
-    // is a ref so it doesn't need to be in deps.
     useEffect(() => {
         return () => {
             for (const key of Object.keys(abortControllers.current)) {
@@ -252,9 +271,7 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         };
     }, []);
 
-    // Persist the durable scan-session layout (pinned tabs, names, CIDRs) to
-    // localStorage on every change. Live scan state (results/progress/running)
-    // is intentionally stripped — see PersistedSession.
+    // Persist scan sessions to localStorage on every change.
     useEffect(() => {
         try {
             const payload = {
@@ -267,6 +284,9 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                     pinned: s.pinned,
                     sourceIp: s.sourceIp,
                     mode: s.mode,
+                    results: s.results,
+                    availableRanges: s.availableRanges,
+                    availableCount: s.availableCount,
                 })),
             };
             localStorage.setItem(SCAN_SESSIONS_STORAGE_KEY, JSON.stringify(payload));
@@ -274,6 +294,38 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             console.warn('Failed to persist scan sessions', e);
         }
     }, [scanSessions, activeSessionId]);
+
+    // Persist tools states to localStorage
+    useEffect(() => {
+        if (!pingState.isRunning) {
+            try { localStorage.setItem('tool_state_ping', JSON.stringify({ target: pingState.target, output: pingState.output, isOffline: pingState.isOffline })); } catch {}
+        }
+    }, [pingState.target, pingState.output, pingState.isRunning, pingState.isOffline]);
+
+    useEffect(() => {
+        if (!traceState.isRunning) {
+            try { localStorage.setItem('tool_state_trace', JSON.stringify({ target: traceState.target, output: traceState.output })); } catch {}
+        }
+    }, [traceState.target, traceState.output, traceState.isRunning]);
+
+    useEffect(() => {
+        if (!portState.isRunning) {
+            try { localStorage.setItem('tool_state_port', JSON.stringify({ target: portState.target, output: portState.output })); } catch {}
+        }
+    }, [portState.target, portState.output, portState.isRunning]);
+
+    useEffect(() => {
+        if (!iperfClientState.isRunning) {
+            try { localStorage.setItem('tool_state_iperf_client', JSON.stringify({ target: iperfClientState.target, output: iperfClientState.output })); } catch {}
+        }
+    }, [iperfClientState.target, iperfClientState.output, iperfClientState.isRunning]);
+
+    useEffect(() => {
+        if (!mtrState.isRunning) {
+            try { localStorage.setItem('tool_state_mtr', JSON.stringify({ target: mtrState.target, hops: mtrState.hops })); } catch {}
+        }
+    }, [mtrState.target, mtrState.hops, mtrState.isRunning]);
+
 
     const setPingTarget = (target: string) => setPingState(prev => ({ ...prev, target }));
     const setTraceTarget = (target: string) => setTraceState(prev => ({ ...prev, target }));
