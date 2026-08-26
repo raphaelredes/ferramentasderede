@@ -9,7 +9,15 @@ import atexit
 import signal
 import winreg
 import ctypes
-from api.server import app
+
+try:
+    import pyi_splash
+except (ImportError, ModuleNotFoundError):
+    pyi_splash = None
+
+
+
+
 
 # --- Fresh-Windows runtime pre-flight ---------------------------------------
 # pywebview 6.1 has ONLY the WebView2/EdgeChromium backend on Windows (there is
@@ -245,7 +253,9 @@ def start_server():
         port = int(os.environ.get("NT_API_PORT", "8000"))
     except ValueError:
         port = 8000
+    from api.server import app
     uvicorn.run(app, host=host, port=port, log_level="error")
+
 
 def main():
     # Register cleanup on exit
@@ -339,19 +349,20 @@ def main():
         class _ReusableTCPServer(socketserver.TCPServer):
             allow_reuse_address = True
 
+        static_ready = threading.Event()
+
         def start_static_server():
             with _ReusableTCPServer(("127.0.0.1", webview_port), Handler) as httpd:
                 global static_port
                 static_port = httpd.server_address[1]
+                static_ready.set()
                 httpd.serve_forever()
 
         static_thread = threading.Thread(target=start_static_server, daemon=True)
         static_thread.start()
 
-        # Wait for port to be assigned
-        import time
-        while 'static_port' not in globals():
-            time.sleep(0.1)
+        # Signal instantly when port is assigned (0ms wait instead of polling loop)
+        static_ready.wait(timeout=5.0)
 
         url = f"http://127.0.0.1:{static_port}/index.html"
 
@@ -513,7 +524,15 @@ def main():
 
     # Inject JS Shim to map window.electron to pywebview api
     def initialize_shim(window):
+        global pyi_splash
+        if pyi_splash:
+            try:
+                pyi_splash.close()
+                pyi_splash = None
+            except Exception:
+                pass
         shim_js = """
+
         window.electron = {
             getLocalDomain: () => window.pywebview.api.getLocalDomain(),
             launchRdp: (ip) => window.pywebview.api.launchRdp(ip),
@@ -542,6 +561,8 @@ def main():
     # with clear guidance instead of the previous silent crash / eternal splash.
     if not preflight_webview2():
         sys.exit(1)
+
+
 
     # Create the window
     window = webview.create_window(

@@ -359,56 +359,9 @@ class NetworkTools:
                     del self._stop_events[task_id]
 
     def test_specific_ports(self, target_ip, ports_str, stop_event=None):
-        """Testa uma lista de portas e gera a saída no estilo de terminal, sempre concluindo com status claro.
+        """Testa uma lista de portas usando concorrência acelerada com ThreadPoolExecutor."""
+        return scanner.scan_specific_ports(target_ip, ports_str, stop_event=stop_event)
 
-        `stop_event` (threading.Event) permite cancelamento cooperativo no loop
-        serial — importante para faixas grandes (ex.: 1-1000 contra um host que
-        dropa tudo levaria centenas de segundos)."""
-        ports_to_test = []
-        try:
-            parts = re.split(r'[,\s]+', ports_str)
-            for part in parts:
-                if not part:
-                    continue
-                if '-' in part:
-                    start, end = map(int, part.split('-'))
-                    if start > end:
-                        start, end = end, start
-                    ports_to_test.extend(range(start, end + 1))
-                else:
-                    ports_to_test.append(int(part))
-        except ValueError:
-            yield "Formato de porta inválido. Use '80, 443' ou '80-90'.\n"
-            yield "\nTeste concluído com erros.\n"
-            return
-
-        if not ports_to_test:
-            yield "Nenhuma porta especificada. Informe valores como '80' ou '80,443' ou '80-90'.\n"
-            yield "\nTeste concluído.\n"
-            return
-
-        yield f"Iniciando teste de porta(s) em {target_ip}...\n\n"
-        for port in ports_to_test:
-            if stop_event is not None and stop_event.is_set():
-                yield "\nTeste cancelado.\n"
-                return
-            yield f"Testando porta {port}... "
-            try:
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-                    sock.settimeout(0.8)
-                    result = sock.connect_ex((target_ip, port))
-                    if result == 0:
-                        yield "[ABERTA]\n"
-                    else:
-                        if result in (10060,):
-                            yield "[FECHADA/TIMEOUT]\n"
-                        elif result in (10061,):
-                            yield "[FECHADA/RECUSADA]\n"
-                        else:
-                            yield "[FECHADA]\n"
-            except Exception as e:
-                yield f"[ERRO: {str(e)}]\n"
-        yield "\nTeste concluído.\n"
 
     def scan_top_ports(self, target_ip):
         """Escaneia as portas mais comuns usando threads paralelas para máxima velocidade."""

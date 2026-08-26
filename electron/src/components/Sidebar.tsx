@@ -1,4 +1,4 @@
-import { LayoutDashboard, Network, Settings, Terminal, Shield, ChevronLeft, ChevronRight, Info, QrCode } from 'lucide-react';
+import { LayoutDashboard, Network, Settings, Terminal, Shield, ChevronLeft, ChevronRight, Info, QrCode, FileText } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { twMerge } from 'tailwind-merge';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -7,6 +7,7 @@ import { useTools } from '../contexts/ToolsContext';
 import { useMonitoring } from '../contexts/MonitoringContext';
 import { AboutModal } from './Dashboard/AboutModal';
 import { PixModal } from './Dashboard/PixModal';
+import { ReportGeneratorModal } from './Reports/ReportGeneratorModal';
 
 export function Sidebar() {
     const location = useLocation();
@@ -17,6 +18,7 @@ export function Sidebar() {
     const [time, setTime] = useState(new Date());
     const [isAboutModalOpen, setIsAboutModalOpen] = useState(false);
     const [isPixModalOpen, setIsPixModalOpen] = useState(false);
+    const [isReportModalOpen, setIsReportModalOpen] = useState(false);
     const [isCollapsed, setIsCollapsed] = useState(false);
 
     useEffect(() => {
@@ -118,7 +120,24 @@ export function Sidebar() {
                 onClose={() => setIsPixModalOpen(false)}
             />
 
+            <ReportGeneratorModal
+                isOpen={isReportModalOpen}
+                onClose={() => setIsReportModalOpen(false)}
+            />
+
             <div className="p-4 border-t border-zinc-800 flex flex-col gap-3">
+                <button
+                    onClick={() => setIsReportModalOpen(true)}
+                    title="Relatórios Técnicos"
+                    className={twMerge(
+                        "w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg transition-colors text-xs font-semibold bg-zinc-800 hover:bg-zinc-700 text-blue-400 border border-blue-900/30 hover:border-blue-500/50",
+                        isCollapsed && "px-2"
+                    )}
+                >
+                    <FileText size={16} className="shrink-0" />
+                    {!isCollapsed && <span>Relatórios</span>}
+                </button>
+
                 <div className={twMerge("flex gap-2", isCollapsed && "flex-col-reverse")}>
                     <button
                         onClick={() => setIsAboutModalOpen(true)}

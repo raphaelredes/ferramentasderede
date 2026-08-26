@@ -26,9 +26,11 @@ for _uvicorn_logger_name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from api.routes.network import get_hosts_list, save_hosts_list, host_monitor, manager
-from api.routes import system, network, security
+from api.routes import system, network, security, settings, ad_tools, metrics, l2_discovery, batch_ops, reports
 from src.system.backup import BackupManager
 from src.core.database import db as _db
+from src.network.metrics_history import record_metric
+from src.network.toast_notifier import notify_host_status_change
 import asyncio
 
 # Global event loop reference
@@ -50,14 +52,7 @@ _MONITOR_TO_DB_FIELD = {
 
 # --- Callbacks ---
 def handle_host_update(address: str, updates: dict):
-    """Persistência granular das mudanças emitidas pelo monitor.
-
-    Antes: cada update (1×/s por host) chamava replace_all_hosts → DELETE+INSERT
-    da tabela inteira. Em 100 hosts isso era ~100 reescritas/s. Agora mapeamos
-    cada chave volátil para uma coluna e fazemos UPDATE granular protegido pelo
-    write lock + retry do DatabaseManager. Chaves não-mapeadas caem no fallback
-    antigo (raro — só quando mudam ports, group etc., que não vêm do monitor).
-    """
+    """Persistência granular das mudanças emitidas pelo monitor."""
     try:
         db_fields = {}
         fallback_needed = False
@@ -65,8 +60,6 @@ def handle_host_update(address: str, updates: dict):
             if key in _MONITOR_TO_DB_FIELD:
                 db_fields[_MONITOR_TO_DB_FIELD[key]] = value
             elif key == 'ip':
-                # 'ip' do monitor é o address resolvido — só relevante quando o
-                # host foi cadastrado por hostname. Não persistimos a cada tick.
                 continue
             else:
                 fallback_needed = True
@@ -75,18 +68,29 @@ def handle_host_update(address: str, updates: dict):
             _db.update_host_fields(address, db_fields)
 
         if fallback_needed:
-            # Caminho raro: chave não mapeada — ler o row do DB, aplicar updates
-            # whitelisted e UPSERT individual via save_host (NÃO save_hosts_list,
-            # que chama replace_all_hosts e apagaria os outros hosts).
             row = next((r for r in _db.get_all_hosts() if r.get('address') == address), None)
             if row:
-                # tags/ports são colunas JSON: deixar passar se vierem como list.
                 for key, value in updates.items():
                     if key in _MONITOR_TO_DB_FIELD or key == 'ip':
                         continue
                     if key in ('tags', 'ports'):
                         row[key] = value
                 _db.save_host(row)
+
+        # Gravar métricas históricas de forma não-bloqueante
+        if 'latency' in updates or 'last_status' in updates or 'packet_loss' in updates:
+            is_up = (updates.get('last_status') == 'online')
+            lat = updates.get('latency')
+            loss = updates.get('packet_loss', 0.0)
+            jit = updates.get('jitter', 0.0)
+            record_metric(
+                host_id=None,
+                ip_address=address,
+                latency_ms=lat if is_up else None,
+                packet_loss=loss,
+                is_online=is_up,
+                jitter_ms=jit
+            )
 
         # Broadcast update via WebSocket
         if main_loop and main_loop.is_running():
@@ -104,7 +108,6 @@ async def lifespan(app: FastAPI):
     # Initialize Backup Manager and run daily check
     try:
         backup_manager = BackupManager()
-        # Run in thread to not block startup
         await asyncio.to_thread(backup_manager.run_daily_backup_check)
     except Exception as e:
         logging.warning(f"Backup check failed: {e}")
@@ -120,13 +123,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Network Tools API", lifespan=lifespan)
 
-# CORS — locked to local origins by default. There are two renderers:
-#  * Electron dev: Vite serves the UI on http://127.0.0.1:5173.
-#  * Pywebview portable build (main_webview.py): a small static HTTP
-#    server hosts the UI on a fixed loopback port (default 5174 — see
-#    NT_WEBVIEW_PORT). Both ends agree on that port so we keep CORS
-#    pinned to a closed set of origins.
-# Override by setting NT_CORS_ORIGINS to a comma-separated list.
+# CORS — locked to local origins by default.
 _webview_port = os.environ.get("NT_WEBVIEW_PORT", "5174").strip() or "5174"
 _default_origins = [
     "http://127.0.0.1:5173",
@@ -141,43 +138,26 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    # Tightened from "*" to the actual verbs and headers we use. Wildcards
-    # combined with allow_credentials=True are a defense-in-depth smell: any
-    # future compromise of one of the allowed origins (the static webview port
-    # has no auth and could be replaced by a malicious local process) gets to
-    # speak any verb with any header. Keep the surface narrow.
-    # PATCH must be in this list — the frontend uses it for /hosts/{address}
-    # (rename, ports, monitoring, reset_stats). Without PATCH, the preflight
-    # OPTIONS reply lists only GET/POST/PUT/DELETE/OPTIONS, browsers (Chromium
-    # / WebView2) reject the actual PATCH with a CORS error, the fetch throws
-    # TypeError "Failed to fetch", and the UI shows the generic "Erro ao
-    # atualizar". curl bypasses preflight so it worked in isolation, hiding
-    # the bug for several iterations.
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "X-Temp-Auth", "Authorization"],
 )
 
-# Incluir Routers
+# Incluir Routers do Sistema e Rede
 app.include_router(system.router)
 app.include_router(network.router)
 app.include_router(security.router)
+app.include_router(settings.router)
+app.include_router(ad_tools.router)
+app.include_router(metrics.router)
+app.include_router(l2_discovery.router)
+app.include_router(batch_ops.router)
+app.include_router(reports.router)
 
 # --- Root Endpoint ---
 @app.get("/")
 async def root():
-    # Mirror the single-source version from settings (which reads package.json).
-    # The hard-coded "2.0.0" that used to live here was stale and confused
-    # smoke tests against TESTES.html.
     from src.config.settings import APP_VERSION
     return {"status": "online", "version": APP_VERSION}
-
-# --- Settings & Security Endpoints ---
-# Settings moved to api.routes.settings
-# Security moved to api.routes.security
-
-from api.routes import settings
-
-app.include_router(settings.router)
 
 # --- Security Endpoints moved to api.routes.security ---
 

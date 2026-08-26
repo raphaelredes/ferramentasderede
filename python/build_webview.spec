@@ -240,15 +240,7 @@ a = Analysis(
         # Test / build tooling
         'pytest',
         'setuptools',
-        # Legacy GUI stack — replaced by webview, no need to bundle.
-        # Pillow/PIL is dev-only (customtkinter, requirements-dev.txt) and nothing
-        # in the runtime imports it — excluding it slims the bundle and keeps the
-        # distributed .exe aligned with the declared runtime dependencies.
-        'tkinter',
-        'tkinter.ttk',
         'customtkinter',
-        'PIL',
-        'Pillow',
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
@@ -258,9 +250,20 @@ a = Analysis(
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
+from PyInstaller.building.splash import Splash
+
+splash = Splash(
+    'assets/splash.png',
+    binaries=a.binaries,
+    datas=a.datas,
+)
+
+
 exe = EXE(
     pyz,
     a.scripts,
+    splash,
+    splash.binaries,
     a.binaries,
     a.zipfiles,
     a.datas,
@@ -269,24 +272,17 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=False,  # UPX corrupts Tcl/Tk DLLs ("ordinal 380") — keep disabled.
+    upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=False,  # GUI mode (no console window)
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
     icon='assets\\logo_fixed.ico',
-    # No admin required. A full privilege audit found NOTHING local needs
-    # elevation: ping/traceroute use native ping.exe/tracert.exe (not raw
-    # sockets), port scan uses plain TCP connect, netstat degrades gracefully
-    # without admin, all system/service/registry writes happen REMOTELY via
-    # WinRM with the remote's credentials, and all local file I/O targets
-    # per-user %APPDATA%. Requiring admin only hurt: on a managed PC whose user
-    # lacks admin rights the app could not launch at all, and every launch
-    # forced a UAC prompt. Elevate a specific operation on demand if one ever
-    # needs it — do not elevate the whole process.
     uac_admin=False,
 )
+
+

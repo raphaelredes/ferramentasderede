@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Terminal as TerminalIcon, ExternalLink, ChevronDown, Search, BookOpen } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Terminal as TerminalIcon, ExternalLink, BookOpen, Layers, Code2 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { API_BASE } from '../config/api';
 import { useMonitoring } from '../contexts/MonitoringContext';
@@ -7,10 +7,11 @@ import { Host } from '../types';
 import { probeHost } from '../utils/hostProbe';
 import { resolveTeamViewerId } from '../utils/teamviewer';
 import { CommandGuideModal } from '../components/Terminal/CommandGuideModal';
+import { BatchRunnerModal } from '../components/Terminal/BatchRunnerModal';
+import { SnippetsDrawer } from '../components/Terminal/SnippetsDrawer';
+import { HostPicker, MANUAL_OPTION_VALUE } from '../components/Terminal/HostPicker';
 
 type LogEntry = { ts: number; level: 'info' | 'warn' | 'error'; text: string };
-
-const MANUAL_OPTION_VALUE = '__manual__';
 
 export function Terminal() {
     const { hosts, refreshHosts } = useMonitoring();
@@ -20,14 +21,14 @@ export function Terminal() {
     const [log, setLog] = useState<LogEntry[]>([]);
     const [defaultCredName, setDefaultCredName] = useState<string | null>(null);
 
-    // Selected entry in the host picker. Empty = no host chosen yet, MANUAL_OPTION_VALUE
-    // = user picked "digitar manualmente" so the IP field becomes a free text input.
     const [selectedAddress, setSelectedAddress] = useState<string>('');
     const [isPickerOpen, setIsPickerOpen] = useState(false);
     const [search, setSearch] = useState('');
-    const pickerRef = useRef<HTMLDivElement>(null);
-    // Quick-reference modal toggle ("Guia de Comandos" button in the header).
+    
+    // Modals
     const [isGuideOpen, setIsGuideOpen] = useState(false);
+    const [isBatchOpen, setIsBatchOpen] = useState(false);
+    const [isSnippetsOpen, setIsSnippetsOpen] = useState(false);
 
     const append = (text: string, level: LogEntry['level'] = 'info') =>
         setLog(prev => [...prev.slice(-200), { ts: Date.now(), level, text }]);
@@ -53,21 +54,6 @@ export function Terminal() {
             .catch(err => console.error('Failed to fetch settings', err));
     }, []);
 
-    // Close dropdown on outside click.
-    useEffect(() => {
-        if (!isPickerOpen) return;
-        const onDown = (e: MouseEvent) => {
-            if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) {
-                setIsPickerOpen(false);
-            }
-        };
-        document.addEventListener('mousedown', onDown);
-        return () => document.removeEventListener('mousedown', onDown);
-    }, [isPickerOpen]);
-
-    // Sort hosts: monitored first, then alphabetical by display name. We coalesce
-    // null name/hostname to '' because some discovered hosts ship with null and
-    // localeCompare on null blows up.
     const sortedHosts = useMemo(() => {
         return [...hosts]
             .filter(h => !!h.address)
@@ -97,105 +83,72 @@ export function Terminal() {
         [sortedHosts, selectedAddress]
     );
 
-    const isManualMode = selectedAddress === MANUAL_OPTION_VALUE;
-
     const pickHost = (host: Host) => {
         setSelectedAddress(host.address);
-        setConnection(prev => {
-            const next = { ...prev, ip: host.ip || host.address };
-
-            // Auto-set the DOMINIO\ prefix from the picked host's known AD
-            // domain. We use the NetBIOS short name (CONTOSO from
-            // contoso.local) since that's what WinRM expects in DOMINIO\user.
-            //
-            // Replacement strategy — preserves the operator's intent:
-            //   ""             → "NEWDOMAIN\"
-            //   "user"         → "NEWDOMAIN\user"     (came from default cred)
-            //   "OLDDOM\"      → "NEWDOMAIN\"         (empty user from prior pick)
-            //   "OLDDOM\user"  → "NEWDOMAIN\user"     (switching domains)
-            //   "user@foo.com" → unchanged            (operator chose UPN — respect)
-            if (host.domain) {
-                const shortDomain = host.domain.split('.')[0].toUpperCase();
-                const current = (prev.username || '').trim();
-                const isUpn = current.includes('@');
-                if (!isUpn) {
-                    const idx = current.indexOf('\\');
-                    const userPart = idx >= 0 ? current.slice(idx + 1) : current;
-                    next.username = userPart
-                        ? `${shortDomain}\\${userPart}`
-                        : `${shortDomain}\\`;
-                }
-            }
-            return next;
-        });
         setIsPickerOpen(false);
         setSearch('');
+        const ip = host.ip || host.address;
+        setConnection(prev => ({ ...prev, ip }));
+        const displayName = host.name || host.hostname || host.address;
+        append(`Alvo selecionado: ${displayName} (${ip})`, 'info');
     };
 
     const pickManual = () => {
         setSelectedAddress(MANUAL_OPTION_VALUE);
-        setConnection(prev => ({ ...prev, ip: '' }));
         setIsPickerOpen(false);
         setSearch('');
+        setConnection(prev => ({ ...prev, ip: '' }));
+        append('Modo manual ativado. Digite o IP ou hostname.', 'info');
     };
 
     const openExternal = () => {
-        if (!connection.ip || !connection.username || !connection.password) {
-            append('Preencha host, usuário e senha antes de abrir o terminal.', 'error');
+        const target = connection.ip.trim();
+        if (!target) {
+            append('Erro: Informe o IP ou hostname do alvo.', 'error');
             return;
         }
 
         setBusy(true);
-        setStatus('Abrindo terminal externo...');
-        append(`Iniciando PowerShell remoto para ${connection.username}@${connection.ip}…`, 'info');
+        setStatus(`Abrindo terminal para ${target}…`);
+        append(`Iniciando PowerShell remoto em ${target}…`, 'info');
 
-        fetch(`${API_BASE}/tools/terminal/external`, {
+        fetch(`${API_BASE}/terminal/open-external`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(connection),
+            body: JSON.stringify({
+                ip: target,
+                username: connection.username || null,
+                password: connection.password || null,
+            }),
         })
             .then(res => res.json())
             .then(data => {
                 if (data.status === 'success') {
-                    setStatus('Terminal externo aberto');
-                    append('Janela do PowerShell aberta — interaja por lá.', 'info');
-                    // Opportunistic background probe: we have admin creds the user
-                    // just confirmed work for this host. Fetch MAC/Domain/CurrentUser/
-                    // LastBoot/DiskFree (cheap WinRM round-trip) and TV ID (if missing)
-                    // and let the backend persist them. Only fires when the operator
-                    // picked a known host from the panel — in manual mode we have no
-                    // host record to attach the data to.
+                    append(`✓ Janela aberta com sucesso (PID ${data.pid ?? '—'}).`, 'info');
+                    setStatus('Sessão iniciada');
+                    if (selectedHost && !selectedHost.teamviewer_id) {
+                        resolveTeamViewerId({
+                            targetIp: selectedHost.ip || selectedHost.address,
+                            persistOnHost: selectedHost.address,
+                        }).then(res => {
+                            if (res.ok) refreshHosts();
+                        });
+                    }
                     if (selectedHost) {
                         probeHost({
                             targetIp: selectedHost.ip || selectedHost.address,
-                            username: connection.username,
-                            password: connection.password,
-                        }).then((r) => {
-                            if (r.ok) {
-                                refreshHosts(true).catch(() => undefined);
-                            }
-                        }).catch(() => undefined);
-
-                        if (!selectedHost.teamviewer_id) {
-                            resolveTeamViewerId({
-                                targetIp: selectedHost.ip || selectedHost.address,
-                                username: connection.username,
-                                password: connection.password,
-                                persistOnHost: selectedHost.address,
-                            }).then((r) => {
-                                if (r.ok) refreshHosts(true).catch(() => undefined);
-                            }).catch(() => undefined);
-                        }
+                        }).then(res => {
+                            if (res.ok) refreshHosts();
+                        });
                     }
                 } else {
-                    setStatus('Erro');
-                    append(data.detail || data.message || 'Erro desconhecido.', 'error');
+                    append(`✗ Falha: ${data.message || 'Erro desconhecido'}`, 'error');
+                    setStatus('Erro ao abrir');
                 }
             })
             .catch(err => {
-                console.error('Failed to open external terminal', err);
-                setStatus('Erro de conexão');
-                append('Falha ao contatar o backend.', 'error');
+                append(`✗ Erro na requisição: ${err.message}`, 'error');
+                setStatus('Erro');
             })
             .finally(() => setBusy(false));
     };
@@ -203,16 +156,6 @@ export function Terminal() {
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === 'Enter' && !busy) openExternal();
     };
-
-    // Label rendered inside the picker button — host name + ip, or hint.
-    const pickerLabel = (() => {
-        if (isManualMode) return 'Digitar IP/Hostname manualmente';
-        if (selectedHost) {
-            const name = selectedHost.name || selectedHost.hostname || selectedHost.address;
-            return `${name} — ${selectedHost.ip || selectedHost.address}`;
-        }
-        return 'Selecione um host do painel…';
-    })();
 
     return (
         <div className="h-full flex flex-col space-y-4 min-h-0 p-8">
@@ -225,126 +168,62 @@ export function Terminal() {
                         Abre uma janela PowerShell nativa autenticada via WinRM. A sessão acontece fora desta janela.
                     </p>
                 </div>
-                <button
-                    type="button"
-                    onClick={() => setIsGuideOpen(true)}
-                    className="flex items-center gap-2 px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-blue-400 border border-zinc-700/60 hover:border-blue-500/40 rounded-lg text-sm font-medium transition-colors flex-shrink-0"
-                    title="Abrir guia de comandos PowerShell"
-                >
-                    <BookOpen size={16} />
-                    <span>Guia de Comandos</span>
-                </button>
+                <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                        type="button"
+                        onClick={() => setIsBatchOpen(true)}
+                        className="flex items-center gap-2 px-3 py-2 bg-blue-600/20 hover:bg-blue-600 text-blue-300 hover:text-white border border-blue-500/40 rounded-lg text-sm font-medium transition-colors"
+                        title="Execução paralela em múltiplos hosts"
+                    >
+                        <Layers size={16} />
+                        <span>WinRM em Lote</span>
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setIsSnippetsOpen(true)}
+                        className="flex items-center gap-2 px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-blue-400 border border-zinc-700/60 rounded-lg text-sm font-medium transition-colors"
+                        title="Biblioteca de Snippets"
+                    >
+                        <Code2 size={16} />
+                        <span>Snippets</span>
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setIsGuideOpen(true)}
+                        className="flex items-center gap-2 px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-blue-400 border border-zinc-700/60 rounded-lg text-sm font-medium transition-colors"
+                        title="Abrir guia de comandos PowerShell"
+                    >
+                        <BookOpen size={16} />
+                        <span>Guia</span>
+                    </button>
+                </div>
             </header>
 
             <CommandGuideModal isOpen={isGuideOpen} onClose={() => setIsGuideOpen(false)} />
+            <BatchRunnerModal isOpen={isBatchOpen} onClose={() => setIsBatchOpen(false)} hosts={hosts} />
+            <SnippetsDrawer 
+                isOpen={isSnippetsOpen} 
+                onClose={() => setIsSnippetsOpen(false)} 
+                onSelectSnippet={(cmd) => {
+                    append(`Snippet inserido: ${cmd}`, 'info');
+                }} 
+            />
 
             <div className="bg-zinc-900 p-4 rounded-xl border border-zinc-800 flex gap-4 items-end">
                 <div className="flex-1 grid grid-cols-1 md:grid-cols-[2fr_1fr_1fr] gap-4">
-                    {/* Host picker */}
-                    <div className="space-y-1 relative" ref={pickerRef}>
-                        <label className="text-xs text-white">Host</label>
-                        <button
-                            type="button"
-                            onClick={() => setIsPickerOpen(v => !v)}
-                            disabled={busy}
-                            className={clsx(
-                                'w-full bg-zinc-950 border rounded px-3 py-2 text-sm flex items-center justify-between gap-2 transition-colors',
-                                isPickerOpen ? 'border-blue-500' : 'border-zinc-700 hover:border-zinc-600',
-                                busy && 'opacity-50 cursor-not-allowed'
-                            )}
-                            aria-haspopup="listbox"
-                            aria-expanded={isPickerOpen}
-                        >
-                            <span className={clsx('truncate text-left', !selectedAddress && 'text-zinc-500')}>
-                                {pickerLabel}
-                            </span>
-                            <ChevronDown size={16} className={clsx('text-zinc-500 shrink-0 transition-transform', isPickerOpen && 'rotate-180')} />
-                        </button>
-                        {isManualMode && (
-                            <input
-                                type="text"
-                                value={connection.ip}
-                                onChange={e => setConnection(prev => ({ ...prev, ip: e.target.value }))}
-                                className="mt-2 w-full bg-zinc-950 border border-zinc-700 focus:border-blue-500 focus:outline-none rounded px-3 py-2 text-sm text-zinc-300 placeholder:text-zinc-500"
-                                placeholder="192.168.1.10 ou hostname"
-                                disabled={busy}
-                                onKeyDown={handleKeyDown}
-                                autoFocus
-                            />
-                        )}
-                        {isPickerOpen && (
-                            <div
-                                className="absolute z-20 mt-1 w-full bg-zinc-900 border border-zinc-700 rounded-lg shadow-xl overflow-hidden flex flex-col max-h-80"
-                                role="listbox"
-                            >
-                                <div className="p-2 border-b border-zinc-800 flex items-center gap-2">
-                                    <Search size={14} className="text-zinc-500 shrink-0" />
-                                    <input
-                                        type="text"
-                                        value={search}
-                                        onChange={e => setSearch(e.target.value)}
-                                        placeholder="Buscar por nome, IP ou grupo…"
-                                        className="flex-1 bg-transparent text-sm text-zinc-200 placeholder:text-zinc-500 focus:outline-none"
-                                        autoFocus
-                                    />
-                                </div>
-                                <button
-                                    type="button"
-                                    onClick={pickManual}
-                                    className="w-full px-3 py-2 text-left text-sm text-blue-400 hover:bg-zinc-800 border-b border-zinc-800 flex items-center gap-2"
-                                    role="option"
-                                    aria-selected={isManualMode}
-                                >
-                                    <span className="font-medium">+ Digitar manualmente</span>
-                                    <span className="text-zinc-500 text-xs">IP ou hostname não cadastrado</span>
-                                </button>
-                                <div className="flex-1 overflow-y-auto">
-                                    {filteredHosts.length === 0 ? (
-                                        <div className="px-3 py-4 text-sm text-zinc-500 text-center">
-                                            {hosts.length === 0
-                                                ? 'Nenhum host no painel ainda.'
-                                                : 'Nenhum host bate com a busca.'}
-                                        </div>
-                                    ) : (
-                                        filteredHosts.map(h => {
-                                            const displayName = h.name || h.hostname || h.address;
-                                            const ipText = h.ip || h.address;
-                                            const isSelected = h.address === selectedAddress;
-                                            const online = h.stats?.online ?? h.last_status ?? false;
-                                            return (
-                                                <button
-                                                    key={h.address}
-                                                    type="button"
-                                                    onClick={() => pickHost(h)}
-                                                    className={clsx(
-                                                        'w-full px-3 py-2 text-left text-sm flex items-center gap-3 transition-colors',
-                                                        isSelected ? 'bg-zinc-800' : 'hover:bg-zinc-800/60'
-                                                    )}
-                                                    role="option"
-                                                    aria-selected={isSelected}
-                                                >
-                                                    <span
-                                                        className={clsx(
-                                                            'w-1.5 h-1.5 rounded-full shrink-0',
-                                                            h.monitoring === false ? 'bg-zinc-700' : (online ? 'bg-green-500' : 'bg-red-500')
-                                                        )}
-                                                        aria-hidden="true"
-                                                    />
-                                                    <div className="min-w-0 flex-1">
-                                                        <div className="text-zinc-200 truncate">{displayName}</div>
-                                                        <div className="text-xs text-zinc-500 font-mono truncate">
-                                                            {ipText}
-                                                            {h.group && <span className="ml-2 text-zinc-600">· {h.group}</span>}
-                                                        </div>
-                                                    </div>
-                                                </button>
-                                            );
-                                        })
-                                    )}
-                                </div>
-                            </div>
-                        )}
-                    </div>
+                    <HostPicker
+                        hosts={hosts}
+                        filteredHosts={filteredHosts}
+                        selectedAddress={selectedAddress}
+                        selectedHost={selectedHost}
+                        isPickerOpen={isPickerOpen}
+                        setIsPickerOpen={setIsPickerOpen}
+                        search={search}
+                        setSearch={setSearch}
+                        busy={busy}
+                        pickHost={pickHost}
+                        pickManual={pickManual}
+                    />
 
                     {/* Username */}
                     <div className="space-y-1">

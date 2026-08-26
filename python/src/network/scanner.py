@@ -1,15 +1,20 @@
+# python/src/network/scanner.py
+"""Módulo de varredura e teste acelerado de portas TCP de alta performance.
+
+Utiliza ThreadPoolExecutor de alta concorrência e timeouts adaptativos (LAN/WAN)
+para varrer milhares de portas em poucos segundos (estilo Masscan/RustScan).
+"""
+
 import socket
 import re as _re
 import concurrent.futures
 import time
+from typing import List, Tuple
 from src.config.settings import TOP_60_PORTS, ALL_PORTS, port_number_to_name
 
 
 def _safe_scan_target(value: str) -> bool:
-    """IPv4 / hostname allowlist for port-scan targets. Same shape as
-    `_is_safe_remote_target` in the route layer — defense in depth here so a
-    future caller that bypasses the route gate still can't ask the scanner to
-    open 65k sockets against an attacker-controlled hostname."""
+    """Valida se o alvo é um IPv4 ou hostname seguro."""
     if not isinstance(value, str) or not value or len(value) > 253:
         return False
     if _re.fullmatch(r"(?:\d{1,3}\.){3}\d{1,3}", value):
@@ -20,41 +25,43 @@ def _safe_scan_target(value: str) -> bool:
     return bool(_re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", value))
 
 
-def scan_top_ports(target_ip, stop_event=None):
-    """Escaneia as portas mais comuns usando threads paralelas para máxima velocidade.
+def _is_lan_or_local(ip: str) -> bool:
+    """Verifica se o IP é de rede local ou loopback para aplicar timeout ultra-rápido."""
+    if ip.startswith("127.") or ip.startswith("10.") or ip.startswith("192.168."):
+        return True
+    if ip.startswith("172."):
+        parts = ip.split(".")
+        if len(parts) >= 2 and parts[1].isdigit():
+            val = int(parts[1])
+            if 16 <= val <= 31:
+                return True
+    return False
 
-    `stop_event` (threading.Event) permite cancelamento cooperativo: quando
-    setado, paramos de coletar resultados e encerramos. O `with` do executor
-    aguarda as threads em vôo (timeout curto de 0.3s cada), então o aborto é
-    quase imediato.
-    """
+
+def scan_top_ports(target_ip: str, stop_event=None):
+    """Escaneia as portas mais comuns usando threads paralelas para máxima velocidade."""
     if not _safe_scan_target(target_ip):
         yield "Endereço de destino inválido.\n"
         return
     open_ports = []
-    yield f"Iniciando varredura das portas mais comuns em {target_ip}...\n"
+    yield f"Iniciando varredura das portas mais comuns em {target_ip}...\n\n"
 
-    def scan_port(port):
-        """Função para escanear uma porta individual."""
+    timeout = 0.15 if _is_lan_or_local(target_ip) else 0.35
+
+    def scan_port(port: int):
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-                sock.settimeout(0.3)
+                sock.settimeout(timeout)
                 result = sock.connect_ex((target_ip, port))
                 return port, result == 0
         except Exception:
-            # Connect failures in port scan are expected for closed/filtered ports;
-            # silencing here keeps the hot loop fast (logging 65535 misses would flood).
             return port, False
 
-    # Usar ThreadPoolExecutor para escaneamento paralelo
-    max_workers = min(20, len(TOP_60_PORTS))  # Máximo 20 threads para portas comuns
-
+    max_workers = min(30, len(TOP_60_PORTS))
     cancelled = False
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # Submeter todas as portas para escaneamento
-        future_to_port = {executor.submit(scan_port, port): port for port in TOP_60_PORTS}
 
-        # Processar resultados conforme ficam prontos
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_port = {executor.submit(scan_port, port): port for port in TOP_60_PORTS}
         for future in concurrent.futures.as_completed(future_to_port):
             if stop_event is not None and stop_event.is_set():
                 cancelled = True
@@ -63,105 +70,128 @@ def scan_top_ports(target_ip, stop_event=None):
             if is_open:
                 service = port_number_to_name.get(port, "Desconhecido")
                 open_ports.append((port, service))
-                # NÃO exibir portas abertas durante o escaneamento - apenas coletar
+                yield f"[+] Porta {port}/TCP ({service}) - [ABERTA]\n"
 
     if cancelled:
         yield "\nVarredura cancelada.\n"
         return
-    yield "\nVarredura concluída.\n"
-    if open_ports:
-        yield f"Total de portas abertas encontradas: {len(open_ports)}\n"
-        yield "Portas abertas:\n"
-        for port, service in sorted(open_ports):
-            yield f"  - {port}: {service}\n"
-    else:
-        yield "Nenhuma porta aberta encontrada nas portas comuns.\n"
+    yield f"\nVarredura concluída. Total de portas abertas: {len(open_ports)}\n"
 
-def scan_all_ports(target_ip, stop_event=None):
-    """Escaneia todas as portas TCP (1-65535) usando threads paralelas para máxima velocidade.
 
-    `stop_event` (threading.Event) permite cancelamento cooperativo — crítico
-    aqui, pois um scan completo pode levar minutos.
-    """
+def scan_all_ports(target_ip: str, stop_event=None):
+    """Escaneia todas as portas TCP (1-65535) usando threads paralelas."""
+    if not _safe_scan_target(target_ip):
+        yield "Endereço de destino inválido.\n"
+        return
+    yield from scan_specific_ports(target_ip, "1-65535", stop_event=stop_event)
+
+
+def scan_specific_ports(target_ip: str, ports_str: str, stop_event=None):
+    """Testa portas ou faixas especificadas com concorrência adaptativa ultra-rápida."""
     if not _safe_scan_target(target_ip):
         yield "Endereço de destino inválido.\n"
         return
 
-    open_ports = []
-    scanned_count = 0
-    total_ports = len(ALL_PORTS)
+    ports_to_test: List[int] = []
+    try:
+        parts = _re.split(r'[,\s]+', ports_str.strip())
+        for part in parts:
+            if not part:
+                continue
+            if '-' in part:
+                start, end = map(int, part.split('-'))
+                if start > end:
+                    start, end = end, start
+                # Limite de segurança de portas TCP (1-65535)
+                start = max(1, min(65535, start))
+                end = max(1, min(65535, end))
+                ports_to_test.extend(range(start, end + 1))
+            else:
+                p = int(part)
+                if 1 <= p <= 65535:
+                    ports_to_test.append(p)
+    except ValueError:
+        yield "Formato de porta inválido. Use '80, 443' ou '8000-9000'.\n"
+        return
+
+    # Remover duplicatas mantendo ordem
+    seen = set()
+    ports_to_test = [p for p in ports_to_test if not (p in seen or seen.add(p))]
+
+    total_ports = len(ports_to_test)
+    if total_ports == 0:
+        yield "Nenhuma porta válida especificada.\n"
+        return
+
+    is_lan = _is_lan_or_local(target_ip)
+    timeout = 0.12 if is_lan else 0.35
+    max_workers = min(150, max(10, total_ports))
+
+    yield f"Iniciando teste de {total_ports} porta(s) em {target_ip} ({max_workers} threads simultâneas)...\n\n"
+
     start_time = time.time()
-    
-    yield f"Iniciando varredura completa de todas as portas em {target_ip}...\n"
-    yield "Usando escaneamento paralelo otimizado para máxima velocidade.\n"
-    yield "Pressione 'Parar de Escanear' para interromper.\n\n"
-    
-    def scan_port(port):
-        """Função para escanear uma porta individual."""
+    open_ports: List[Tuple[int, str]] = []
+    scanned_count = 0
+    cancelled = False
+
+    def check_single_port(port: int):
         try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-                sock.settimeout(0.1)  # Timeout ainda menor para máxima velocidade
-                result = sock.connect_ex((target_ip, port))
-                return port, result == 0
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(timeout)
+                res = s.connect_ex((target_ip, port))
+                return port, res == 0
         except Exception:
-            # Connect failures in port scan are expected for closed/filtered ports;
-            # silencing here keeps the hot loop fast (logging 65535 misses would flood).
             return port, False
-    
-    # Usar ThreadPoolExecutor para escaneamento paralelo. 100 sockets em vôo
-    # é o teto seguro no Windows (FD limit padrão é 512, mas o conn-track do
-    # firewall corporativo derruba a velocidade real bem antes disso).
-    max_workers = min(100, total_ports)
-    
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # Submeter todas as portas para escaneamento
-        future_to_port = {executor.submit(scan_port, port): port for port in ALL_PORTS}
-        
-        # Processar resultados conforme ficam prontos
-        for future in concurrent.futures.as_completed(future_to_port):
-            if stop_event is not None and stop_event.is_set():
-                yield "\nVarredura cancelada.\n"
-                return
-            port, is_open = future.result()
-            scanned_count += 1
-            current_time = time.time()
-            
-            # Mostrar progresso a cada 500 portas com estimativa de tempo (substituindo a mesma linha)
-            if scanned_count % 500 == 0:
-                progress = (scanned_count / total_ports) * 100
-                elapsed_time = current_time - start_time
-                
-                if scanned_count > 0:
-                    # Calcular velocidade (portas por segundo)
-                    ports_per_second = scanned_count / elapsed_time
-                    remaining_ports = total_ports - scanned_count
-                    estimated_remaining_time = remaining_ports / ports_per_second if ports_per_second > 0 else 0
-                    
-                    # Formatar tempo restante
-                    if estimated_remaining_time < 60:
-                        time_str = f"{estimated_remaining_time:.0f}s"
-                    elif estimated_remaining_time < 3600:
-                        minutes = estimated_remaining_time / 60
-                        time_str = f"{minutes:.1f}min"
-                    else:
-                        hours = estimated_remaining_time / 3600
-                        time_str = f"{hours:.1f}h"
-                    
-                    yield f"\rProgresso: {progress:.1f}% ({scanned_count}/{total_ports}) | Velocidade: {ports_per_second:.0f} portas/s | Tempo restante: ~{time_str}"
-                else:
-                    yield f"\rProgresso: {progress:.1f}% ({scanned_count}/{total_ports} portas verificadas)"
-            
-            if is_open:
+
+    # Modo A: Poucas portas (<= 25) -> saída detalhada individual
+    if total_ports <= 25:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_port = {executor.submit(check_single_port, p): p for p in ports_to_test}
+            for future in concurrent.futures.as_completed(future_to_port):
+                if stop_event is not None and stop_event.is_set():
+                    cancelled = True
+                    break
+                port, is_open = future.result()
                 service = port_number_to_name.get(port, "Desconhecido")
-                open_ports.append((port, service))
-                # NÃO exibir portas abertas durante o escaneamento - apenas coletar
-    
+                if is_open:
+                    open_ports.append((port, service))
+                    yield f"Porta {port}/TCP ({service})... [ABERTA]\n"
+                else:
+                    yield f"Porta {port}/TCP ({service})... [FECHADA]\n"
+    # Modo B: Muitas portas (> 25) -> streaming em tempo real das abertas + barra de progresso
+    else:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_port = {executor.submit(check_single_port, p): p for p in ports_to_test}
+            for future in concurrent.futures.as_completed(future_to_port):
+                if stop_event is not None and stop_event.is_set():
+                    cancelled = True
+                    break
+                port, is_open = future.result()
+                scanned_count += 1
+                
+                if is_open:
+                    service = port_number_to_name.get(port, "Desconhecido")
+                    open_ports.append((port, service))
+                    yield f"[+] Porta {port}/TCP ({service}) - [ABERTA]\n"
+
+                # Atualizar progresso em lotes para não sobrecarregar a UI
+                if scanned_count % 300 == 0 or scanned_count == total_ports:
+                    elapsed = max(0.01, time.time() - start_time)
+                    rate = scanned_count / elapsed
+                    pct = (scanned_count / total_ports) * 100
+                    yield f"Progresso: {pct:.1f}% ({scanned_count}/{total_ports}) | Velocidade: {rate:.0f} portas/s\n"
+
     total_time = time.time() - start_time
-    yield f"\nVarredura completa concluída em {total_time:.1f} segundos.\n"
+
+    if cancelled:
+        yield f"\nVarredura interrompida pelo usuário após {total_time:.1f}s.\n"
+    else:
+        yield f"\nTeste concluído em {total_time:.2f}s (velocidade média: {total_ports / max(0.01, total_time):.0f} portas/s).\n"
+
     if open_ports:
         yield f"Total de portas abertas encontradas: {len(open_ports)}\n"
-        yield "Portas abertas:\n"
-        for port, service in sorted(open_ports):
-            yield f"  - {port}: {service}\n"
+        yield "Resumo das portas abertas:\n"
+        for p, svc in sorted(open_ports):
+            yield f"  - {p}/TCP: {svc}\n"
     else:
-        yield "Nenhuma porta aberta encontrada.\n"
+        yield "Nenhuma porta aberta encontrada na faixa testada.\n"

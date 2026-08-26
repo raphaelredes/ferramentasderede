@@ -17,6 +17,22 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
     {
+        version: '1.4.0',
+        date: '2026-08-26',
+        title: 'Diagnóstico de Active Directory, Camada 2 (LLDP), WinRM em Lote e Relatórios Técnicos',
+        changes: [
+            { kind: 'feat', text: 'Nova categoria e ferramenta "Diagnóstico de Active Directory": Matriz de teste das portas essenciais do DC (53, 88, 135, 389, 445, 464, 636, 3268, 3269), Validador de Registros DNS SRV (_ldap, _kerberos, _kpasswd, _gc) e Verificador de Time Skew (Kerberos offset contra o PDC Emulator com alerta de tolerância de 5 min).' },
+            { kind: 'feat', text: 'Nova ferramenta "Switch / L2 (LLDP/CDP)": Captura e decodificação passiva de pacotes multicast LLDP (802.1AB) e CDP (Cisco) — identifica Switch Name, Modelo, Porta Física (ex: GigabitEthernet1/0/24) e VLAN ID da conexão sem precisar de credenciais de gerência.' },
+            { kind: 'feat', text: 'Nova ferramenta "Pastas SMB / CIFS": Enumera compartilhamentos de rede públicos e administrativos ocultos (C$, ADMIN$) com auditoria de acessibilidade.' },
+            { kind: 'feat', text: 'Nova ferramenta "Conflitos ARP": Inspeciona o cache ARP para detectar múltiplos MACs respondendo pelo mesmo IP (conflito de IP estático ou ARP spoofing).' },
+            { kind: 'feat', text: 'Novo "Multi-Host Action Runner" (WinRM em Lote): Execução simultânea de scripts PowerShell/CMD em múltiplos hosts em paralelo com credenciais seguras e console com abas por máquina.' },
+            { kind: 'feat', text: 'Nova "Biblioteca de Snippets": Repositório de scripts úteis pré-configurados (Flush DNS, Reiniciar Spooler, Auditoria de Espaço em Disco, BitLocker, Rotas e GPUpdate) com inserção direta em 1 clique.' },
+            { kind: 'feat', text: 'Novo "Gerador de Relatórios Técnicos": Exportação de relatórios corporativos completos em HTML responsivo e prontos para impressão em PDF de alta qualidade (Inventário de Rede e Auditoria de SLA/Latência).' },
+            { kind: 'feat', text: 'Histórico e Séries Temporais de Métricas com cálculo estatístico de Jitter (RFC 1889) e pontuação de qualidade MOS (VoIP) no SQLite.' },
+            { kind: 'ui', text: 'Interface das ferramentas reorganizada e totalmente modularizada com zero arquivos excedendo o limite de linhas.' },
+        ],
+    },
+    {
         version: '1.3.0',
         date: '2026-06-30',
         title: 'Ferramentas reorganizadas em categorias + 13 ferramentas novas',

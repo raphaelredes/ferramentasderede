@@ -1,4 +1,4 @@
-import { useEffect, useState, lazy, Suspense } from 'react';
+import { lazy, Suspense } from 'react';
 import { HashRouter as Router, Routes, Route } from 'react-router-dom';
 import { Sidebar } from './components/Sidebar';
 import Dashboard from './pages/Dashboard';
@@ -13,8 +13,6 @@ const Settings = lazy(() => import('./pages/Settings').then(m => ({ default: m.S
 const HostDetails = lazy(() => import('./pages/HostDetails').then(m => ({ default: m.HostDetails })));
 const Security = lazy(() => import('./pages/Security').then(m => ({ default: m.Security })));
 
-import { LoadingScreen } from './components/LoadingScreen';
-
 import { VaultProvider } from './contexts/VaultContext';
 import { ToastProvider } from './contexts/ToastContext';
 import { ToolsProvider } from './contexts/ToolsContext';
@@ -23,19 +21,10 @@ import { MonitoringProvider } from './contexts/MonitoringContext';
 import { TrustedHostsSessionProvider } from './contexts/TrustedHostsSessionContext';
 
 function App() {
-  const [isLoaded, setIsLoaded] = useState(false);
 
-  useEffect(() => {
-    // Remove o loader estático do HTML imediatamente, pois o React vai renderizar o LoadingScreen
-    const staticLoader = document.getElementById('initial-loader');
-    if (staticLoader) {
-      staticLoader.style.display = 'none';
-    }
-  }, []);
-
-  if (!isLoaded) return <LoadingScreen onComplete={() => setIsLoaded(true)} />;
 
   return (
+
     <LoadingProvider>
       <VaultProvider>
         <ToastProvider>

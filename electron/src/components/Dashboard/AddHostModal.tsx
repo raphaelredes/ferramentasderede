@@ -125,12 +125,12 @@ export function AddHostModal({ isOpen, onClose, onAdd, isAdding, existingHosts, 
 
     return (
         <div
-            className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
             onClick={onClose}
             role="presentation"
         >
             <div
-                className="bg-zinc-900 border border-zinc-800 rounded-xl w-full max-w-md p-6 shadow-2xl"
+                className="bg-zinc-900 border border-zinc-800 rounded-xl w-full max-w-md max-h-[85vh] sm:max-h-[90vh] overflow-y-auto custom-scrollbar p-6 shadow-2xl my-auto animate-in zoom-in-95 duration-200"
                 onClick={(e) => e.stopPropagation()}
                 role="dialog"
                 aria-modal="true"

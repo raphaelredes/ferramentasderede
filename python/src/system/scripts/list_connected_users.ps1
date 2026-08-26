@@ -59,7 +59,8 @@ function Parse-UserLine {
                     $preciseLogonDate = [System.Management.ManagementDateTimeConverter]::ToDateTime($winlogon.CreationDate)
                     # Write-Host "DEBUG: Found winlogon for session $sId, time: $preciseLogonDate"
                 }
-            } catch {
+            }
+            catch {
                 # Write-Host "DEBUG: Failed to get winlogon for session $sId: $_"
             }
 
@@ -71,7 +72,8 @@ function Parse-UserLine {
                 try {
                     # Tentar parsear data do quser (formato local)
                     $preciseLogonDate = [DateTime]::Parse($logonTime)
-                } catch {}
+                }
+                catch {}
             }
 
             if ($preciseLogonDate) {
@@ -96,38 +98,92 @@ function Parse-UserLine {
     return $null
 }
 
-# 1. Tentar query user
-# Write-Host "Executando query user..."
+# 1. Tentar Processo Explorer (PRIORIDADE MÁXIMA)
+# Identifica o dono do processo explorer.exe, que é o usuário real da sessão interativa.
+# Isso evita erros de parsing do comando 'quser' que podem truncar nomes ou errar colunas.
 try {
-    $queryOutput = query user 2>$null
-    if ($queryOutput) {
-        $queryOutput | Select-Object -Skip 1 | ForEach-Object {
-            $u = Parse-UserLine -line $_.Trim() -source "query_user"
+    $explorers = Get-WmiObject -Class Win32_Process -Filter "Name='explorer.exe'"
+    foreach ($exp in $explorers) {
+        $owner = $exp.GetOwner()
+        if ($owner.ReturnValue -eq 0 -and $owner.User) {
+            $sIdStr = "$($exp.SessionId)"
+            
+            # Formatar data de criação do explorer como tempo de logon (aproximado e confiável)
+            $logonTimeStr = "N/A"
+            $durationStr = "N/A"
+            try {
+                if ($exp.CreationDate) {
+                    $cDate = [System.Management.ManagementDateTimeConverter]::ToDateTime($exp.CreationDate)
+                    $logonTimeStr = $cDate.ToString("g")
+                    $span = (Get-Date) - $cDate
+                    $durationStr = "{0:dd}d {0:hh}h {0:mm}m" -f $span
+                }
+            }
+            catch {}
+
+            $u = [PSCustomObject]@{
+                UserName    = $owner.User
+                SessionId   = $sIdStr
+                State       = "Active"
+                SessionName = "Console" # Assumir console/ativo para explorer.exe
+                Source      = "Process_Explorer"
+                LogonTime   = $logonTimeStr
+                IdleTime    = "."
+                Duration    = $durationStr
+            }
             Add-User -uObj $u
         }
     }
 }
 catch { 
-    # Write-Host "Erro em query user: $_" 
+    # Write-Host "Erro em Process Explorer: $_" 
 }
 
-# 2. Tentar quser (redundância)
-# Write-Host "Executando quser..."
+# 2. Tentar Win32_ComputerSystem (Usuário logado no console físico)
 try {
-    $quserOutput = quser 2>$null
-    if ($quserOutput) {
-        $quserOutput | Select-Object -Skip 1 | ForEach-Object {
-            $u = Parse-UserLine -line $_.Trim() -source "quser"
-            Add-User -uObj $u
+    $cs = Get-WmiObject -Class Win32_ComputerSystem
+    if ($cs.UserName) {
+        $domain, $user = $cs.UserName.Split('\\')
+        if (-not $user) { $user = $domain }
+        
+        # Verificar se este usuário já foi encontrado (por exemplo, via Explorer com ID numérico)
+        $alreadyFound = $false
+        foreach ($existing in $script:uniqueUsers.Values) {
+            if ($existing.UserName -eq $user) {
+                $alreadyFound = $true
+                break
+            }
+        }
+
+        if (-not $alreadyFound) {
+            $isValid = $true
+            # Validação extra para evitar falsos positivos do WinRM
+            # Removed check that excluded current user ($env:USERNAME) to support local execution usage
+            # if ($user -eq $env:USERNAME) {
+            #    $isValid = $false 
+            # }
+
+            if ($isValid) {
+                $u = [PSCustomObject]@{
+                    UserName    = $user
+                    SessionId   = "Console"
+                    State       = "Active"
+                    SessionName = "Console"
+                    Source      = "WMI_ComputerSystem"
+                    LogonTime   = "N/A"
+                    IdleTime    = "N/A"
+                    Duration    = "N/A"
+                }
+                Add-User -uObj $u
+            }
         }
     }
 }
 catch { 
-    # Write-Host "Erro em quser: $_" 
+    # Write-Host "Erro em WMI (ComputerSystem): $_" 
 }
 
-# 3. Tentar WMI (Win32_LogonSession) - Pega sessões que comandos de texto podem perder
-# Write-Host "Executando WMI (LogonSession)..."
+# 3. Tentar WMI (Win32_LogonSession) - Complementar
 try {
     $sessions = Get-WmiObject -Class Win32_LogonSession | Where-Object { $_.LogonType -eq 2 -or $_.LogonType -eq 10 }
     foreach ($session in $sessions) {
@@ -141,6 +197,9 @@ try {
                     State       = "Active"
                     SessionName = "WMI"
                     Source      = "WMI_LogonSession"
+                    LogonTime   = "N/A"
+                    IdleTime    = "N/A"
+                    Duration    = "N/A"
                 }
                 Add-User -uObj $u
             }
@@ -151,85 +210,29 @@ catch {
     # Write-Host "Erro em WMI (LogonSession): $_" 
 }
 
-# 4. Tentar Win32_ComputerSystem (Usuário logado no console físico)
-# Write-Host "Executando WMI (ComputerSystem)..."
+# 4. Tentar query user (Fallback - Baixa prioridade)
 try {
-    $cs = Get-WmiObject -Class Win32_ComputerSystem
-    if ($cs.UserName) {
-        $domain, $user = $cs.UserName.Split('\\')
-        # Se não tiver domínio, o split retorna o nome no primeiro elemento
-        if (-not $user) { $user = $domain }
-        
-        # Verificar se este usuário já foi encontrado (por exemplo, via quser com ID numérico)
-        $alreadyFound = $false
-        foreach ($existing in $script:uniqueUsers.Values) {
-            if ($existing.UserName -eq $user) {
-                $alreadyFound = $true
-                break
-            }
-        }
-
-        if (-not $alreadyFound) {
-            # Validação extra: Se o usuário do Console for o mesmo que está rodando o script (WinRM user),
-            # verificar se ele realmente tem um processo explorer.exe (indicando desktop ativo).
-            # Isso evita falsos positivos onde o WinRM reporta o próprio usuário como "Console".
-            $isValid = $true
-            if ($user -eq $env:USERNAME) {
-                $explorerProc = Get-WmiObject -Class Win32_Process -Filter "Name='explorer.exe'" | Where-Object { 
-                    $owner = $_.GetOwner()
-                    $owner.ReturnValue -eq 0 -and $owner.User -eq $user
-                }
-                if (-not $explorerProc) {
-                    # Write-Host "DEBUG: Usuário $user detectado no Console mas sem explorer.exe. Ignorando (provável sessão WinRM)."
-                    $isValid = $false
-                }
-            }
-
-            if ($isValid) {
-                $u = [PSCustomObject]@{
-                    UserName    = $user
-                    SessionId   = "Console"
-                    State       = "Active"
-                    SessionName = "Console"
-                    Source      = "WMI_ComputerSystem"
-                }
-                Add-User -uObj $u
-            }
-        }
-        else {
-            # Write-Host "Usuário $user já listado, ignorando entrada duplicada do Console."
+    $queryOutput = query user 2>$null
+    if ($queryOutput) {
+        $queryOutput | Select-Object -Skip 1 | ForEach-Object {
+            $u = Parse-UserLine -line $_.Trim() -source "query_user"
+            Add-User -uObj $u
         }
     }
 }
-catch { 
-    # Write-Host "Erro em WMI (ComputerSystem): $_" 
-}
+catch {}
 
-# 5. Tentar Processo Explorer (Dono do processo explorer.exe)
-# Write-Host "Executando verificação de explorer.exe..."
+# 5. Tentar quser (Fallback redundante)
 try {
-    $explorers = Get-WmiObject -Class Win32_Process -Filter "Name='explorer.exe'"
-    foreach ($exp in $explorers) {
-        $owner = $exp.GetOwner()
-        if ($owner.ReturnValue -eq 0 -and $owner.User) {
-            # Verificar se já existe sessão com este ID
-            $sIdStr = "$($exp.SessionId)"
-            if (-not $script:uniqueUsers.ContainsKey($sIdStr)) {
-                $u = [PSCustomObject]@{
-                    UserName    = $owner.User
-                    SessionId   = $sIdStr
-                    State       = "Active"
-                    SessionName = "Explorer"
-                    Source      = "Process_Explorer"
-                }
-                Add-User -uObj $u
-            }
+    $quserOutput = quser 2>$null
+    if ($quserOutput) {
+        $quserOutput | Select-Object -Skip 1 | ForEach-Object {
+            $u = Parse-UserLine -line $_.Trim() -source "quser"
+            Add-User -uObj $u
         }
     }
 }
-catch { 
-    # Write-Host "Erro em Process Explorer: $_" 
-}
+catch {}
 
 # Converter hashtable para array
 # Write-Host "DEBUG: UniqueUsers Count before sort: $($script:uniqueUsers.Count)"

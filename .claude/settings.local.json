@@ -12,7 +12,10 @@
       "Bash(git add:*)",
       "Bash(git reset:*)",
       "Bash(taskkill:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(rm -rf \"/c/Users/RAPHAE~1.REG/AppData/Local/Temp/claude/C--Users-raphael-rego-Desktop-ferramentasderede/2f3334a8-bced-4447-9813-43cae44e50c1/scratchpad/iperf\" 2>/dev/null *)",
+      "Bash(mkdir -p \"/c/Users/RAPHAE~1.REG/AppData/Local/Temp/claude/C--Users-raphael-rego-Desktop-ferramentasderede/d5e531d5-b317-4b86-b552-5588bf6f91da/scratchpad/sandbox_share\" && echo \"share dir ready\")",
+      "Bash(rm -rf \"/c/Users/RAPHAE~1.REG/AppData/Local/Temp/claude/C--Users-raphael-rego-Desktop-ferramentasderede/d5e531d5-b317-4b86-b552-5588bf6f91da/scratchpad/sandbox_share\" \"/c/Users/RAPHAE~1.REG/AppData/Local/Temp/claude/C--Users-raphael-rego-Desktop-ferramentasderede/d5e531d5-b317-4b86-b552-5588bf6f91da/scratchpad/FreshTest.wsb\" 2>/dev/null; echo \"scratchpad cleaned\")"
     ],
     "deny": [],
     "ask": []
