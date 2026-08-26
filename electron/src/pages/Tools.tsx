@@ -243,14 +243,14 @@ export function Tools() {
                     })}
                 </div>
 
-                {/* Botão de Ajuda / Informações da Ferramenta no canto direito */}
+                {/* Botão de Ajuda Chamativo apenas com Interrogação no canto direito */}
                 <button
                     onClick={() => setHelpModalToolId(activeTab)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-zinc-300 hover:text-blue-400 bg-zinc-900/90 hover:bg-zinc-800 border border-zinc-700/60 hover:border-blue-500/50 transition-all shadow-sm shrink-0 mb-1"
-                    title={`Como funciona: ${TOOL_CATEGORIES.flatMap(c => c.tools).find(t => t.id === activeTab)?.label || 'Ajuda'}`}
+                    className="flex items-center justify-center w-8 h-8 rounded-full bg-blue-500/15 hover:bg-blue-600 border border-blue-500/40 hover:border-blue-400 text-blue-400 hover:text-white transition-all duration-200 shadow-md shadow-blue-500/20 hover:shadow-blue-500/40 hover:scale-105 active:scale-95 shrink-0 mb-1"
+                    title={`Informações e guia: ${TOOL_CATEGORIES.flatMap(c => c.tools).find(t => t.id === activeTab)?.label || 'Ajuda'}`}
+                    aria-label="Ajuda sobre a ferramenta"
                 >
-                    <HelpCircle size={15} className="text-blue-400" />
-                    <span>Sobre a Ferramenta</span>
+                    <HelpCircle size={18} className="stroke-[2.2]" />
                 </button>
             </div>
 
