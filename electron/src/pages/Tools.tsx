@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Terminal as TerminalIcon, Network as NetworkIcon, Activity, Gauge, GitBranch, DoorOpen, Globe, Zap, Ruler, Globe2, Lock, Calculator, Clock, Router, Stethoscope, Compass, Wrench, ShieldAlert, FolderGit2, AlertTriangle } from 'lucide-react';
+import { Terminal as TerminalIcon, Network as NetworkIcon, Activity, Gauge, GitBranch, DoorOpen, Globe, Zap, Ruler, Globe2, Lock, Calculator, Clock, Router, Stethoscope, Compass, Wrench, ShieldAlert, FolderGit2, AlertTriangle, HelpCircle } from 'lucide-react';
 import { clsx } from 'clsx';
 import { NetworkScanner } from '../components/Tools/NetworkScanner';
 import { IperfPanel } from '../components/Tools/IperfPanel';
@@ -21,6 +21,8 @@ import { LldpCdpPanel } from '../components/Tools/LldpCdpPanel';
 import { SmbSharePanel } from '../components/Tools/SmbSharePanel';
 import { ArpConflictPanel } from '../components/Tools/ArpConflictPanel';
 import { DiagnosticToolRunner } from '../components/Tools/DiagnosticToolRunner';
+import { ToolHelpModal } from '../components/Tools/ToolHelpModal';
+
 import { Host } from '../types';
 import { useTools } from '../contexts/ToolsContext';
 import { useToast } from '../contexts/ToastContext';
@@ -90,7 +92,9 @@ const TOOL_CATEGORIES: ToolCategory[] = [
 export function Tools() {
     const [activeTab, setActiveTab] = useState<ToolId>('ping');
     const [activeCategory, setActiveCategory] = useState<string>('diag');
+    const [helpModalToolId, setHelpModalToolId] = useState<ToolId | null>(null);
     const { showToast } = useToast();
+
 
     const {
         pingState,
@@ -217,25 +221,37 @@ export function Tools() {
                 })}
             </div>
 
-            {/* Level 2: tools within the active category */}
-            <div className="flex gap-2 border-b border-zinc-800 overflow-x-auto custom-scrollbar shrink-0">
-                {(TOOL_CATEGORIES.find(c => c.id === activeCategory)?.tools ?? []).map(tool => {
-                    const isActive = activeTab === tool.id;
-                    return (
-                        <button
-                            key={tool.id}
-                            onClick={() => setActiveTab(tool.id)}
-                            className={clsx(
-                                'px-4 py-2 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap',
-                                isActive ? 'border-blue-500 text-blue-400' : 'border-transparent text-zinc-400 hover:text-white'
-                            )}
-                        >
-                            {tool.icon}
-                            {tool.label}
-                            {toolIsRunning(tool.id) && <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />}
-                        </button>
-                    );
-                })}
+            {/* Level 2: tools within the active category + Tool Info / Help Button */}
+            <div className="flex items-center justify-between border-b border-zinc-800 shrink-0 gap-3">
+                <div className="flex gap-2 overflow-x-auto custom-scrollbar flex-1">
+                    {(TOOL_CATEGORIES.find(c => c.id === activeCategory)?.tools ?? []).map(tool => {
+                        const isActive = activeTab === tool.id;
+                        return (
+                            <button
+                                key={tool.id}
+                                onClick={() => setActiveTab(tool.id)}
+                                className={clsx(
+                                    'px-4 py-2 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap',
+                                    isActive ? 'border-blue-500 text-blue-400' : 'border-transparent text-zinc-400 hover:text-white'
+                                )}
+                            >
+                                {tool.icon}
+                                {tool.label}
+                                {toolIsRunning(tool.id) && <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />}
+                            </button>
+                        );
+                    })}
+                </div>
+
+                {/* Botão de Ajuda / Informações da Ferramenta no canto direito */}
+                <button
+                    onClick={() => setHelpModalToolId(activeTab)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-zinc-300 hover:text-blue-400 bg-zinc-900/90 hover:bg-zinc-800 border border-zinc-700/60 hover:border-blue-500/50 transition-all shadow-sm shrink-0 mb-1"
+                    title={`Como funciona: ${TOOL_CATEGORIES.flatMap(c => c.tools).find(t => t.id === activeTab)?.label || 'Ajuda'}`}
+                >
+                    <HelpCircle size={15} className="text-blue-400" />
+                    <span>Sobre a Ferramenta</span>
+                </button>
             </div>
 
             <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
@@ -295,6 +311,14 @@ export function Tools() {
                 {activeTab === 'subnet' && <SubnetPanel />}
                 {activeTab === 'connections' && <ConnectionsPanel />}
             </div>
+
+            {helpModalToolId && (
+                <ToolHelpModal
+                    toolId={helpModalToolId}
+                    onClose={() => setHelpModalToolId(null)}
+                />
+            )}
         </div>
     );
 }
+
