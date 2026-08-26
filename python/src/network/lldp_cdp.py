@@ -193,9 +193,21 @@ def _get_l2_adapter_and_gateway(interface_ip: Optional[str] = None) -> Dict[str,
     
     if os.name == 'nt':
         try:
+            creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+            startup_info = subprocess.STARTUPINFO()
+            startup_info.dwFlags |= getattr(subprocess, "STARTF_USESHOWWINDOW", 0x00000001)
+            startup_info.wShowWindow = 0
+
             # 1. Rota padrão e gateway
             gw_cmd = "Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Select-Object -First 1 InterfaceAlias, NextHop | ConvertTo-Json"
-            res = subprocess.run(['powershell', '-NoProfile', '-Command', gw_cmd], capture_output=True, text=True, timeout=3)
+            res = subprocess.run(
+                ['powershell', '-NoProfile', '-NonInteractive', '-Command', gw_cmd],
+                capture_output=True,
+                text=True,
+                timeout=3,
+                creationflags=creation_flags,
+                startupinfo=startup_info
+            )
             if res.returncode == 0 and res.stdout.strip():
                 import json
                 gw_info = json.loads(res.stdout)
@@ -220,7 +232,14 @@ def _get_l2_adapter_and_gateway(interface_ip: Optional[str] = None) -> Dict[str,
             # 3. Informações da Placa de Rede
             if data["adapter_name"]:
                 adapter_cmd = f"Get-NetAdapter -Name '{data['adapter_name']}' -ErrorAction SilentlyContinue | Select-Object InterfaceDescription, LinkSpeed, MacAddress | ConvertTo-Json"
-                res = subprocess.run(['powershell', '-NoProfile', '-Command', adapter_cmd], capture_output=True, text=True, timeout=3)
+                res = subprocess.run(
+                    ['powershell', '-NoProfile', '-NonInteractive', '-Command', adapter_cmd],
+                    capture_output=True,
+                    text=True,
+                    timeout=3,
+                    creationflags=creation_flags,
+                    startupinfo=startup_info
+                )
                 if res.returncode == 0 and res.stdout.strip():
                     import json
                     ad_info = json.loads(res.stdout)
@@ -231,6 +250,7 @@ def _get_l2_adapter_and_gateway(interface_ip: Optional[str] = None) -> Dict[str,
 
         except Exception as e:
             logging.debug(f"Erro obtendo telemetria L2 Windows: {e}")
+
 
     return data
 

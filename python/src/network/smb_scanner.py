@@ -55,13 +55,20 @@ def scan_smb_shares(target_host: str, username: Optional[str] = None, password: 
         }}
         """
         
+        creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        startup_info = subprocess.STARTUPINFO()
+        startup_info.dwFlags |= getattr(subprocess, "STARTF_USESHOWWINDOW", 0x00000001)
+        startup_info.wShowWindow = 0
+
         proc = subprocess.run(
             cmd + [ps_script],
             capture_output=True,
             text=True,
             timeout=8,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+            creationflags=creation_flags,
+            startupinfo=startup_info
         )
+
         
         raw_output = proc.stdout.strip()
         

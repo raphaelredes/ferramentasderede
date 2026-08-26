@@ -44,13 +44,20 @@ def send_windows_toast(title: str, message: str, sound: bool = True):
             $notifier.Show($toast)
             """
             
+            creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+            startup_info = subprocess.STARTUPINFO()
+            startup_info.dwFlags |= getattr(subprocess, "STARTF_USESHOWWINDOW", 0x00000001)
+            startup_info.wShowWindow = 0
+
             subprocess.run(
                 ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", ps_script],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000),
+                creationflags=creation_flags,
+                startupinfo=startup_info,
                 timeout=5
             )
+
         except Exception as e:
             logging.debug(f"Falha ao emitir Windows Toast: {e}")
 

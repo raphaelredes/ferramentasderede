@@ -17,13 +17,20 @@ def inspect_arp_table(interface_ip: Optional[str] = None) -> Dict[str, Any]:
     mac_to_ips: Dict[str, List[str]] = {}
 
     try:
+        creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        startup_info = subprocess.STARTUPINFO()
+        startup_info.dwFlags |= getattr(subprocess, "STARTF_USESHOWWINDOW", 0x00000001)
+        startup_info.wShowWindow = 0
+
         proc = subprocess.run(
             ["arp", "-a"],
             capture_output=True,
             text=True,
             timeout=3,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+            creationflags=creation_flags,
+            startupinfo=startup_info
         )
+
         
         current_interface = None
         for line in proc.stdout.splitlines():

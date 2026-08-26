@@ -442,13 +442,24 @@ class NetworkTools:
             # Tentar descobrir a máscara e gateway (Windows)
             if os.name == 'nt':
                 try:
-                    output = subprocess.check_output("ipconfig", text=True, encoding='cp850')
+                    creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+                    startup_info = subprocess.STARTUPINFO()
+                    startup_info.dwFlags |= getattr(subprocess, "STARTF_USESHOWWINDOW", 0x00000001)
+                    startup_info.wShowWindow = 0
+                    output = subprocess.check_output(
+                        "ipconfig",
+                        text=True,
+                        encoding='cp850',
+                        creationflags=creation_flags,
+                        startupinfo=startup_info
+                    )
                     # Lógica simplificada de parsing...
                     # Para simplificar, vamos assumir /24 se falhar
                     info["netmask"] = "255.255.255.0"
                     info["gateway"] = local_ip.rsplit('.', 1)[0] + ".1"
                 except Exception as e:
                     logging.debug(f"ipconfig parse fallback failed: {e}")
+
             
             # Calcular rede
             if "ip" in info:

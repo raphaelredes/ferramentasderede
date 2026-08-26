@@ -129,11 +129,13 @@ def _install_webview2():
         # //silent //install → unattended per-machine install (bootstrapper accepts
         # both / and // forms; //silent avoids its own UI). check=False: we verify
         # success by re-reading the registry, not by exit code.
-        subprocess.run([setup, "/silent", "/install"], check=False)
+        creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000) if os.name == 'nt' else 0
+        subprocess.run([setup, "/silent", "/install"], check=False, creationflags=creation_flags)
         return _system_webview2_version() is not None
     except Exception as e:
         print(f"WebView2 install failed: {e}")
         return False
+
 
 
 def preflight_webview2():
@@ -433,10 +435,12 @@ def main():
                     )
                     env = os.environ.copy()
                     env["NT_MSRA_TARGET"] = ip
-                    subprocess.Popen(['powershell', '-NoProfile', '-Command', cmd], env=env)
+                    creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+                    subprocess.Popen(['powershell', '-NoProfile', '-NonInteractive', '-Command', cmd], env=env, creationflags=creation_flags)
                 else:
                     subprocess.Popen(['msra', '/offerRA', ip])
                 return True
+
             except Exception as e:
                 print(f"Error launching MSRA: {e}")
                 return False
