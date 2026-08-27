@@ -24,6 +24,8 @@ import {
 import { Host } from '../../types';
 import { useTools } from '../../contexts/ToolsContext';
 import { useNetworks } from '../../hooks/useNetworks';
+import { LastExecutionBadge } from './LastExecutionBadge';
+
 
 interface NetworkScannerProps {
     onAddHost: (host: Host) => void;
@@ -446,8 +448,19 @@ export const NetworkScanner: React.FC<NetworkScannerProps> = ({ onAddHost, exist
                         </div>
                     )}
 
+                    {activeSession.results.length > 0 && activeSession.lastRunAt && !activeSession.isRunning && (
+                        <div className="px-4 py-2 bg-zinc-900/30 border-b border-zinc-800/40">
+                            <LastExecutionBadge
+                                timestamp={activeSession.lastRunAt}
+                                target={`${activeSession.results.length} hosts (${activeSession.cidr})`}
+                                onClear={() => updateScanSession(activeSession.id, { results: [], status: 'Pronto', progress: 0, lastRunAt: null })}
+                            />
+                        </div>
+                    )}
+
                     {/* View Tabs */}
                     <div className="flex items-center px-4 border-b border-zinc-800/50 bg-zinc-900/20">
+
                         <button
                             onClick={() => setViewMode('results')}
                             className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${viewMode === 'results'

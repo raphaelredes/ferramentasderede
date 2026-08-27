@@ -12,13 +12,12 @@ import { LastExecutionBadge } from './LastExecutionBadge';
  * is the latency/loss coming from". Pure Python backend via icmplib.
  */
 export function MtrPanel() {
-    const { mtrState, runMtr, stopTool } = useTools();
+    const { mtrState, runMtr, stopTool, clearToolOutput } = useTools();
     const { showToast } = useToast();
     const { networks } = useNetworks();
 
     const [target, setTarget] = usePersistedState('mtr_tool_target', '8.8.8.8');
     const [sourceIp, setSourceIp] = usePersistedState('mtr_tool_source_ip', '');
-
 
     const start = () => {
         const t = target.trim();
@@ -83,7 +82,16 @@ export function MtrPanel() {
                 </div>
             </div>
 
+            {mtrState.hops.length > 0 && mtrState.lastRunAt && (
+                <LastExecutionBadge
+                    timestamp={mtrState.lastRunAt}
+                    target={target}
+                    onClear={() => clearToolOutput('mtr')}
+                />
+            )}
+
             <div className="flex-1 bg-black rounded-xl border border-zinc-800 overflow-hidden flex flex-col">
+
                 {mtrState.error && (
                     <div className="px-4 py-2 bg-red-500/10 border-b border-red-900/40 text-red-400 text-sm">
                         {mtrState.error}

@@ -7,8 +7,10 @@ import { useToast } from '../../contexts/ToastContext';
 import { useNetworks } from '../../hooks/useNetworks';
 
 import { usePersistedState } from '../../hooks/usePersistedState';
+import { LastExecutionBadge } from './LastExecutionBadge';
 
 interface IperfStatus {
+
     available: boolean;
     version: string | null;
     path: string | null;
@@ -338,8 +340,17 @@ export function IperfPanel() {
                 </div>
             )}
 
+            {activeState.output.length > 0 && activeState.lastRunAt && (
+                <LastExecutionBadge
+                    timestamp={activeState.lastRunAt}
+                    target={mode === 'server' ? `Servidor :${serverPort}` : `Cliente -> ${clientTarget || 'alvo'}:${clientPort}`}
+                    onClear={() => clearToolOutput(mode === 'server' ? 'iperf-server' : 'iperf-client')}
+                />
+            )}
+
             {/* ===== SAÍDA ===== */}
             <div className="flex-1 bg-black rounded-xl border border-zinc-800 p-4 overflow-hidden flex flex-col relative font-mono text-sm">
+
                 <div className="absolute top-2 right-2 z-10">
                     <button
                         onClick={() => clearToolOutput(mode === 'server' ? 'iperf-server' : 'iperf-client')}

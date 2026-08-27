@@ -20,6 +20,7 @@ interface ToolState {
     output: string[];
     target: string;
     isOffline?: boolean;
+    lastRunAt?: string | null;
 }
 
 interface ScanSession {
@@ -37,6 +38,7 @@ interface ScanSession {
     name?: string;
     /** Pinned tabs survive app restart and can't be closed by accident. */
     pinned?: boolean;
+    lastRunAt?: string | null;
 }
 
 // localStorage persistence. Saves layout and discovered hosts so the user
@@ -44,7 +46,7 @@ interface ScanSession {
 const SCAN_SESSIONS_STORAGE_KEY = 'scanSessions';
 const SCAN_SESSIONS_SCHEMA_VERSION = 2;
 
-type PersistedSession = Pick<ScanSession, 'id' | 'cidr' | 'name' | 'pinned' | 'sourceIp' | 'mode' | 'results' | 'availableRanges' | 'availableCount'>;
+type PersistedSession = Pick<ScanSession, 'id' | 'cidr' | 'name' | 'pinned' | 'sourceIp' | 'mode' | 'results' | 'availableRanges' | 'availableCount' | 'lastRunAt'>;
 
 function loadPersistedSessions(): { sessions: ScanSession[]; activeId: string | null } {
     try {
@@ -71,6 +73,7 @@ function loadPersistedSessions(): { sessions: ScanSession[]; activeId: string | 
                     isRunning: false,
                     availableRanges: Array.isArray(s.availableRanges) ? s.availableRanges : [],
                     availableCount: s.availableCount,
+                    lastRunAt: s.lastRunAt || null,
                 };
             });
         const activeId = typeof parsed.activeId === 'string' && sessions.some(s => s.id === parsed.activeId)
@@ -93,10 +96,11 @@ function loadToolState(key: string, defaultTarget: string): ToolState {
                 output: Array.isArray(parsed.output) ? parsed.output : [],
                 target: parsed.target || defaultTarget,
                 isOffline: !!parsed.isOffline,
+                lastRunAt: parsed.lastRunAt || null,
             };
         }
     } catch {}
-    return { isRunning: false, output: [], target: defaultTarget, isOffline: false };
+    return { isRunning: false, output: [], target: defaultTarget, isOffline: false, lastRunAt: null };
 }
 
 function loadMtrState(): MtrState {
@@ -108,11 +112,13 @@ function loadMtrState(): MtrState {
                 isRunning: false,
                 target: parsed.target || '',
                 hops: Array.isArray(parsed.hops) ? parsed.hops : [],
+                lastRunAt: parsed.lastRunAt || null,
             };
         }
     } catch {}
-    return { isRunning: false, target: '', hops: [] };
+    return { isRunning: false, target: '', hops: [], lastRunAt: null };
 }
+
 
 
 export interface PendingAction {
@@ -157,7 +163,9 @@ export interface MtrState {
     target: string;
     hops: MtrHop[];
     error?: string;
+    lastRunAt?: string | null;
 }
+
 
 interface ToolsContextType {
     // Independent States
@@ -287,6 +295,7 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                     results: s.results,
                     availableRanges: s.availableRanges,
                     availableCount: s.availableCount,
+                    lastRunAt: s.lastRunAt,
                 })),
             };
             localStorage.setItem(SCAN_SESSIONS_STORAGE_KEY, JSON.stringify(payload));
@@ -298,33 +307,34 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     // Persist tools states to localStorage
     useEffect(() => {
         if (!pingState.isRunning) {
-            try { localStorage.setItem('tool_state_ping', JSON.stringify({ target: pingState.target, output: pingState.output, isOffline: pingState.isOffline })); } catch {}
+            try { localStorage.setItem('tool_state_ping', JSON.stringify({ target: pingState.target, output: pingState.output, isOffline: pingState.isOffline, lastRunAt: pingState.lastRunAt })); } catch {}
         }
-    }, [pingState.target, pingState.output, pingState.isRunning, pingState.isOffline]);
+    }, [pingState.target, pingState.output, pingState.isRunning, pingState.isOffline, pingState.lastRunAt]);
 
     useEffect(() => {
         if (!traceState.isRunning) {
-            try { localStorage.setItem('tool_state_trace', JSON.stringify({ target: traceState.target, output: traceState.output })); } catch {}
+            try { localStorage.setItem('tool_state_trace', JSON.stringify({ target: traceState.target, output: traceState.output, lastRunAt: traceState.lastRunAt })); } catch {}
         }
-    }, [traceState.target, traceState.output, traceState.isRunning]);
+    }, [traceState.target, traceState.output, traceState.isRunning, traceState.lastRunAt]);
 
     useEffect(() => {
         if (!portState.isRunning) {
-            try { localStorage.setItem('tool_state_port', JSON.stringify({ target: portState.target, output: portState.output })); } catch {}
+            try { localStorage.setItem('tool_state_port', JSON.stringify({ target: portState.target, output: portState.output, lastRunAt: portState.lastRunAt })); } catch {}
         }
-    }, [portState.target, portState.output, portState.isRunning]);
+    }, [portState.target, portState.output, portState.isRunning, portState.lastRunAt]);
 
     useEffect(() => {
         if (!iperfClientState.isRunning) {
-            try { localStorage.setItem('tool_state_iperf_client', JSON.stringify({ target: iperfClientState.target, output: iperfClientState.output })); } catch {}
+            try { localStorage.setItem('tool_state_iperf_client', JSON.stringify({ target: iperfClientState.target, output: iperfClientState.output, lastRunAt: iperfClientState.lastRunAt })); } catch {}
         }
-    }, [iperfClientState.target, iperfClientState.output, iperfClientState.isRunning]);
+    }, [iperfClientState.target, iperfClientState.output, iperfClientState.isRunning, iperfClientState.lastRunAt]);
 
     useEffect(() => {
         if (!mtrState.isRunning) {
-            try { localStorage.setItem('tool_state_mtr', JSON.stringify({ target: mtrState.target, hops: mtrState.hops })); } catch {}
+            try { localStorage.setItem('tool_state_mtr', JSON.stringify({ target: mtrState.target, hops: mtrState.hops, lastRunAt: mtrState.lastRunAt })); } catch {}
         }
-    }, [mtrState.target, mtrState.hops, mtrState.isRunning]);
+    }, [mtrState.target, mtrState.hops, mtrState.isRunning, mtrState.lastRunAt]);
+
 
 
     const setPingTarget = (target: string) => setPingState(prev => ({ ...prev, target }));
@@ -448,20 +458,23 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         }
     }, [pingState.target, updateScanSession]);
 
-    const clearToolOutput = useCallback((tool: 'ping' | 'traceroute' | 'iperf-server' | 'iperf-client' | 'ports') => {
-        if (tool === 'ping') setPingState(prev => ({ ...prev, output: [], isOffline: false }));
-        if (tool === 'traceroute') setTraceState(prev => ({ ...prev, output: [] }));
-        if (tool === 'iperf-server') setIperfServerState(prev => ({ ...prev, output: [] }));
-        if (tool === 'iperf-client') setIperfClientState(prev => ({ ...prev, output: [] }));
-        if (tool === 'ports') setPortState(prev => ({ ...prev, output: [] }));
+    const clearToolOutput = useCallback((tool: 'ping' | 'traceroute' | 'iperf-server' | 'iperf-client' | 'ports' | 'mtr') => {
+        if (tool === 'ping') setPingState(prev => ({ ...prev, output: [], isOffline: false, lastRunAt: null }));
+        if (tool === 'traceroute') setTraceState(prev => ({ ...prev, output: [], lastRunAt: null }));
+        if (tool === 'iperf-server') setIperfServerState(prev => ({ ...prev, output: [], lastRunAt: null }));
+        if (tool === 'iperf-client') setIperfClientState(prev => ({ ...prev, output: [], lastRunAt: null }));
+        if (tool === 'ports') setPortState(prev => ({ ...prev, output: [], lastRunAt: null }));
+        if (tool === 'mtr') setMtrState(prev => ({ ...prev, hops: [], lastRunAt: null }));
     }, []);
 
     const runPing = useCallback(async (target: string, sourceIp?: string) => {
         if (pingState.isRunning) return;
 
-        setPingState(prev => ({ ...prev, isRunning: true, output: [], target, isOffline: false }));
+        const now = new Date().toISOString();
+        setPingState(prev => ({ ...prev, isRunning: true, output: [], target, isOffline: false, lastRunAt: now }));
         pingStatsRef.current = { sent: 0, received: 0, times: [], consecutiveFailures: 0, consecutiveSuccess: 0, isOffline: false }; // Reset stats
         abortControllers.current['ping'] = new AbortController();
+
 
         try {
             const response = await fetch(`${API_BASE}/tools/ping`, {
@@ -578,7 +591,8 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const runTraceroute = useCallback(async (target: string, sourceIp?: string) => {
         if (traceState.isRunning) return;
 
-        setTraceState(prev => ({ ...prev, isRunning: true, output: [], target }));
+        const now = new Date().toISOString();
+        setTraceState(prev => ({ ...prev, isRunning: true, output: [], target, lastRunAt: now }));
         abortControllers.current['traceroute'] = new AbortController();
 
         try {
@@ -617,8 +631,9 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         if (abortControllers.current['iperf-server']) return;
         abortControllers.current['iperf-server'] = new AbortController();
 
+        const now = new Date().toISOString();
         const label = opts?.sourceIp ? `porta ${opts.port ?? 5201} (via ${opts.sourceIp})` : `porta ${opts?.port ?? 5201}`;
-        setIperfServerState(prev => ({ ...prev, isRunning: true, output: [`Iniciando servidor iperf na ${label}...`], target: String(opts?.port ?? 5201) }));
+        setIperfServerState(prev => ({ ...prev, isRunning: true, output: [`Iniciando servidor iperf na ${label}...`], target: String(opts?.port ?? 5201), lastRunAt: now }));
 
         try {
             const response = await fetch(`${API_BASE}/tools/iperf/server`, {
@@ -656,7 +671,8 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         if (abortControllers.current['iperf-client']) return;
         abortControllers.current['iperf-client'] = new AbortController();
 
-        setIperfClientState(prev => ({ ...prev, isRunning: true, output: [`Testando banda até ${target}...`], target }));
+        const now = new Date().toISOString();
+        setIperfClientState(prev => ({ ...prev, isRunning: true, output: [`Testando banda até ${target}...`], target, lastRunAt: now }));
 
         try {
             const response = await fetch(`${API_BASE}/tools/iperf/client`, {
@@ -705,7 +721,8 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         if (abortControllers.current['mtr']) return;
         abortControllers.current['mtr'] = new AbortController();
 
-        setMtrState({ isRunning: true, target, hops: [], error: undefined });
+        const now = new Date().toISOString();
+        setMtrState({ isRunning: true, target, hops: [], error: undefined, lastRunAt: now });
 
         try {
             const response = await fetch(`${API_BASE}/tools/mtr`, {
@@ -759,8 +776,9 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         if (abortControllers.current['ports']) return;
         abortControllers.current['ports'] = new AbortController();
 
+        const now = new Date().toISOString();
         const header = mode === 'top' ? `Verificando portas comuns em ${target}...` : `Verificando portas em ${target}...`;
-        setPortState({ isRunning: true, output: [header], target });
+        setPortState({ isRunning: true, output: [header], target, lastRunAt: now });
 
         try {
             const response = await fetch(`${API_BASE}/tools/ports`, {
@@ -812,14 +830,17 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         const abortController = new AbortController();
         abortControllers.current[`scanner_${sessionId}`] = abortController;
 
+        const now = new Date().toISOString();
         updateScanSession(sessionId, {
             isRunning: true,
             results: [],
             progress: 0,
             status: 'Iniciando...',
             availableRanges: [],
-            availableCount: 0
+            availableCount: 0,
+            lastRunAt: now
         });
+
 
         try {
             // Fetch settings

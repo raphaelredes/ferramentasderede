@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { Play, Square, ArrowDown, ArrowUp, Network as NetworkIcon } from 'lucide-react';
 import { API_BASE } from '../../config/api';
+import { usePersistedState } from '../../hooks/usePersistedState';
+import { LastExecutionBadge } from './LastExecutionBadge';
 
 interface NicSnapshot {
     bytes_sent: number;
@@ -39,12 +41,14 @@ function fmtRate(bytesPerSec: number): string {
  */
 export function TrafficPanel() {
     const [running, setRunning] = useState(false);
-    const [rates, setRates] = useState<NicRate[]>([]);
+    const [rates, setRates, clearRates] = usePersistedState<NicRate[]>('traffic_tool_rates', []);
+    const [lastRunAt, setLastRunAt] = usePersistedState<string | null>('traffic_tool_last_run', null);
     const [error, setError] = useState<string | null>(null);
 
     const prevRef = useRef<TrafficSnapshot | null>(null);
     const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const runningRef = useRef(false);
+
 
     const poll = useCallback(async () => {
         if (!runningRef.current) return;
@@ -73,6 +77,7 @@ export function TrafficPanel() {
                     // Busiest first, then by name.
                     next.sort((a, b) => (b.upBps + b.downBps) - (a.upBps + a.downBps) || a.name.localeCompare(b.name));
                     setRates(next);
+                    setLastRunAt(new Date().toISOString());
                 }
             }
             prevRef.current = snap;
@@ -84,11 +89,10 @@ export function TrafficPanel() {
                 timerRef.current = setTimeout(poll, 1000);
             }
         }
-    }, []);
+    }, [setRates, setLastRunAt]);
 
     const start = () => {
         prevRef.current = null;
-        setRates([]);
         setError(null);
         runningRef.current = true;
         setRunning(true);
@@ -130,11 +134,20 @@ export function TrafficPanel() {
                 )}
             </div>
 
+            {rates.length > 0 && lastRunAt && !running && (
+                <LastExecutionBadge
+                    timestamp={lastRunAt}
+                    target={`${rates.length} interfaces ativas`}
+                    onClear={() => { clearRates(); setLastRunAt(null); }}
+                />
+            )}
+
             {error && (
                 <div className="px-4 py-2 bg-red-500/10 border border-red-900/40 rounded-lg text-red-400 text-sm">
                     Erro ao coletar tráfego: {error}
                 </div>
             )}
+
 
             <div className="flex-1 overflow-auto custom-scrollbar">
                 {rates.length === 0 ? (

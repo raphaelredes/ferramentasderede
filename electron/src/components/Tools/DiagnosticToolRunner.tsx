@@ -2,10 +2,11 @@ import { useRef } from 'react';
 import { Play, Square, Terminal as TerminalIcon, Eraser, Activity } from 'lucide-react';
 import { clsx } from 'clsx';
 import type { NetworkConfig } from '../../pages/Settings';
+import { LastExecutionBadge } from './LastExecutionBadge';
 
 interface DiagnosticToolRunnerProps {
     type: 'ping' | 'traceroute';
-    state: { isRunning: boolean; output: string[] };
+    state: { isRunning: boolean; output: string[]; lastRunAt?: string | null };
     target: string;
     setTarget: (t: string) => void;
     run: (t: string, sourceIp?: string) => void;
@@ -17,6 +18,7 @@ interface DiagnosticToolRunnerProps {
     setSourceIp: (v: string) => void;
     availableNetworks: NetworkConfig[];
 }
+
 
 export function DiagnosticToolRunner({
     type,
@@ -106,7 +108,16 @@ export function DiagnosticToolRunner({
                 </div>
             </div>
 
+            {state.output.length > 0 && state.lastRunAt && (
+                <LastExecutionBadge
+                    timestamp={state.lastRunAt}
+                    target={target}
+                    onClear={clear}
+                />
+            )}
+
             <div className="flex-1 min-h-0 bg-black rounded-xl border border-zinc-800 p-4 overflow-hidden flex flex-col relative font-mono text-sm">
+
                 <div className="absolute top-2 right-2 z-10">
                     <button
                         onClick={clear}

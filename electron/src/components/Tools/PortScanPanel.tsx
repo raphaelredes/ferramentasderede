@@ -4,8 +4,10 @@ import { clsx } from 'clsx';
 import { useTools } from '../../contexts/ToolsContext';
 import { useToast } from '../../contexts/ToastContext';
 import { usePersistedState } from '../../hooks/usePersistedState';
+import { LastExecutionBadge } from './LastExecutionBadge';
 
 /**
+
  * TCP port tester. Backed by high-concurrency ThreadPoolExecutor and adaptive timeouts.
  */
 export function PortScanPanel() {
@@ -90,7 +92,16 @@ export function PortScanPanel() {
                 </p>
             </div>
 
+            {portState.output.length > 0 && portState.lastRunAt && (
+                <LastExecutionBadge
+                    timestamp={portState.lastRunAt}
+                    target={target ? `${target} (${ports})` : null}
+                    onClear={() => clearToolOutput('ports')}
+                />
+            )}
+
             <div className="flex-1 min-h-0 bg-black rounded-xl border border-zinc-800 p-4 flex flex-col relative font-mono text-xs overflow-hidden">
+
                 <div className="absolute top-2.5 right-2.5 z-10">
                     <button
                         onClick={() => clearToolOutput('ports')}
