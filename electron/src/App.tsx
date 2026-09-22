@@ -17,14 +17,38 @@ import { VaultProvider } from './contexts/VaultContext';
 import { ToastProvider } from './contexts/ToastContext';
 import { ToolsProvider } from './contexts/ToolsContext';
 import { LoadingProvider } from './contexts/LoadingContext';
-import { MonitoringProvider } from './contexts/MonitoringContext';
+import { MonitoringProvider, useMonitoring } from './contexts/MonitoringContext';
 import { TrustedHostsSessionProvider } from './contexts/TrustedHostsSessionContext';
+import { AppLoadingOverlay } from './components/AppLoadingOverlay';
 
-function App() {
-
+function AppContent() {
+  const { isInitialLoading } = useMonitoring();
 
   return (
+    <>
+      <AppLoadingOverlay isVisible={isInitialLoading} />
+      <div className="flex h-screen bg-zinc-950 text-zinc-100 font-sans overflow-hidden">
+        <Sidebar />
+        <main className="flex-1 overflow-auto">
+          <Suspense fallback={<div className="p-8 text-zinc-500 text-sm">Carregando…</div>}>
+            <Routes>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/dashboard" element={<Dashboard />} />
+              <Route path="/host/:ip" element={<HostDetails />} />
+              <Route path="/tools" element={<Tools />} />
+              <Route path="/terminal" element={<Terminal />} />
+              <Route path="/settings" element={<Settings />} />
+              <Route path="/security" element={<Security />} />
+            </Routes>
+          </Suspense>
+        </main>
+      </div>
+    </>
+  );
+}
 
+function App() {
+  return (
     <LoadingProvider>
       <VaultProvider>
         <ToastProvider>
@@ -32,22 +56,7 @@ function App() {
             <MonitoringProvider>
               <TrustedHostsSessionProvider>
                 <Router>
-                  <div className="flex h-screen bg-zinc-950 text-zinc-100 font-sans overflow-hidden">
-                    <Sidebar />
-                    <main className="flex-1 overflow-auto">
-                      <Suspense fallback={<div className="p-8 text-zinc-500 text-sm">Carregando…</div>}>
-                        <Routes>
-                          <Route path="/" element={<Dashboard />} />
-                          <Route path="/dashboard" element={<Dashboard />} />
-                          <Route path="/host/:ip" element={<HostDetails />} />
-                          <Route path="/tools" element={<Tools />} />
-                          <Route path="/terminal" element={<Terminal />} />
-                          <Route path="/settings" element={<Settings />} />
-                          <Route path="/security" element={<Security />} />
-                        </Routes>
-                      </Suspense>
-                    </main>
-                  </div>
+                  <AppContent />
                 </Router>
               </TrustedHostsSessionProvider>
             </MonitoringProvider>

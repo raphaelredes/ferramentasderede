@@ -72,6 +72,23 @@ export function AboutModal({ isOpen, onClose }: AboutModalProps) {
                             <p className="text-[11px] text-zinc-500 mt-1">Build portátil · Windows · Multi-VLAN & AD</p>
                         </div>
 
+                        {/* Destaques da Versão Atual */}
+                        <div
+                            onClick={() => setIsChangelogOpen(true)}
+                            className="p-3.5 bg-blue-500/10 rounded-xl border border-blue-500/25 text-left space-y-1.5 cursor-pointer hover:bg-blue-500/15 transition-all group shadow-sm"
+                        >
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-1.5 text-blue-400 font-semibold text-[11px] uppercase tracking-wider">
+                                    <Sparkles size={13} className="group-hover:scale-110 transition-transform" />
+                                    <span>Novidades Principais da v{APP_VERSION}</span>
+                                </div>
+                                <span className="text-[10px] text-blue-300/90 font-medium group-hover:translate-x-0.5 transition-transform">Ver todas →</span>
+                            </div>
+                            <p className="text-[11px] text-zinc-300 leading-relaxed">
+                                Auditoria de Postura SNMP (NIST/CISA), MTR com Jitter RFC 1889, Traceroute BGP ASN (Team Cymru), HTTP Waterfall & OWASP, TLS Chain of Trust e AD FSMO Roles.
+                            </p>
+                        </div>
+
                         {/* Author Card */}
                         <div className="p-3.5 bg-zinc-950/60 rounded-xl border border-zinc-800/70 text-left">
                             <p className="text-[10px] text-zinc-500 uppercase tracking-wider font-semibold mb-0.5">Desenvolvido por</p>

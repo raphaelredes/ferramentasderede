@@ -27,7 +27,34 @@
 </head>
 
 <body>
-  <div id="root"></div>
+  <div id="root">
+    <div id="app-loading-screen" style="position:fixed;inset:0;background-color:#09090b;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:'Inter',system-ui,-apple-system,sans-serif;color:#f4f4f5;z-index:99999;user-select:none;">
+      <div style="position:relative;width:80px;height:80px;margin-bottom:24px;">
+        <div style="position:absolute;inset:0;border:3px solid rgba(59,130,246,0.15);border-top-color:#3b82f6;border-radius:50%;animation:app-spin 1s linear infinite;"></div>
+        <div style="position:absolute;inset:10px;border:3px solid rgba(99,102,241,0.15);border-bottom-color:#6366f1;border-radius:50%;animation:app-spin-reverse 1.5s linear infinite;"></div>
+        <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
+            <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
+            <line x1="6" y1="6" x2="6.01" y2="6"></line>
+            <line x1="6" y1="18" x2="6.01" y2="18"></line>
+          </svg>
+        </div>
+      </div>
+      <div style="font-size:19px;font-weight:700;letter-spacing:-0.025em;margin-bottom:8px;color:#ffffff;">
+        Ferramentas de Rede
+      </div>
+      <div style="font-size:13px;color:#71717a;display:flex;align-items:center;gap:8px;">
+        <span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#3b82f6;animation:app-pulse 1.4s ease-in-out infinite;"></span>
+        Inicializando ambiente e carregando módulos...
+      </div>
+    </div>
+  </div>
+  <style>
+    @keyframes app-spin { to { transform: rotate(360deg); } }
+    @keyframes app-spin-reverse { to { transform: rotate(-360deg); } }
+    @keyframes app-pulse { 0%, 100% { opacity: 0.3; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1.2); } }
+  </style>
   <script type="module" src="/src/main.tsx"></script>
 </body>
 

@@ -33,7 +33,11 @@ HTML_TEMPLATE_HEADER = """<!DOCTYPE html>
         .summary-card .label {{ font-size: 12px; color: #94a3b8; text-transform: uppercase; }}
         .summary-card .value {{ font-size: 22px; font-weight: bold; color: #38bdf8; margin-top: 4px; }}
         .footer {{ margin-top: 32px; font-size: 12px; color: #64748b; text-align: center; border-top: 1px solid #334155; padding-top: 16px; }}
+        .no-print {{ max-width: 1000px; margin: 0 auto 16px auto; display: flex; justify-content: space-between; align-items: center; background: #1e293b; padding: 12px 20px; border-radius: 10px; border: 1px solid #334155; box-shadow: 0 4px 12px rgba(0,0,0,0.3); }}
+        .btn-print {{ cursor: pointer; background: #2563eb; color: #ffffff; border: none; padding: 8px 18px; border-radius: 6px; font-weight: 600; font-size: 13px; display: inline-flex; align-items: center; gap: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.2); transition: background 0.2s; }}
+        .btn-print:hover {{ background: #1d4ed8; }}
         @media print {{
+            .no-print {{ display: none !important; }}
             body {{ background: #fff; color: #000; padding: 0; }}
             .container {{ background: #fff; color: #000; box-shadow: none; border: none; padding: 0; }}
             th {{ background: #f1f5f9; color: #000; border-bottom: 2px solid #000; }}
@@ -44,6 +48,17 @@ HTML_TEMPLATE_HEADER = """<!DOCTYPE html>
     </style>
 </head>
 <body>
+<div class="no-print">
+    <div style="font-size: 13px; color: #94a3b8; display: flex; align-items: center; gap: 8px;">
+        <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #3b82f6;"></span>
+        Documento técnico pronto para visualização e impressão
+    </div>
+    <div>
+        <button onclick="window.print()" class="btn-print">
+            🖨️ Imprimir / Salvar em PDF
+        </button>
+    </div>
+</div>
 <div class="container">
     <div class="header">
         <div>

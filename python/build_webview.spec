@@ -206,6 +206,8 @@ a = Analysis(
         'src.system.core.local_handler',
         'src.network.interfaces',
         'src.network.dns_resolver',
+        'src.network.dns_diagnostics',
+        'src.network.asn_lookup',
         'src.network.ping',
         'src.network.iperf',
         'src.network.mtr',

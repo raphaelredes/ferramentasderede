@@ -1,4 +1,4 @@
-﻿export interface ToolHelpInfo {
+export interface ToolHelpInfo {
     id: string;
     title: string;
     category: string;
@@ -35,46 +35,49 @@ export const TOOLS_HELP_DATA: Record<string, ToolHelpInfo> = {
     },
     traceroute: {
         id: 'traceroute',
-        title: 'Traceroute (Rastreamento de Rota)',
+        title: 'Traceroute BGP (Rastreamento de Rota)',
         category: 'diag',
         categoryLabel: 'Diagnóstico',
-        summary: 'Mapeia e exibe cada roteador intermediário (salto/hop) pelo qual os pacotes trafegam até chegar ao destino.',
+        summary: 'Mapeia e exibe cada roteador intermediário pelo qual os pacotes trafegam, enriquecido com BGP ASN, nome da operadora e grafo de topologia.',
         howItWorks: [
-            'Envia pacotes IP com o campo TTL (Time to Live) iniciando em 1 e incrementando a cada salto.',
-            'Cada roteador no caminho decrementa o TTL; ao chegar a zero, o roteador descarta o pacote e retorna uma mensagem ICMP Time Exceeded com seu próprio IP.',
-            'Permite visualizar o caminho físico e lógico completo percorrido pelo tráfego de rede.',
+            'Envia pacotes IP com TTL (Time to Live) progressivo (iniciando em 1) até atingir o destino.',
+            'Cada salto intermediário decrementa o TTL; ao atingir zero, responde com ICMP Time Exceeded identificando o roteador.',
+            'Para cada IP descoberto, consulta em tempo real o ASN (Sistema Autônomo BGP), nome da operadora e código de país via Team Cymru DNS RFC 1035.',
+            'Apresenta visão dupla: Tabela BGP com grafo visual de nós ou Console de saída nativa.',
         ],
         useCases: [
-            'Identificar em qual roteador, operadora ou firewall o tráfego está sendo bloqueado ou descartado.',
-            'Descobrir rotas assimétricas ou caminhos indesejados (ex: tráfego saindo por um link de backup incorreto).',
-            'Diagnosticar loops de roteamento em redes internas e ambientes de VPN.',
+            'Descobrir por quais operadoras de trânsito (Tier-1, IX.br, PTT) o tráfego está passando.',
+            'Identificar gargalos de latência ou perda de pacotes em roteadores específicos no caminho.',
+            'Verificar se a rota está saindo pelo link ou operadora esperada (evitando desvios indesejados).',
         ],
         tips: [
-            'Linhas com asteriscos (* * *) indicam que o roteador intermediário está configurado para não responder a ICMP Time Exceeded (comum por segurança), o que não significa necessariamente que a rota esteja quebrada.',
+            'Linhas com asteriscos (* * *) indicam firewalls que descartam ICMP Time Exceeded (comum por segurança); se os saltos seguintes responderem, a rota não está quebrada.',
+            'É possível alternar para a aba "Terminal" a qualquer momento para visualizar ou copiar a saída bruta idêntica ao prompt do sistema.',
         ],
-        protocolsOrPorts: 'ICMP / UDP (TTL Progressivo)'
+        protocolsOrPorts: 'ICMP / Tracert Nativo + Team Cymru DNS'
     },
     mtr: {
         id: 'mtr',
-        title: 'MTR (Path Monitor Salto a Salto)',
+        title: 'MTR com Jitter & Sparklines (Path Monitor)',
         category: 'diag',
         categoryLabel: 'Diagnóstico',
-        summary: 'Combina a funcionalidade do Traceroute com a amostragem contínua do Ping em uma tabela dinâmica ao vivo.',
+        summary: 'Combina Traceroute com amostragem contínua do Ping em tempo real, calculando Jitter RFC 1889, gráficos de tendência e ASN das operadoras.',
         howItWorks: [
-            'Identifica todos os saltos da rota até o destino e dispara pings contínuos para cada um deles em paralelo.',
-            'Calcula métricas estatísticas atualizadas a cada ciclo: Perda (Loss %), Última Latência, Média, Mínima, Máxima e Jitter (variação de latência).',
-            'Utiliza os utilitários nativos do sistema operacional, sem necessidade de drivers ou bibliotecas adicionais.',
+            'Mapeia a topologia da rota e dispara sondas contínuas para cada salto em paralelo.',
+            'Calcula a cada ciclo a perda percentual (Loss %), último RTT, média, melhor, pior tempo e Jitter inter-pacote segundo o algoritmo padrão RFC 1889 / RFC 3550.',
+            'Desenha gráficos Sparkline SVG em tempo real refletindo o histórico dos últimos 20 disparos de cada roteador.',
+            'Resolve o BGP ASN e a razão social da operadora em cada salto via Team Cymru.',
         ],
         useCases: [
-            'Provar para operadoras e provedores de link onde exatamente a perda de pacotes está ocorrendo.',
-            'Diagnosticar problemas de voz sobre IP (VoIP) e videoconferência causados por Jitter elevado em saltos específicos.',
-            'Monitorar a qualidade contínua de um túnel ou link dedicado durante transferências de grande volume.',
+            'Diagnosticar e comprovar para operadoras e provedores de link onde exatamente a perda ou oscilação de latência está ocorrendo.',
+            'Detectar oscilações críticas de Jitter que afetam chamadas VoIP, videoconferências ou jogos online.',
+            'Monitorar links dedicados e túneis VPN durante picos de tráfego.',
         ],
         tips: [
-            'Deixe o MTR rodar por pelo menos 30 a 50 ciclos para obter médias estatísticas confiáveis.',
-            'Se a perda de pacotes aparece em apenas um salto intermediário mas NÃO persiste nos saltos seguintes, trata-se apenas de limitação de taxa (ICMP rate-limiting) daquele roteador, e não de um problema real.',
+            'Deixe o MTR acumular de 20 a 50 ciclos para obter dados estatísticos altamente consistentes.',
+            'Se a perda aparecer em apenas um salto intermediário e não se propagar para os saltos seguintes, trata-se apenas de descarte de ICMP de controle pelo roteador (ICMP rate-limiting), e não de congestionamento real da rota.',
         ],
-        protocolsOrPorts: 'ICMP / Tracert Nativo'
+        protocolsOrPorts: 'ICMP Nativo + RFC 1889 + Team Cymru DNS'
     },
     'tcp-ping': {
         id: 'tcp-ping',
@@ -262,23 +265,27 @@ export const TOOLS_HELP_DATA: Record<string, ToolHelpInfo> = {
     },
     dns: {
         id: 'dns',
-        title: 'Consulta DNS (Direta & Reversa)',
+        title: 'Consulta & Diagnóstico DNS Profissional',
         category: 'dns',
         categoryLabel: 'DNS & Nomes',
-        summary: 'Executa consultas detalhadas no servidor DNS com suporte a múltiplos tipos de registros e servidores por VLAN.',
+        summary: 'Executa consultas RFC 1035/8499 com inspeção de múltiplos registros, benchmark multi-provedor (Google, Cloudflare, Quad9, AD) e saída canônica ISC BIND DiG.',
         howItWorks: [
-            'Envia consultas DNS RFC 1035 para o servidor especificado ou para o resolver padrão da máquina.',
-            'Detecta automaticamente se a entrada é um nome (resolução direta: A, AAAA, CNAME, MX, TXT) ou um IP (resolução reversa: PTR).',
+            'Envia mensagens DNS binárias RFC via UDP com chaveamento automático para TCP (RFC 7766) em mensagens truncadas.',
+            'Suporta consultas específicas (A, AAAA, CNAME, MX, TXT, NS, SOA, PTR, SRV, CAA) e modo Diagnóstico Completo de domínio com verificação de SPF e integridade de e-mail.',
+            'O recurso Benchmark compara simultaneamente a latência e o consenso de respostas entre o resolvedor da máquina corporativa e provedores mundiais de referência.',
+            'Exibe status RCODE formal (NOERROR, SERVFAIL, NXDOMAIN, REFUSED, TIMEOUT) com métricas de tempo em milissegundos e flags ativas (AA, RD, RA, AD).',
         ],
         useCases: [
-            'Testar se um nome de máquina interna está resolvendo para o IP correto.',
-            'Verificar apontamentos de domínios públicos e registros de e-mail (MX, SPF, TXT).',
-            'Diagnosticar falhas de resolução em ambientes corporativos multi-domínio.',
+            'Isolar se uma falha de resolução é da rede interna (timeout/forwarder no DNS corporativo) ou do domínio externo.',
+            'Verificar apontamentos de e-mail (MX) e registros de segurança de remetente (SPF/DMARC em TXT).',
+            'Testar a consistência de resolução reversa (PTR) e FCrDNS para servidores de aplicação.',
+            'Comparar a latência de resolução entre múltiplos provedores DNS para otimizar desempenho.',
         ],
         tips: [
-            'Informe o servidor DNS de uma rede específica para simular a resolução a partir de outra VLAN ou filial.',
+            'Se o resolvedor local retornar SERVFAIL ou TIMEOUT, utilize o botão "Comparar Provedores (Benchmark)" para confirmar imediatamente se o domínio funciona via Google (8.8.8.8) ou Cloudflare (1.1.1.1).',
+            'Use a aba "Saída Raw (DiG)" para copiar a saída textual completa nos padrões de relatórios de engenharia de rede.',
         ],
-        protocolsOrPorts: 'DNS UDP/TCP 53'
+        protocolsOrPorts: 'DNS UDP/TCP 53 (RFC 1035, RFC 7766, RFC 8499)'
     },
     tls: {
         id: 'tls',
@@ -307,22 +314,25 @@ export const TOOLS_HELP_DATA: Record<string, ToolHelpInfo> = {
         title: 'Banda & Vazão (iPerf2 Nativo)',
         category: 'banda',
         categoryLabel: 'Banda & Web',
-        summary: 'Mede a capacidade real de transmissão de dados (Mbits/s), vazão e qualidade do link entre dois pontos da rede.',
+        summary: 'Mede a capacidade real de transmissão de dados (Mbits/s), vazão e qualidade do link entre dois pontos da rede com dashboard em tempo real.',
         howItWorks: [
-            'Modo Servidor: Coloca esta máquina em modo de escuta aguardando testes disparados por outros computadores.',
-            'Modo Cliente: Conecta a um servidor iPerf existente na rede e transfere blocos de dados contínuos medindo a taxa média de transferência.',
-            'Suporta fluxos TCP (vazão pura) e UDP (com medição de perda e jitter).',
+            'Modo Servidor: Detecta automaticamente os IPs locais ativos da máquina e coloca o iPerf em modo de escuta (porta 5001 padrão). Permite inicializar o servidor automaticamente em segundo plano ao abrir o aplicativo.',
+            'Modo Cliente: Conecta a um servidor iPerf existente na rede e transfere blocos de dados contínuos, medindo taxa média de transferência e volume transmitido.',
+            'Suporta fluxos paralelos com concorrência adaptativa (-P 1, 2, 4 ou 8 fluxos) para saturar links Gigabit/10G e detectar limites de janela TCP.',
+            'Suporta testes TCP (vazão pura) e UDP (com medição de perda de pacotes e jitter em tempo real).',
         ],
         useCases: [
-            'Medir a velocidade real de cabos de rede, links de rádio, fibra óptica e túneis VPN.',
+            'Medir a velocidade real de cabos de rede, links de rádio, fibra óptica e túneis VPN sem interferência de I/O de disco.',
             'Identificar gargalos em switches e placas de rede operando erroneamente em 100 Mbps em vez de 1 Gbps.',
-            'Testar a taxa de transferência real sem a interferência de lentidão de disco ou antivírus.',
+            'Auditar saturação de buffers e estabilidade de jitter em conexões de dados e voz sobre IP.',
         ],
         tips: [
-            'No modo Servidor, a ferramenta exibe o comando exato que deve ser executado no computador da outra ponta para iniciar o teste.',
-            'Suporta "Sair pela rede" para testar interfaces específicas em computadores conectados a múltiplas VLANs.',
+            'No modo Servidor, a interface detecta e exibe seus IPs locais em chips clicáveis com botões de 1 clique para copiar o comando exato (iperf2 ou iperf3).',
+            'O binário empacotado no sistema é o iPerf 2. A porta nativa padrão é a 5001 (enquanto no iPerf 3 a porta padrão costuma ser 5201).',
+            'Utilize o botão rápido "127.0.0.1" no modo Cliente para testar se o servidor local da sua máquina está ativo e respondendo.',
+            'Marque "Sempre que executar o programa já inicializar o servidor iPerf" se este computador atua como ponto permanente de teste para a equipe de suporte.',
         ],
-        protocolsOrPorts: 'Porta TCP/UDP 5201 (iPerf2)'
+        protocolsOrPorts: 'Porta TCP/UDP 5001 (iPerf2)'
     },
     traffic: {
         id: 'traffic',

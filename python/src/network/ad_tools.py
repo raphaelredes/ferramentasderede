@@ -169,3 +169,171 @@ def check_kerberos_time_skew(target_host: str, source_ip: Optional[str] = None) 
             "error": str(exc),
             "status": "ERROR"
         }
+
+
+def get_ad_fsmo_roles(domain: Optional[str] = None) -> Dict[str, Any]:
+    """Descobre e mapeia os 5 detentores de funções FSMO no Active Directory."""
+    import subprocess
+    import os
+    import re
+
+    cmd = ["netdom", "query", "fsmo"]
+    if domain and domain.strip():
+        cmd.extend(["/domain:" + domain.strip()])
+
+    flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+    startupinfo = None
+    if os.name == "nt":
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = subprocess.SW_HIDE
+
+    try:
+        p = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="cp850" if os.name == "nt" else "utf-8",
+            errors="replace",
+            creationflags=flags,
+            startupinfo=startupinfo,
+            timeout=10,
+        )
+    except Exception as e:
+        return {"ok": False, "error": f"Falha ao executar netdom: {e}"}
+
+    if p.returncode != 0:
+        err_msg = p.stderr.strip() or p.stdout.strip() or f"Código de saída: {p.returncode}"
+        return {"ok": False, "error": f"Erro ao consultar FSMO: {err_msg}"}
+
+    lines = p.stdout.splitlines()
+    roles = {
+        "schema_master": None,
+        "domain_naming_master": None,
+        "pdc_emulator": None,
+        "rid_master": None,
+        "infrastructure_master": None,
+    }
+
+    for line in lines:
+        l = line.strip()
+        if not l or "Comando conclu" in l:
+            continue
+        parts = re.split(r"\s{2,}", l)
+        if len(parts) >= 2:
+            role_label = parts[0].lower()
+            holder = parts[1].strip()
+        else:
+            tokens = l.split()
+            if len(tokens) >= 2:
+                role_label = " ".join(tokens[:-1]).lower()
+                holder = tokens[-1].strip()
+            else:
+                continue
+
+        if "esquema" in role_label or "schema" in role_label:
+            roles["schema_master"] = holder
+        elif "nomea" in role_label or "naming" in role_label:
+            roles["domain_naming_master"] = holder
+        elif "pdc" in role_label:
+            roles["pdc_emulator"] = holder
+        elif "rid" in role_label:
+            roles["rid_master"] = holder
+        elif "infraestrutura" in role_label or "infrastructure" in role_label:
+            roles["infrastructure_master"] = holder
+
+    role_list = [
+        {"role": "Schema Master", "desc": "Mestre de Esquema da Floresta (Modificações de Classes e Atributos)", "holder": roles["schema_master"]},
+        {"role": "Domain Naming Master", "desc": "Mestre de Nomeação de Domínio (Adição e Remoção de Domínios na Floresta)", "holder": roles["domain_naming_master"]},
+        {"role": "PDC Emulator", "desc": "Emulador PDC (Sincronismo de Tempo, Bloqueio de Senhas e GPO)", "holder": roles["pdc_emulator"]},
+        {"role": "RID Master", "desc": "Mestre de Pools RID (Alocação de Identificadores de Segurança)", "holder": roles["rid_master"]},
+        {"role": "Infrastructure Master", "desc": "Mestre de Infraestrutura (Referências de Objetos Inter-domínio)", "holder": roles["infrastructure_master"]},
+    ]
+
+    return {
+        "ok": True,
+        "domain": domain or "Local / Atual",
+        "roles": roles,
+        "role_list": role_list,
+        "raw_output": p.stdout.strip(),
+    }
+
+
+def check_ad_replication(dc_target: Optional[str] = None) -> Dict[str, Any]:
+    """Audita a replicação do Active Directory com repadmin /replsummary."""
+    import subprocess
+    import os
+    import re
+
+    cmd = ["repadmin", "/replsummary"]
+    if dc_target and dc_target.strip():
+        cmd.append(dc_target.strip())
+
+    flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+    startupinfo = None
+    if os.name == "nt":
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = subprocess.SW_HIDE
+
+    try:
+        p = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="cp850" if os.name == "nt" else "utf-8",
+            errors="replace",
+            creationflags=flags,
+            startupinfo=startupinfo,
+            timeout=15,
+        )
+    except Exception as e:
+        return {"ok": False, "error": f"Falha ao executar repadmin: {e}"}
+
+    if p.returncode != 0 and not p.stdout:
+        err_msg = p.stderr.strip() or f"Código de saída: {p.returncode}"
+        return {"ok": False, "error": f"Erro na replicação: {err_msg}"}
+
+    lines = p.stdout.splitlines()
+    sources = []
+    destinations = []
+    current_section = None
+
+    for line in lines:
+        l = line.strip()
+        if not l:
+            continue
+        if "DSA Origem" in l or "Source DSA" in l:
+            current_section = "source"
+            continue
+        elif "DSA Destino" in l or "Destination DSA" in l:
+            current_section = "dest"
+            continue
+
+        m = re.match(r"^([a-zA-Z0-9.-]+)\s+([0-9a-zA-Z.:]+)\s+(\d+)\s*/\s*(\d+)\s*(\d*)", l)
+        if m:
+            entry = {
+                "dsa": m.group(1),
+                "largest_delta": m.group(2),
+                "fails": int(m.group(3)),
+                "total": int(m.group(4)),
+                "percent_fails": int(m.group(5)) if m.group(5) else 0,
+                "status": "HEALTHY" if int(m.group(3)) == 0 else "FAILING",
+            }
+            if current_section == "source":
+                sources.append(entry)
+            elif current_section == "dest":
+                destinations.append(entry)
+
+    total_fails = sum(s["fails"] for s in sources) + sum(d["fails"] for d in destinations)
+
+    return {
+        "ok": True,
+        "dc_target": dc_target or "Todos os Controladores",
+        "total_fails": total_fails,
+        "status": "HEALTHY" if total_fails == 0 else "WARNING",
+        "sources": sources,
+        "destinations": destinations,
+        "raw_output": p.stdout.strip(),
+    }
+

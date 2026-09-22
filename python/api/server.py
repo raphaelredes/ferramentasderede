@@ -152,6 +152,7 @@ app.include_router(metrics.router)
 app.include_router(l2_discovery.router)
 app.include_router(batch_ops.router)
 app.include_router(reports.router)
+app.include_router(reports.router, prefix="/api")
 
 # --- Root Endpoint ---
 @app.get("/")

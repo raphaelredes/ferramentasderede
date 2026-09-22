@@ -21,6 +21,7 @@ import { LldpCdpPanel } from '../components/Tools/LldpCdpPanel';
 import { SmbSharePanel } from '../components/Tools/SmbSharePanel';
 import { ArpConflictPanel } from '../components/Tools/ArpConflictPanel';
 import { DiagnosticToolRunner } from '../components/Tools/DiagnosticToolRunner';
+import { TraceroutePanel } from '../components/Tools/TraceroutePanel';
 import { ToolHelpModal } from '../components/Tools/ToolHelpModal';
 
 import { Host } from '../types';
@@ -105,7 +106,6 @@ export function Tools() {
         mtrState,
         portState,
         runPing,
-        runTraceroute,
         stopTool,
         clearToolOutput,
         pendingAction,
@@ -275,19 +275,11 @@ export function Tools() {
                 )}
 
                 {activeTab === 'traceroute' && (
-                    <DiagnosticToolRunner
-                        type="traceroute"
-                        state={traceState}
+                    <TraceroutePanel
                         target={localTraceTarget}
                         setTarget={setLocalTraceTarget}
-                        run={runTraceroute}
-                        stop={() => stopTool('traceroute')}
-                        clear={() => clearToolOutput('traceroute')}
-                        colorClass="text-purple-400"
-                        borderColorClass="border-purple-900/30 hover:border-purple-500/50"
                         sourceIp={traceSourceIp}
                         setSourceIp={setTraceSourceIp}
-                        availableNetworks={networks}
                     />
                 )}
 

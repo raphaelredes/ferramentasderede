@@ -134,29 +134,61 @@ def _ping_host(ip, count, source_ip=None):
     return count, received, rtts
 
 
+from src.network.asn_lookup import lookup_ip_asn
+
+
 class _HopAccumulator:
     """Rolling per-hop stats keyed by distance (TTL). Jitter is computed per
-    cycle (intra-cycle mean |Δ|) and averaged — never across cycle boundaries."""
+    cycle (intra-cycle mean |Δ|) and averaged — never across cycle boundaries.
+    Also retains recent RTT history for Sparklines and resolves BGP ASN."""
 
     def __init__(self):
         self._hops = {}
+        self._asn_cache = {}
 
     def ensure(self, distance, address):
         h = self._hops.get(distance)
         if h is None:
-            h = {"distance": distance, "address": address, "sent": 0,
-                 "received": 0, "rtts": [], "jitter_sum": 0.0, "jitter_n": 0}
+            h = {
+                "distance": distance,
+                "address": address,
+                "sent": 0,
+                "received": 0,
+                "rtts": [],
+                "history": [],
+                "jitter_sum": 0.0,
+                "jitter_n": 0,
+            }
             self._hops[distance] = h
         elif address:
             h["address"] = address
+
+        if address and address not in self._asn_cache and address != "*":
+            self._asn_cache[address] = lookup_ip_asn(address)
+
         return h
 
     def update(self, distance, address, sent, received, rtts):
         h = self.ensure(distance, address)
         h["sent"] += sent
         h["received"] += received
+
+        # Append to history for Sparklines: numeric RTTs or None for losses
+        if rtts:
+            h["history"].extend(rtts)
+            if sent > received:
+                # Add None markers for dropped packets in this probe batch
+                dropped_count = sent - received
+                h["history"].extend([None] * dropped_count)
+        elif sent > 0:
+            h["history"].extend([None] * sent)
+
+        if len(h["history"]) > 30:
+            h["history"] = h["history"][-30:]
+
         if rtts:
             if len(rtts) > 1:
+                # RFC 1889 intra-cycle jitter
                 diffs = [abs(rtts[i] - rtts[i - 1]) for i in range(1, len(rtts))]
                 h["jitter_sum"] += sum(diffs) / len(diffs)
                 h["jitter_n"] += 1
@@ -178,9 +210,16 @@ class _HopAccumulator:
                 jitter = (h["jitter_sum"] / h["jitter_n"]) if h["jitter_n"] else 0.0
             else:
                 last = best = worst = avg = jitter = None
+
+            addr = h["address"]
+            asn_info = self._asn_cache.get(addr, {}) if addr else {}
+
             rows.append({
                 "hop": distance,
-                "address": h["address"] or "*",
+                "address": addr or "*",
+                "asn": asn_info.get("asn", "—"),
+                "as_name": asn_info.get("as_name", "—"),
+                "country": asn_info.get("country", "—"),
                 "loss_pct": round(loss_pct, 1),
                 "sent": sent,
                 "last": round(last, 2) if last is not None else None,
@@ -188,6 +227,7 @@ class _HopAccumulator:
                 "best": round(best, 2) if best is not None else None,
                 "worst": round(worst, 2) if worst is not None else None,
                 "jitter": round(jitter, 2) if jitter is not None else None,
+                "history": h.get("history", [])[-20:],
             })
         return rows
 

@@ -34,13 +34,140 @@ def _append_log(path, text):
         pass
 
 class WinRMHandler:
-    def __init__(self, target_ip, username, password):
+    def __init__(self, target_ip, username, password, target_hostname=None):
         self.target_ip = target_ip
         self.username = username
         self.password = password
+        resolved_fqdn, resolved_domain = self._resolve_target_fqdn_and_domain(target_ip)
+        self.target_hostname = target_hostname or resolved_fqdn
+        self.target_domain = resolved_domain
         self.wsman = None
         self.pool = None
         self.ps = None  # Objeto PowerShell persistente
+
+    @classmethod
+    def _resolve_target_fqdn_and_domain(cls, target_ip):
+        """Resolve o IP alvo para um FQDN e domínio estritamente validados por DNS direto.
+
+        Garante que qualquer FQDN retornado resolva de volta para target_ip via DNS,
+        evitando contaminação de sufixo de domínio (ex: ADM-36494 resolvendo para
+        10.212.134.100 no domínio local betim.pmb quando o alvo real é 10.10.90.7 no domínio saude.betim).
+        """
+        import re
+        import socket
+        if not target_ip or not re.fullmatch(r"(?:\d{1,3}\.){3}\d{1,3}", target_ip):
+            return target_ip, None
+
+        short_name = None
+        cand_domain = None
+
+        # 1. Consulta o host no banco de dados local
+        try:
+            from api.routes.network import host_manager_instance
+            for h in host_manager_instance.get_all_hosts():
+                if h.get("ip") == target_ip or h.get("address") == target_ip:
+                    cand = h.get("name") or h.get("hostname")
+                    if cand and cand != target_ip:
+                        short_name = cand.split(".")[0]
+                    dom = h.get("domain")
+                    if dom and dom not in ("N/A", "Unknown", "local"):
+                        cand_domain = dom
+                    break
+        except Exception:
+            pass
+
+        # 2. DNS reverso se short_name ainda não conhecido
+        if not short_name:
+            try:
+                rev_name = socket.gethostbyaddr(target_ip)[0]
+                if rev_name and rev_name != target_ip:
+                    if "." in rev_name:
+                        try:
+                            if socket.gethostbyname(rev_name) == target_ip:
+                                return rev_name, rev_name.split(".", 1)[1]
+                        except Exception:
+                            pass
+                        short_name = rev_name.split(".")[0]
+                    else:
+                        short_name = rev_name
+            except Exception:
+                pass
+
+        if not short_name:
+            return None, None
+
+        # 3. Coleta domínios candidatos para testar resolução direta
+        candidates = []
+        seen = set()
+
+        def add_c(d):
+            if d and isinstance(d, str):
+                c = d.strip()
+                if c and c.lower() not in seen and c.lower() not in ("n/a", "unknown", "local"):
+                    seen.add(c.lower())
+                    candidates.append(c)
+
+        if cand_domain:
+            add_c(cand_domain)
+
+        # Domínio configurado na rede do alvo em Configurações
+        add_c(cls._domain_for_target_ip(target_ip))
+
+        # Domínio gravado no current_user do host
+        try:
+            from api.routes.network import host_manager_instance
+            for h in host_manager_instance.get_all_hosts():
+                if h.get("ip") == target_ip or h.get("address") == target_ip:
+                    cu = h.get("current_user")
+                    if cu and "\\" in cu:
+                        add_c(cu.split("\\")[0])
+                    elif cu and "@" in cu:
+                        add_c(cu.split("@")[1])
+        except Exception:
+            pass
+
+        # Domínios de confiança conhecidos da floresta / rede corporativa
+        for known in ("saude.betim", "betim.pmb", "transbetim.betim", "betim.mg", "semed.betim"):
+            add_c(known)
+
+        # Todas as redes cadastradas em Configurações
+        try:
+            from api.routes.settings import load_settings
+            settings = load_settings()
+            for net in (settings.networks or []):
+                if net.enabled and net.domain:
+                    add_c(net.domain)
+        except Exception:
+            pass
+
+        add_c(os.environ.get("USERDNSDOMAIN"))
+        add_c(os.environ.get("USERDOMAIN"))
+
+        # 4. Testa cada FQDN candidato com resolução direta para bater com target_ip
+        for d in candidates:
+            fqdn_candidate = f"{short_name}.{d}"
+            try:
+                resolved_ip = socket.gethostbyname(fqdn_candidate)
+                if resolved_ip == target_ip:
+                    # Persiste o domínio descoberto no host_manager se estava ausente
+                    try:
+                        from api.routes.network import host_manager_instance
+                        host_manager_instance.update_host_details(target_ip, hostname=short_name, domain=d)
+                    except Exception:
+                        pass
+                    return fqdn_candidate, d
+            except Exception:
+                continue
+
+        # 5. Se nenhum domínio candidato casou, verifica se o short_name sozinho resolve para o IP correto
+        try:
+            if socket.gethostbyname(short_name) == target_ip:
+                return short_name, None
+        except Exception:
+            pass
+
+        # NUNCA retorna um short_name que resolve para outro IP diferente de target_ip!
+        return None, None
 
     @staticmethod
     def _domain_for_target_ip(ip_address):
@@ -67,6 +194,55 @@ class WinRMHandler:
         except Exception as e:
             logging.debug(f"_domain_for_target_ip failed: {e}")
         return None
+
+    def _candidate_domains(self):
+        """Coleta domínios potenciais associados ao alvo ou ambiente operacional."""
+        seen = set()
+        candidates = []
+
+        def add(d):
+            if d and isinstance(d, str):
+                cleaned = d.strip()
+                if cleaned and cleaned not in seen and cleaned.lower() not in ("n/a", "unknown", "local"):
+                    seen.add(cleaned)
+                    candidates.append(cleaned)
+
+        # 0. Domínio validado do alvo (prioridade máxima)
+        if getattr(self, 'target_domain', None):
+            add(self.target_domain)
+
+        # 1. Domínio configurado na rede do alvo em Configurações
+        add(self._domain_for_target_ip(self.target_ip))
+
+        # 2. Domínio e usuário gravados no banco de dados para este host
+        try:
+            from api.routes.network import host_manager_instance
+            for h in host_manager_instance.get_all_hosts():
+                if h.get("ip") == self.target_ip or h.get("address") == self.target_ip:
+                    add(h.get("domain"))
+                    cu = h.get("current_user")
+                    if cu and "\\" in cu:
+                        add(cu.split("\\")[0])
+                    elif cu and "@" in cu:
+                        add(cu.split("@")[1])
+        except Exception:
+            pass
+
+        # 3. Todos os domínios de redes cadastradas em Configurações
+        try:
+            from api.routes.settings import load_settings
+            settings = load_settings()
+            for net in (settings.networks or []):
+                if net.enabled and net.domain:
+                    add(net.domain)
+        except Exception:
+            pass
+
+        # 4. Domínio do computador local (AD)
+        add(os.environ.get("USERDNSDOMAIN"))
+        add(os.environ.get("USERDOMAIN"))
+
+        return candidates
 
     @staticmethod
     def _mask_username(username):
@@ -97,12 +273,10 @@ class WinRMHandler:
         Heuristics:
           - Always try the user-provided value first.
           - If user@domain: also try domain\\user and netbios\\user.
-          - If domain\\user: also try user@domain.
-          - If bare 'user' AND the target IP is in a network with a configured
-            domain: try user@domain and domain\\user too. This is the
-            cross-domain auto-helper — if the analyst on Domínio A tries
-            to reach a machine in Domínio B without qualifying, we reach
-            for the right qualifier from settings instead of failing fast.
+          - If domain\\user with FQDN: also try user@domain AND netbios\\user (essential for NTLM).
+          - If domain\\user with NetBIOS: also try user@fqdn using candidate domains.
+          - If target_domain is known and differs from provided domain: also try target_domain variants.
+          - If bare 'user': try target_domain variants, then candidate domains.
         """
         seen = set()
         variants = []
@@ -113,26 +287,54 @@ class WinRMHandler:
                 variants.append(u)
 
         add(self.username)
+        candidate_domains = self._candidate_domains()
+        tgt_domain = getattr(self, 'target_domain', None)
 
         if "@" in self.username:
             user_part, domain_part = self.username.split("@", 1)
             add(f"{domain_part}\\{user_part}")
             if "." in domain_part:
                 add(f"{domain_part.split('.')[0]}\\{user_part}")
+            # Se o alvo está em outro domínio, tenta variantes no domínio do alvo
+            if tgt_domain and domain_part.lower() != tgt_domain.lower():
+                add(f"{tgt_domain}\\{user_part}")
+                add(f"{tgt_domain.split('.')[0]}\\{user_part}")
+                add(f"{user_part}@{tgt_domain}")
+            add(user_part)
         elif "\\" in self.username:
             domain_part, user_part = self.username.split("\\", 1)
-            # No reliable way to recover full UPN from a NetBIOS name, but
-            # if the input was already FQDN\\user we can flip it.
             if "." in domain_part:
+                # FQDN\user -> UPN (user@domain) and NetBIOS (netbios\user)
                 add(f"{user_part}@{domain_part}")
+                add(f"{domain_part.split('.')[0]}\\{user_part}")
+            else:
+                # NetBIOS\user -> try UPN with candidate DNS domains
+                for cd in candidate_domains:
+                    if "." in cd and cd.lower().startswith(domain_part.lower()):
+                        add(f"{user_part}@{cd}")
+                # Also try UPN with raw domain_part
+                add(f"{user_part}@{domain_part}")
+            # Se o alvo está em outro domínio, tenta variantes no domínio do alvo
+            if tgt_domain and domain_part.lower() not in (tgt_domain.lower(), tgt_domain.split(".")[0].lower()):
+                add(f"{tgt_domain}\\{user_part}")
+                add(f"{tgt_domain.split('.')[0]}\\{user_part}")
+                add(f"{user_part}@{tgt_domain}")
+            add(user_part)
         else:
-            # Bare username — consult settings for the target's domain.
-            target_domain = self._domain_for_target_ip(self.target_ip)
-            if target_domain:
-                add(f"{self.username}@{target_domain}")
-                add(f"{target_domain}\\{self.username}")
-                if "." in target_domain:
-                    add(f"{target_domain.split('.')[0]}\\{self.username}")
+            # Bare username
+            if tgt_domain:
+                add(f"{tgt_domain.split('.')[0]}\\{self.username}")
+                add(f"{self.username}@{tgt_domain}")
+                add(f"{tgt_domain}\\{self.username}")
+            for cd in candidate_domains:
+                if "." in cd:
+                    netbios = cd.split('.')[0]
+                    add(f"{netbios}\\{self.username}")
+                    add(f"{self.username}@{cd}")
+                    add(f"{cd}\\{self.username}")
+                else:
+                    add(f"{cd}\\{self.username}")
+                    add(f"{self.username}@{cd}")
 
         return variants
 
@@ -146,32 +348,23 @@ class WinRMHandler:
         """
         last_result = None
         had_qualified_auth_fail = False
-        for variant in self._username_variants():
+        variants = self._username_variants()
+        for variant in variants:
             if variant != self.username:
-                # Demoted from info to debug: every variant attempt used to
-                # land in the logfile with the full DOMAIN\user string.
                 logging.debug(f"Tentando variante de username: {self._mask_username(variant)}")
             result = self._try_connect(variant, self.password)
             if result.get("success"):
                 self.username = variant
-                # Zero the password reference. Best-effort: Python strings are
-                # immutable and may still live in the interning table, but the
-                # primary leak path (handler held by /ws/terminal for the full
-                # session) is closed.
                 self.password = None
                 return result
             last_result = result
-            # Don't keep retrying variants if the failure isn't auth-related.
+            # Don't keep retrying variants if the failure isn't auth-related (e.g. host down/port closed).
             if result.get("code") not in (None, "AUTH_FAILED", "CROSS_DOMAIN_AUTH"):
                 break
-            # If we already failed with a *qualified* form (DOMAIN\\user or
-            # user@domain), the bare/other-qualified variants will fail too —
-            # AD interprets them as the same identity. Stop here to keep us
-            # from blowing through the lockout threshold on a single bad
-            # password.
+            # If we already failed with a qualified form, avoid retrying bare form
             if "\\" in variant or "@" in variant:
                 had_qualified_auth_fail = True
-            if had_qualified_auth_fail:
+            if had_qualified_auth_fail and len(variants) <= 2:
                 break
 
         return last_result or {"error": "Falha ao conectar.", "code": "UNKNOWN"}
@@ -206,40 +399,41 @@ class WinRMHandler:
         # NTLM / Kerberos auth-specific signatures
         if any(t in msg for t in ("kerberos", "spn", "kdc")):
             return ("CROSS_DOMAIN_AUTH",
-                    f"Falha Kerberos contra {self.target_ip}. Provável domínio diferente do seu sem relação de confiança. "
+                    f"Falha Kerberos contra {self.target_ip} ({method}). Provável domínio diferente do seu sem relação de confiança. "
                     f"Tente usuário no formato DOMINIO\\usuario ou usuario@dominio.")
-        if any(t in msg for t in ("0x80090308", "logon failure", "the user name or password", "unauthorized", "401", "access is denied", "access denied")):
-            # Could be wrong password OR wrong domain — give a hint. Username
-            # in the response is masked so a transcript / screenshot doesn't
-            # leak the full DOMAIN\user the operator typed.
+        if (any(t in msg for t in ("0x80090308", "logon failure", "the user name or password", "unauthorized",
+                                   "401", "access is denied", "access denied", "failed to authenticate"))
+                or "authentication" in exc_name.lower()):
             if "@" not in self.username and "\\" not in self.username:
                 return ("AUTH_FAILED",
-                        f"Credenciais recusadas por {self.target_ip}. Em ambiente multi-domínio, "
+                        f"Credenciais recusadas por {self.target_ip} ({method}). Em ambiente multi-domínio, "
                         f"informe o usuário como DOMINIO\\usuario ou usuario@dominio.")
             return ("AUTH_FAILED",
-                    f"Credenciais recusadas por {self.target_ip} (usuário: {self._mask_username(self.username)}).")
+                    f"Credenciais recusadas por {self.target_ip} ({method}) (usuário: {self._mask_username(self.username)}).")
         return ("UNKNOWN", f"{exc_name}: {exc}")
 
     def _try_connect(self, username, password):
         """Tenta conectar com um conjunto específico de credenciais."""
         errors = []
         codes = []
-        # negotiate + ntlm cover every Windows host the operator can reach.
-        # CredSSP was previously in the fallback chain — it delegates the
-        # operator's plaintext credentials to the remote target, which is
-        # exactly what you don't want if that target turns out to be hostile
-        # (a compromised host harvests the operator's domain account). Single-
-        # hop WinRM never needs CredSSP, so it's gone from the default.
         auth_methods = ['negotiate', 'ntlm']
 
         for method in auth_methods:
             try:
                 logging.info(f"Tentando conexão WinRM com método: {method} para {self.target_ip} (User: {self._mask_username(username)})")
 
-                wsman = WSMan(
-                    server=self.target_ip, username=username, password=password,
-                    ssl=False, connection_timeout=20, auth_method=method
-                )
+                ws_kwargs = {
+                    "server": self.target_ip,
+                    "username": username,
+                    "password": password,
+                    "ssl": False,
+                    "connection_timeout": 20,
+                    "auth": method,  # pypsrp parameter is 'auth', NOT 'auth_method'!
+                }
+                if self.target_hostname:
+                    ws_kwargs["negotiate_hostname_override"] = self.target_hostname
+
+                wsman = WSMan(**ws_kwargs)
                 pool = RunspacePool(wsman, configuration_name='Microsoft.PowerShell')
                 pool.open()
                 ps = PowerShell(pool)
@@ -247,7 +441,7 @@ class WinRMHandler:
                 self.wsman = wsman
                 self.pool = pool
                 self.ps = ps
-                logging.info(f"Conexão WinRM bem sucedida com método: {method}")
+                logging.info(f"Conexão WinRM bem sucedida com método: {method} (User: {self._mask_username(username)})")
                 return {"success": True}
 
             except Exception as e:
@@ -267,10 +461,40 @@ class WinRMHandler:
                 codes.append(code)
             self.pool = None
 
-        # NOTE: a dead "fallback localhost" block used to live here. It
-        # referenced `pool` and `wsman` from the prior loop iteration which
-        # had already been closed and garbage-collected, so it could never
-        # succeed. Removed to stop confusing future readers.
+        # Se conectar por IP com negotiate e ntlm falhou e tivermos hostname de domínio resolvido, tenta conectar direto pelo hostname
+        if self.target_hostname and self.target_hostname != self.target_ip:
+            try:
+                logging.info(f"Tentando fallback WinRM via hostname: {self.target_hostname} com negotiate (User: {self._mask_username(username)})")
+                wsman = WSMan(
+                    server=self.target_hostname,
+                    username=username,
+                    password=password,
+                    ssl=False,
+                    connection_timeout=15,
+                    auth='negotiate'
+                )
+                pool = RunspacePool(wsman, configuration_name='Microsoft.PowerShell')
+                pool.open()
+                ps = PowerShell(pool)
+                self.wsman = wsman
+                self.pool = pool
+                self.ps = ps
+                logging.info(f"Conexão WinRM bem sucedida via hostname: {self.target_hostname}")
+                return {"success": True}
+            except Exception as e:
+                try:
+                    if 'pool' in locals() and pool: pool.close()
+                except Exception:
+                    pass
+                try:
+                    if 'wsman' in locals() and wsman: wsman.close()
+                except Exception:
+                    pass
+                code, friendly = self._classify_error(e, f"hostname:{self.target_hostname}")
+                logging.warning(f"WinRM falhou via hostname ({self.target_hostname}): {e}")
+                errors.append(f"hostname ({self.target_hostname}): {friendly}")
+                codes.append(code)
+            self.pool = None
 
         # Se falhou e não é localhost, verifica se é problema de TrustedHosts
         if self.target_ip not in ["127.0.0.1", "localhost"]:
@@ -283,13 +507,14 @@ class WinRMHandler:
                     return {"error": "TRUSTED_HOSTS_REQUIRED", "code": "TRUSTED_HOSTS_REQUIRED",
                             "detail": "O IP alvo não está na lista de TrustedHosts."}
 
-        # Pick the most informative code observed across attempts
+        # Hierarchy: If any attempt proved the target was reachable and rejected auth,
+        # the primary code must reflect authentication failure, NOT network unreachable!
         priority = {
-            "WINRM_DISABLED": 0,
-            "NETWORK_UNREACHABLE": 1,
+            "CROSS_DOMAIN_AUTH": 0,
+            "AUTH_FAILED": 1,
             "TRUSTED_HOSTS_REQUIRED": 2,
-            "CROSS_DOMAIN_AUTH": 3,
-            "AUTH_FAILED": 4,
+            "WINRM_DISABLED": 3,
+            "NETWORK_UNREACHABLE": 4,
             "UNKNOWN": 5,
         }
         primary_code = sorted(codes, key=lambda c: priority.get(c, 99))[0] if codes else "UNKNOWN"

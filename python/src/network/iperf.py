@@ -80,6 +80,15 @@ def _iperf_binary():
     return None
 
 
+def _build_startupinfo():
+    if os.name == "nt":
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = subprocess.SW_HIDE
+        return startupinfo
+    return None
+
+
 def get_iperf_info():
     """Return availability + version of the iperf binary for the Settings/Tools
     UI. Never raises — a missing or non-runnable binary returns available=False
@@ -96,7 +105,8 @@ def get_iperf_info():
             text=True,
             encoding="utf-8",
             errors="replace",
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            creationflags=0x08000000 if os.name == "nt" else 0,
+            startupinfo=_build_startupinfo(),
             timeout=5,
         )
         # iperf2 prints the version banner to stderr on some builds, stdout on
@@ -115,7 +125,7 @@ def get_iperf_info():
 
 
 def _build_creationflags():
-    return subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+    return 0x08000000 if os.name == "nt" else 0
 
 
 def _stream_process(command):
@@ -137,6 +147,7 @@ def _stream_process(command):
         encoding="utf-8",
         errors="replace",
         creationflags=_build_creationflags(),
+        startupinfo=_build_startupinfo(),
     )
 
     yield "", process
@@ -189,7 +200,7 @@ def run_server(port=DEFAULT_IPERF_PORT, source_ip=None):
 
 
 def run_client(target, port=DEFAULT_IPERF_PORT, source_ip=None,
-               duration=10, reverse=False, udp=False):
+               duration=10, reverse=False, udp=False, parallel=1):
     """Run iperf2 in client mode against `target`, yielding (line, process).
 
     Tests bandwidth from this machine TO an existing iperf server on the
@@ -199,6 +210,7 @@ def run_client(target, port=DEFAULT_IPERF_PORT, source_ip=None,
     - `duration` (-t): test length in seconds, clamped to [1, MAX_CLIENT_DURATION].
     - `reverse` (--reverse): server sends, client receives (download direction).
     - `udp` (-u): UDP test instead of TCP.
+    - `parallel` (-P): number of parallel client threads to run.
     """
     binary = _iperf_binary()
     if not binary:
@@ -216,6 +228,8 @@ def run_client(target, port=DEFAULT_IPERF_PORT, source_ip=None,
                "-t", str(dur)]
     if source_ip:
         command += ["-B", source_ip]
+    if parallel and int(parallel) > 1:
+        command += ["-P", str(min(int(parallel), 32))]
     if reverse:
         # iperf2's reverse flag is the long form ONLY: `--reverse`. The short
         # `-R` is a DIFFERENT, dangerous option here — it means `--remove`

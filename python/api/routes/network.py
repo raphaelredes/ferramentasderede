@@ -10,7 +10,7 @@ import os
 import threading
 import base64
 import subprocess
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
 # Adicionar diretório pai ao path para importar módulos do src
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -175,34 +175,48 @@ def _resolve_fqdn_for_host(ip_address: str):
         except Exception:
             pass
 
+    res_host, res_domain = None, None
     # 1. Try the network's DNS first
     if dns_server:
         fqdn = dns_resolver.resolve_ip(ip_address, dns_server=dns_server)
         if fqdn:
-            return dns_resolver.split_fqdn(fqdn)
+            res_host, res_domain = dns_resolver.split_fqdn(fqdn)
 
     # 2. Windows ping -a fallback
-    try:
-        fqdn = net_tools.resolve_via_ping_a(ip_address)
-        if fqdn and fqdn not in ("N/A", "Inválido", "Erro"):
-            return dns_resolver.split_fqdn(fqdn)
-    except Exception:
-        pass
+    if not res_host:
+        try:
+            fqdn = net_tools.resolve_via_ping_a(ip_address)
+            if fqdn and fqdn not in ("N/A", "Inválido", "Erro"):
+                res_host, res_domain = dns_resolver.split_fqdn(fqdn)
+        except Exception:
+            pass
 
     # 3. System resolver fallback
-    fqdn = dns_resolver.resolve_ip(ip_address)
-    if fqdn:
-        return dns_resolver.split_fqdn(fqdn)
+    if not res_host:
+        fqdn = dns_resolver.resolve_ip(ip_address)
+        if fqdn:
+            res_host, res_domain = dns_resolver.split_fqdn(fqdn)
 
     # 4. Last resort: legacy resolver in tools.py
-    try:
-        fqdn = net_tools.resolve_ip_and_hostname(ip_address)
-        if fqdn and fqdn not in ("N/A", "Inválido", "Erro"):
-            return dns_resolver.split_fqdn(fqdn)
-    except Exception:
-        pass
+    if not res_host:
+        try:
+            fqdn = net_tools.resolve_ip_and_hostname(ip_address)
+            if fqdn and fqdn not in ("N/A", "Inválido", "Erro"):
+                res_host, res_domain = dns_resolver.split_fqdn(fqdn)
+        except Exception:
+            pass
 
-    return None, None
+    # 5. Se o hostname foi encontrado mas o domínio está ausente, valida contra domínios candidatos
+    if res_host and not res_domain:
+        try:
+            from src.system.core.winrm_handler import WinRMHandler
+            _, val_domain = WinRMHandler._resolve_target_fqdn_and_domain(ip_address)
+            if val_domain:
+                res_domain = val_domain
+        except Exception:
+            pass
+
+    return res_host, res_domain
 
 
 @router.post("/hosts/{address}/refresh")
@@ -426,6 +440,7 @@ class IperfClientRequest(BaseModel):
     duration: Optional[int] = 10
     reverse: Optional[bool] = False  # server transmits, client receives
     udp: Optional[bool] = False
+    parallel: Optional[int] = 1
     task_id: Optional[str] = None
 
 class PortScanRequest(BaseModel):
@@ -474,6 +489,43 @@ class SnmpRequest(BaseModel):
     community: Optional[str] = "public"
     port: Optional[int] = 161
     version: Optional[str] = "2c"
+    timeout: Optional[float] = 3.0
+    retries: Optional[int] = 1
+    v3_user: Optional[str] = None
+    v3_auth_key: Optional[str] = None
+    v3_priv_key: Optional[str] = None
+    v3_auth_proto: Optional[str] = "SHA256"
+    v3_priv_proto: Optional[str] = "AES128"
+    v3_sec_level: Optional[str] = "authPriv"
+
+class SnmpWalkRequest(BaseModel):
+    host: str
+    community: Optional[str] = "public"
+    port: Optional[int] = 161
+    version: Optional[str] = "2c"
+    root_oid: Optional[str] = "1.3.6.1.2.1.1"
+    max_rows: Optional[int] = 100
+    timeout: Optional[float] = 3.0
+    retries: Optional[int] = 1
+    v3_user: Optional[str] = None
+    v3_auth_key: Optional[str] = None
+    v3_priv_key: Optional[str] = None
+    v3_auth_proto: Optional[str] = "SHA256"
+    v3_priv_proto: Optional[str] = "AES128"
+    v3_sec_level: Optional[str] = "authPriv"
+
+class SnmpSecurityAuditRequest(BaseModel):
+    host: str
+    community: Optional[str] = "public"
+    port: Optional[int] = 161
+    version: Optional[str] = "2c"
+    timeout: Optional[float] = 3.0
+    v3_user: Optional[str] = None
+    v3_auth_key: Optional[str] = None
+    v3_priv_key: Optional[str] = None
+    v3_auth_proto: Optional[str] = "SHA256"
+    v3_priv_proto: Optional[str] = "AES128"
+    v3_sec_level: Optional[str] = "authPriv"
 
 class HttpCheckRequest(BaseModel):
     url: str
@@ -839,6 +891,26 @@ class DnsResolveRequest(BaseModel):
     domain: Optional[str] = None
 
 
+class DnsAdvancedQueryRequest(BaseModel):
+    target: str
+    record_type: str = "AUTO"
+    dns_server: Optional[str] = None
+    timeout: Optional[float] = 3.0
+
+
+class DnsDiagnoseRequest(BaseModel):
+    target: str
+    dns_server: Optional[str] = None
+    timeout: Optional[float] = 3.0
+
+
+class DnsBenchmarkRequest(BaseModel):
+    target: str
+    record_type: Optional[str] = "A"
+    extra_servers: Optional[List[Dict[str, str]]] = None
+    timeout: Optional[float] = 3.0
+
+
 @router.post("/network/dns/resolve")
 def resolve_via_specific_dns(req: DnsResolveRequest):
     """Forward or reverse DNS lookup against a chosen DNS server.
@@ -873,6 +945,58 @@ def resolve_via_specific_dns(req: DnsResolveRequest):
         fqdn = dns_resolver.resolve_ip(req.ip, req.dns_server)
         return {"ip": req.ip, "fqdn": fqdn, "dns_server": req.dns_server}
     raise HTTPException(status_code=400, detail="Informe `name` ou `ip`.")
+
+
+@router.post("/network/dns/query")
+def query_dns_advanced(req: DnsAdvancedQueryRequest):
+    """Consulta avançada RFC para tipos específicos de registro (A, AAAA, MX, TXT, etc.)."""
+    import ipaddress
+    if req.dns_server:
+        try:
+            ipaddress.ip_address(req.dns_server)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="dns_server deve ser um endereço IP válido.")
+
+    from src.network import dns_diagnostics
+    timeout = max(0.5, min(req.timeout or 3.0, 10.0))
+    return dns_diagnostics.query_dns_record(
+        target=req.target,
+        record_type=req.record_type,
+        dns_server=req.dns_server,
+        timeout=timeout,
+    )
+
+
+@router.post("/network/dns/diagnose")
+def diagnose_dns_complete(req: DnsDiagnoseRequest):
+    """Diagnóstico abrangente de integridade de domínio (A, AAAA, MX, TXT, NS, SOA)."""
+    import ipaddress
+    if req.dns_server:
+        try:
+            ipaddress.ip_address(req.dns_server)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="dns_server deve ser um endereço IP válido.")
+
+    from src.network import dns_diagnostics
+    timeout = max(0.5, min(req.timeout or 3.0, 10.0))
+    return dns_diagnostics.diagnose_domain_complete(
+        target=req.target,
+        dns_server=req.dns_server,
+        timeout=timeout,
+    )
+
+
+@router.post("/network/dns/benchmark")
+def benchmark_dns(req: DnsBenchmarkRequest):
+    """Compara resolução entre múltiplos provedores (Sistema, Google, Cloudflare, Quad9, AD)."""
+    from src.network import dns_diagnostics
+    timeout = max(0.5, min(req.timeout or 3.0, 10.0))
+    return dns_diagnostics.benchmark_dns_resolvers(
+        target=req.target,
+        record_type=req.record_type or "A",
+        extra_servers=req.extra_servers,
+        timeout=timeout,
+    )
 
 @router.post("/network/discovery")
 def discover_network(request: DiscoveryRequest):
@@ -1023,6 +1147,25 @@ def run_traceroute(request: ToolRequest):
             yield f"Erro ao executar traceroute: {str(e)}\n".encode('utf-8')
     return StreamingResponse(event_generator(), media_type="text/plain")
 
+
+@router.post("/tools/traceroute/stream")
+def run_traceroute_stream(request: ToolRequest):
+    """Executa traceroute estruturado com streaming de eventos JSON linha a linha (NDJSON)."""
+    target = _validate_tool_target(request.target)
+    _validate_optional_source_ip(request.source_ip)
+    task_id = request.task_id or f"trace_stream_{time.time()}"
+    source_ip = request.source_ip
+
+    def event_generator():
+        try:
+            iterator = net_tools.traceroute_structured(target, task_id, source_ip=source_ip)
+            for item in iterator:
+                yield item.encode('utf-8')
+        except Exception as e:
+            yield json.dumps({"type": "error", "error": str(e)}).encode('utf-8') + b"\n"
+
+    return StreamingResponse(event_generator(), media_type="application/x-ndjson")
+
 def _validate_port(value) -> int:
     """Coerce + validate a TCP/UDP port to 1..65535. Raises 400 on bad input."""
     try:
@@ -1082,7 +1225,7 @@ def run_iperf_client(request: IperfClientRequest):
             iterator = net_tools.run_iperf_client(
                 target, task_id, port=port, source_ip=source_ip,
                 duration=request.duration, reverse=bool(request.reverse),
-                udp=bool(request.udp),
+                udp=bool(request.udp), parallel=request.parallel or 1,
             )
             for item in iterator:
                 line = item[0] if isinstance(item, tuple) else str(item)
@@ -1284,6 +1427,66 @@ async def snmp_query(request: SnmpRequest):
     return await snmp_tool.query_system(
         request.host, community=request.community or "public",
         port=port, version=request.version or "2c",
+        timeout=float(request.timeout or 4.0),
+        retries=int(request.retries if request.retries is not None else 1),
+        v3_user=request.v3_user, v3_auth_key=request.v3_auth_key,
+        v3_priv_key=request.v3_priv_key, v3_auth_proto=request.v3_auth_proto,
+        v3_priv_proto=request.v3_priv_proto, v3_sec_level=request.v3_sec_level,
+    )
+
+
+@router.post("/tools/snmp/interfaces")
+async def snmp_interfaces(request: SnmpRequest):
+    """Query RFC 1213 / RFC 2863 ifTable to list physical interfaces, oper/admin status, speed and errors."""
+    if not _is_safe_remote_target(request.host):
+        raise HTTPException(status_code=400, detail="Host SNMP inválido.")
+    port = _validate_port(request.port if request.port is not None else 161)
+    from src.network import snmp_tool
+    return await snmp_tool.query_interfaces(
+        request.host, community=request.community or "public",
+        port=port, version=request.version or "2c",
+        timeout=float(request.timeout or 3.0),
+        retries=int(request.retries if request.retries is not None else 1),
+        v3_user=request.v3_user, v3_auth_key=request.v3_auth_key,
+        v3_priv_key=request.v3_priv_key, v3_auth_proto=request.v3_auth_proto,
+        v3_priv_proto=request.v3_priv_proto, v3_sec_level=request.v3_sec_level,
+    )
+
+
+@router.post("/tools/snmp/walk")
+async def snmp_walk(request: SnmpWalkRequest):
+    """Perform an exploratory SNMP Walk on any specified OID subtree."""
+    if not _is_safe_remote_target(request.host):
+        raise HTTPException(status_code=400, detail="Host SNMP inválido.")
+    port = _validate_port(request.port if request.port is not None else 161)
+    from src.network import snmp_tool
+    return await snmp_tool.walk_custom(
+        request.host, root_oid=request.root_oid or "1.3.6.1.2.1.1",
+        community=request.community or "public",
+        port=port, version=request.version or "2c",
+        max_rows=min(int(request.max_rows or 100), 200),
+        timeout=float(request.timeout or 3.0),
+        retries=int(request.retries if request.retries is not None else 1),
+        v3_user=request.v3_user, v3_auth_key=request.v3_auth_key,
+        v3_priv_key=request.v3_priv_key, v3_auth_proto=request.v3_auth_proto,
+        v3_priv_proto=request.v3_priv_proto, v3_sec_level=request.v3_sec_level,
+    )
+
+
+@router.post("/tools/snmp/security-audit")
+async def snmp_security_audit(request: SnmpSecurityAuditRequest):
+    """Evaluate SNMP security posture: unmonitored WAN risk, weak community, write permission and v3 support."""
+    if not _is_safe_remote_target(request.host):
+        raise HTTPException(status_code=400, detail="Host SNMP inválido.")
+    port = _validate_port(request.port if request.port is not None else 161)
+    from src.network import snmp_tool
+    return await snmp_tool.analyze_snmp_security_posture(
+        request.host, port=port, community=request.community or "public",
+        version=request.version or "2c",
+        timeout=float(request.timeout or 3.0),
+        v3_user=request.v3_user, v3_auth_key=request.v3_auth_key,
+        v3_priv_key=request.v3_priv_key, v3_auth_proto=request.v3_auth_proto,
+        v3_priv_proto=request.v3_priv_proto, v3_sec_level=request.v3_sec_level,
     )
 
 

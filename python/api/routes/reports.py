@@ -19,6 +19,23 @@ class ReportGenerateRequest(BaseModel):
     time_range: Optional[str] = Field("24h", description="Janela de tempo: 24h, 7d, 30d")
 
 
+@router.get("/view")
+async def view_report(
+    report_type: str = "inventory",
+    host_id: Optional[int] = None,
+    ip_address: Optional[str] = None,
+    time_range: Optional[str] = "24h"
+) -> Response:
+    """Gera e retorna o relatório HTML completo pronto para visualização e impressão pelo navegador."""
+    req = ReportGenerateRequest(
+        report_type=report_type,
+        host_id=host_id,
+        ip_address=ip_address,
+        time_range=time_range
+    )
+    return await generate_report(req)
+
+
 @router.post("/generate")
 async def generate_report(req: ReportGenerateRequest) -> Response:
     """Gera um relatório HTML completo pronto para visualização e impressão PDF."""
@@ -26,7 +43,11 @@ async def generate_report(req: ReportGenerateRequest) -> Response:
         if req.report_type == "inventory":
             hosts = db.get_all_hosts()
             html_content = report_generator.generate_inventory_report_html(hosts)
-            return Response(content=html_content, media_type="text/html")
+            return Response(
+                content=html_content,
+                media_type="text/html; charset=utf-8",
+                headers={"Content-Type": "text/html; charset=utf-8"}
+            )
             
         elif req.report_type == "sla":
             metrics = metrics_history.get_host_metrics_history(
@@ -48,7 +69,11 @@ async def generate_report(req: ReportGenerateRequest) -> Response:
                 ip=host_ip,
                 metrics=metrics
             )
-            return Response(content=html_content, media_type="text/html")
+            return Response(
+                content=html_content,
+                media_type="text/html; charset=utf-8",
+                headers={"Content-Type": "text/html; charset=utf-8"}
+            )
         else:
             raise HTTPException(status_code=400, detail=f"Tipo de relatório '{req.report_type}' inválido.")
 

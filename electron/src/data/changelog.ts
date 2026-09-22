@@ -17,6 +17,43 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
     {
+        version: '1.5.0',
+        date: '2026-09-22',
+        title: 'Auditoria de Postura SNMP (NIST/CISA), MTR com Jitter RFC 1889, Traceroute BGP ASN, HTTP Waterfall & OWASP, TLS Chain e AD FSMO',
+        changes: [
+            { kind: 'security', text: 'Auditoria de Postura e Riscos SNMP (NIST SP 800-123 & CISA TA17-156A): Nova aba dedicada no SNMP com cálculo de Score de Risco Global (0 a 100), classificação de vulnerabilidades e plano de ação estruturado.' },
+            { kind: 'security', text: 'Classificação Automática de Exposição WAN & Redes Não-Monitoradas: Detecção em tempo real de tráfego UDP em texto claro direcionado a nós públicos da Internet com suporte a IPv4 e IPv6 (RFC 4193 ULA e Global Unicast), emitindo alerta pré-voo antes do envio dos pacotes.' },
+            { kind: 'security', text: 'Auditoria Não-Destrutiva de Permissão de Escrita (RW / SET): Teste de autorização de escrita via OID sysLocation (1.3.6.1.2.1.1.6.0) sem alterar configurações de produção, identificando credenciais vulneráveis a exfiltração de configs via TFTP e alteração de portas.' },
+            { kind: 'security', text: 'Auditoria de Robustez de Community e Dicionários de Fábrica: Identificação automática de strings fracas e padrões de mercado ("public", "private", "cisco", etc.) com baixa entropia (<8 caracteres).' },
+            { kind: 'feat', text: 'Suporte Nativo a SNMPv3 Criptografado (RFC 3414 USM): Implementação completa do modo authPriv com algoritmos de autenticação HMAC-SHA-256 / SHA-1 / MD5 e algoritmos de cifragem AES-128 / AES-256 e DES em todas as ferramentas SNMP.' },
+            { kind: 'security', text: 'Validação Criptográfica Pré-Voo RFC 3414: Verificação automática de chaves USM de 8 octetos mínimos no backend e frontend, evitando falhas internas e garantindo conformidade com a norma.' },
+            { kind: 'feat', text: 'Sonda Ativa de Compatibilidade SNMPv3: Descoberta RFC 3414 EngineID para verificar se ativos legados já possuem agente SNMPv3 habilitado para migração imediata.' },
+            { kind: 'ui', text: 'Guia Interativo de Hardening com Cópia em 1 Clique: Templates prontos de configuração de segurança para Cisco IOS/XE, Linux Net-SNMP (/etc/snmp/snmpd.conf) e MikroTik RouterOS com botão de cópia rápida.' },
+            { kind: 'feat', text: 'SNMP Manager com Tabela de Interfaces Físicas (RFC 1213 / RFC 2863): Monitoramento de interfaces (ifTable) com velocidade nominal, status operacional/administrativo (UP/DOWN) e contadores de erros (ifInErrors/ifOutErrors).' },
+            { kind: 'feat', text: 'SNMP Walk MIB Flexível: Varredura de subárvores MIB com paginação e early-exit otimizado para evitar travamentos em nós ausentes.' },
+            { kind: 'feat', text: 'Traceroute Estruturado & Mapeamento BGP ASN: Resolução de ASN e Razão Social do Sistema Autônomo de cada salto via Team Cymru DNS (RFC 1035), com visão de Grafo Topológico Interativo e Console Bruto.' },
+            { kind: 'feat', text: 'MTR com Jitter RFC 1889 / RFC 3550 & Sparklines SVG: Cálculo estatístico de variação de latência entre pacotes contínuos com histórico e visualização gráfica de tendência em tempo real por salto.' },
+            { kind: 'feat', text: 'HTTP Web Health com Waterfall de 5 Fases: Decomposição de latência estilo "curl -w" (DNS, TCP Handshake, TLS Handshake, TTFB/Processamento e Download) e rastreamento da cadeia de redirecionamentos (301/302).' },
+            { kind: 'security', text: 'Auditoria de Cabeçalhos de Segurança OWASP: Pontuação e verificação de conformidade para HSTS, CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy e Permissions-Policy com tolerância automática a proxies corporativos.' },
+            { kind: 'security', text: 'TLS / SSL Inspector Avançado: Extração da Cadeia de Confiança completa (Folha, Intermediária, Raiz), Matriz de Protocolos PCI-DSS (detecção de TLS 1.0/1.1 obsoletos), avaliação de cifras (PFS + AEAD) e negociação ALPN (HTTP/2).' },
+            { kind: 'feat', text: 'Active Directory FSMO Roles & Replicação repadmin: Descoberta nativa das 5 FSMO Roles da floresta e domínio, e auditoria de integridade de sincronização entre Controladores de Domínio.' },
+            { kind: 'ui', text: 'Higienização de Placeholders: Substituição de domínios específicos por referências neutras e globais de teste (google.com, cloudflare.com ou 1.1.1.1).' },
+            { kind: 'ui', text: 'Persistência Total com LastExecutionBadge: 100% dos 19 painéis com exibição de data e hora completas (DD/MM/AAAA às HH:MM:SS) e botão de limpeza dedicado.' },
+        ],
+    },
+    {
+        version: '1.4.1',
+        date: '2026-09-22',
+        title: 'Melhorias nos Diagnósticos de DNS & Nomes, Benchmark Multi-Provedor e Métricas RFC',
+        changes: [
+            { kind: 'feat', text: 'Diagnóstico DNS Avançado RFC 1035/8499: Suporte a consultas de múltiplos tipos de registros (A, AAAA, CNAME, MX, TXT, NS, SOA, PTR, SRV, CAA) com chaveamento automático de UDP para TCP (RFC 7766) em mensagens truncadas.' },
+            { kind: 'feat', text: 'Modo Diagnóstico Completo de Domínio: Análise automática da integridade do domínio com validação de políticas SPF (v=spf1) nos registros TXT e teste de consistência FCrDNS para endereços IP.' },
+            { kind: 'feat', text: 'Benchmark Multi-Provedor: Comparativo simultâneo de resolução e latência (ms) entre o resolvedor da máquina local e provedores mundiais de referência (Google 8.8.8.8, Cloudflare 1.1.1.1, Quad9 9.9.9.9, OpenDNS 208.67.222.222 e servidores AD).' },
+            { kind: 'feat', text: 'Detecção Inteligente de Falhas de Encaminhamento Local: Identifica automaticamente quando o servidor DNS corporativo local retorna TIMEOUT/SERVFAIL mas provedores públicos respondem com sucesso, alertando o operador sobre falhas de forwarders ou regras de firewall.' },
+            { kind: 'ui', text: 'Nova Apresentação da Execução: Dashboard com badges de status RCODE semânticos, medição precisa de Query Time em milissegundos, servidor respondedor, decodificação de flags DNS (AA, RD, RA, AD) e aba com saída canônica do utilitário ISC BIND DiG.' },
+        ],
+    },
+    {
         version: '1.4.0',
         date: '2026-08-26',
         title: 'Diagnóstico de Active Directory, Camada 2 (LLDP), WinRM em Lote e Relatórios Técnicos',

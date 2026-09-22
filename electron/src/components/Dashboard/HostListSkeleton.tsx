@@ -3,7 +3,12 @@ export function HostListSkeleton() {
     const skeletons = Array.from({ length: 12 });
 
     return (
-        <div className="flex flex-wrap gap-4">
+        <div className="space-y-4">
+            <div className="flex items-center gap-2.5 text-zinc-400 text-sm font-medium px-1 py-1">
+                <div className="w-2.5 h-2.5 rounded-full bg-blue-500 animate-ping" />
+                <span className="animate-pulse">Carregando inventário de hosts e sincronizando com o monitoramento...</span>
+            </div>
+            <div className="flex flex-wrap gap-4">
             {skeletons.map((_, i) => (
                 <div
                     key={i}
@@ -47,5 +52,6 @@ export function HostListSkeleton() {
                 </div>
             ))}
         </div>
+    </div>
     );
 }

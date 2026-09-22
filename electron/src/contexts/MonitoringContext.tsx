@@ -15,6 +15,7 @@ interface MonitoringContextType {
     hosts: Host[];
     stats: MonitoringStats;
     isLoading: boolean;
+    isInitialLoading: boolean;
     lastUpdated: Date | null;
     refreshHosts: (silent?: boolean) => Promise<boolean>;
     uniqueGroups: string[];
@@ -26,6 +27,7 @@ export const MonitoringProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     const [hosts, setHosts] = useState<Host[]>([]);
     const [stats, setStats] = useState<MonitoringStats>({ total: 0, online: 0, offline: 0, avgLatency: 0 });
     const [isLoading, setIsLoading] = useState(true);
+    const [isInitialLoading, setIsInitialLoading] = useState(true);
     const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
     const { showToast } = useToast();
 
@@ -168,18 +170,31 @@ export const MonitoringProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             scheduleNext();
         };
 
+        const startTime = Date.now();
         const initialFetch = async () => {
             while (retryCount < maxInitialRetries && isMountedRef.current) {
-                const success = await fetchHosts(retryCount > 0);
+                // Initial attempts are silent while backend is spinning up to avoid false alarm error toasts
+                const success = await fetchHosts(true);
                 if (success) {
-                    if (isMountedRef.current) scheduleNext();
+                    const elapsed = Date.now() - startTime;
+                    const minDisplayTime = Math.max(0, 1500 - elapsed);
+                    if (minDisplayTime > 0) {
+                        await new Promise(resolve => setTimeout(resolve, minDisplayTime));
+                    }
+                    if (isMountedRef.current) {
+                        setIsLoading(false);
+                        setIsInitialLoading(false);
+                        scheduleNext();
+                    }
                     return;
                 }
                 retryCount++;
                 await new Promise(resolve => setTimeout(resolve, 1000));
             }
             if (isMountedRef.current && retryCount >= maxInitialRetries) {
-                showToast('Não foi possível conectar ao servidor local.', 'error');
+                setIsLoading(false);
+                setIsInitialLoading(false);
+                showToast('Erro ao carregar hosts. Não foi possível conectar ao servidor local.', 'error');
             }
         };
 
@@ -211,6 +226,7 @@ export const MonitoringProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             hosts,
             stats,
             isLoading,
+            isInitialLoading,
             lastUpdated,
             refreshHosts: (silent = false) => fetchHosts(silent),
             uniqueGroups

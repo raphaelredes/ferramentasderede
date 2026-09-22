@@ -1,3 +1,4 @@
+import { useState, type ReactNode } from 'react';
 import { Clock, AlertTriangle, Search } from 'lucide-react';
 import { clsx } from 'clsx';
 import { API_BASE } from '../../config/api';
@@ -37,7 +38,7 @@ export function NtpPanel() {
         } finally { setBusy(false); }
     };
 
-    const Cell = ({ label, value }: { label: string; value?: React.ReactNode }) => (
+    const Cell = ({ label, value }: { label: string; value?: ReactNode }) => (
         <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-3">
             <div className="text-xs text-zinc-500 mb-1">{label}</div>
             <div className="font-mono text-zinc-100">{value ?? '—'}</div>

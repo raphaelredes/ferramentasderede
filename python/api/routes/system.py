@@ -249,7 +249,10 @@ def system_info(request: SystemInfoRequest, x_temp_auth: str = Header(default=No
             # Se for erro de TrustedHosts, retorna 403 com código específico
             if _is_trusted_hosts_error(result):
                 raise HTTPException(status_code=403, detail="TRUSTED_HOSTS_REQUIRED")
-            raise HTTPException(status_code=500, detail=result["error"])
+            error_detail = result["error"]
+            if result.get("details"):
+                error_detail += " • " + " • ".join(result["details"])
+            raise HTTPException(status_code=500, detail=error_detail)
         # return result removed to allow update logic below
     except HTTPException:
         raise
@@ -307,7 +310,10 @@ def list_services(request: ServicesRequest, x_temp_auth: str = Header(default=No
         if isinstance(result, dict) and "error" in result:
             if _is_trusted_hosts_error(result):
                 raise HTTPException(status_code=403, detail="TRUSTED_HOSTS_REQUIRED")
-            raise HTTPException(status_code=500, detail=result["error"])
+            error_detail = result["error"]
+            if result.get("details"):
+                error_detail += " • " + " • ".join(result["details"])
+            raise HTTPException(status_code=500, detail=error_detail)
         return result
     except HTTPException:
         raise
@@ -446,7 +452,10 @@ def host_probe(request: SystemInfoRequest, x_temp_auth: str = Header(default=Non
     if "error" in result:
         if _is_trusted_hosts_error(result):
             return {"status": "error", "code": "TRUSTED_HOSTS_REQUIRED", "message": result.get("error", "")}
-        return {"status": "error", "code": "PROBE_FAILED", "message": result.get("error", "")}
+        msg = result.get("error", "")
+        if result.get("details"):
+            msg += " • " + " • ".join(result["details"])
+        return {"status": "error", "code": "PROBE_FAILED", "message": msg}
 
     # Persist whatever fields actually came back. The probe script returns "N/A"
     # strings for fields it couldn't resolve — we treat those as "no signal" and

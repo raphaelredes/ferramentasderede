@@ -7,6 +7,7 @@ import { API_BASE } from '../../config/api';
 import { useEscapeToClose } from '../../hooks/useEscapeToClose';
 import { useToast } from '../../contexts/ToastContext';
 import { ipForHost } from '../../utils/ipForHost';
+import { HelpButton } from '../HelpButton';
 
 // Human-friendly elapsed time, PT-BR. "2 dias, 3 h", "4 h 12 min", "37 min", "12 s".
 function formatElapsed(fromIso: string): string {
@@ -178,12 +179,37 @@ export function HostDetailsModal({
                             <p className="text-zinc-400 font-mono">{ipForHost(host) || 'IP não disponível'}</p>
                         </div>
                     </div>
-                    <button
-                        onClick={onClose}
-                        className="p-2 hover:bg-zinc-800 rounded-lg transition-colors text-zinc-400 hover:text-white"
-                    >
-                        <X size={24} />
-                    </button>
+                    <div className="flex items-center gap-1.5">
+                        <HelpButton
+                            title="Painel do Host"
+                            description={
+                                <div className="space-y-3">
+                                    <p>
+                                        <strong>Informações do Sistema:</strong> Exibe o IP, Hostname resolvido via DNS, Domínio do Active Directory e Endereço MAC (com identificação do fabricante do hardware).
+                                    </p>
+                                    <p>
+                                        <strong>Estatísticas de Rede:</strong> Métricas contínuas coletadas pelo monitor de rede (Latência em ms, Perda de pacotes % e Total de pings enviados). Use o ícone de sincronização para reiniciar as métricas.
+                                    </p>
+                                    <p>
+                                        <strong>Acesso Remoto:</strong> Inicie rapidamente sessões de Área de Trabalho Remota (RDP), Assistência Remota (MSRA) ou TeamViewer ID com 1 clique.
+                                    </p>
+                                    <p>
+                                        <strong>Ações de Energia e Mensagem:</strong> Envie alertas na tela do usuário remoto (via WinRM) ou programe o desligamento / reinício do host com temporizador em segundos. Ações agendadas podem ser canceladas a qualquer momento antes do término.
+                                    </p>
+                                    <p>
+                                        <strong>Detalhes Avançados:</strong> Navega para a visualização aprofundada com inventário de hardware, processos, serviços, spooler de impressão e logs de eventos do Windows.
+                                    </p>
+                                </div>
+                            }
+                        />
+                        <button
+                            onClick={onClose}
+                            className="p-2 hover:bg-zinc-800 rounded-lg transition-colors text-zinc-400 hover:text-white"
+                            title="Fechar (Esc)"
+                        >
+                            <X size={22} />
+                        </button>
+                    </div>
                 </div>
 
                 {modalStatus && (

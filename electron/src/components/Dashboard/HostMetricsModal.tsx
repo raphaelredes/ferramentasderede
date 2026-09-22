@@ -44,24 +44,22 @@ export function HostMetricsModal({ isOpen, onClose, hostName, hostIp, hostId }: 
 
     const handleExportReport = async () => {
         try {
-            const res = await fetch(`${API_BASE}/reports/generate`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    report_type: 'sla',
-                    host_id: hostId || null,
-                    ip_address: hostIp,
-                    time_range: timeRange
-                })
+            const params = new URLSearchParams({
+                report_type: 'sla',
+                time_range: timeRange,
             });
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            const html = await res.text();
-            const blob = new Blob([html], { type: 'text/html' });
-            const url = URL.createObjectURL(blob);
-            window.open(url, '_blank');
-            showToast('Relatório de SLA aberto para impressão!', 'success');
+            if (hostId) params.append('host_id', String(hostId));
+            if (hostIp) params.append('ip_address', hostIp);
+            const reportUrl = `${API_BASE}/reports/view?${params.toString()}`;
+
+            if (window.electron?.openExternal) {
+                await window.electron.openExternal(reportUrl);
+            } else {
+                window.open(reportUrl, '_blank');
+            }
+            showToast('Relatório de SLA aberto no navegador para impressão!', 'success');
         } catch (err: any) {
-            showToast(`Erro ao gerar relatório: ${err.message}`, 'error');
+            showToast(`Erro ao abrir relatório: ${err.message}`, 'error');
         }
     };
 

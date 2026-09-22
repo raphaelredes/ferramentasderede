@@ -13,11 +13,35 @@ export function ReportGeneratorModal({ isOpen, onClose }: ReportGeneratorModalPr
     const [reportType, setReportType] = useState<'inventory' | 'sla'>('inventory');
     const [timeRange, setTimeRange] = useState<'24h' | '7d' | '30d'>('24h');
     const [generating, setGenerating] = useState(false);
+    const [savingHtml, setSavingHtml] = useState(false);
 
     if (!isOpen) return null;
 
     const handleGenerate = async () => {
         setGenerating(true);
+        try {
+            const params = new URLSearchParams({
+                report_type: reportType,
+                time_range: timeRange
+            });
+            const reportUrl = `${API_BASE}/reports/view?${params.toString()}`;
+
+            if (window.electron?.openExternal) {
+                await window.electron.openExternal(reportUrl);
+            } else {
+                window.open(reportUrl, '_blank');
+            }
+            showToast('Relatório aberto no navegador para visualização e impressão!', 'success');
+            onClose();
+        } catch (err: any) {
+            showToast(`Erro ao abrir relatório: ${err.message}`, 'error');
+        } finally {
+            setGenerating(false);
+        }
+    };
+
+    const handleSaveHtml = async () => {
+        setSavingHtml(true);
         try {
             const res = await fetch(`${API_BASE}/reports/generate`, {
                 method: 'POST',
@@ -30,16 +54,33 @@ export function ReportGeneratorModal({ isOpen, onClose }: ReportGeneratorModalPr
 
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const html = await res.text();
-            
-            const blob = new Blob([html], { type: 'text/html' });
-            const url = URL.createObjectURL(blob);
-            window.open(url, '_blank');
-            showToast('Relatório gerado com sucesso!', 'success');
-            onClose();
+
+            const dateStr = new Date().toISOString().slice(0, 10);
+            const defaultFilename = `relatorio_${reportType}_${dateStr}.html`;
+
+            if (window.electron?.saveFileAs) {
+                const saved = await window.electron.saveFileAs(defaultFilename, html);
+                if (saved) {
+                    showToast('Relatório salvo com sucesso!', 'success');
+                    onClose();
+                }
+            } else {
+                const blob = new Blob([html], { type: 'text/html' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = defaultFilename;
+                document.body.appendChild(a);
+                a.click();
+                URL.revokeObjectURL(url);
+                document.body.removeChild(a);
+                showToast('Download concluído!', 'success');
+                onClose();
+            }
         } catch (err: any) {
-            showToast(`Erro ao gerar relatório: ${err.message}`, 'error');
+            showToast(`Erro ao salvar relatório: ${err.message}`, 'error');
         } finally {
-            setGenerating(false);
+            setSavingHtml(false);
         }
     };
 
@@ -109,14 +150,25 @@ export function ReportGeneratorModal({ isOpen, onClose }: ReportGeneratorModalPr
                         <p>O documento gerado é compatível com impressão direta em PDF de alta resolução pelo navegador.</p>
                     </div>
 
-                    <button
-                        onClick={handleGenerate}
-                        disabled={generating}
-                        className="w-full flex items-center justify-center gap-2 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-semibold rounded-lg shadow transition-colors"
-                    >
-                        <Download size={14} />
-                        {generating ? 'Compilando Relatório...' : 'Gerar Relatório HTML / PDF'}
-                    </button>
+                    <div className="flex gap-2">
+                        <button
+                            onClick={handleGenerate}
+                            disabled={generating || savingHtml}
+                            className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-semibold rounded-lg shadow transition-colors"
+                        >
+                            <Printer size={14} />
+                            {generating ? 'Abrindo...' : 'Abrir no Navegador (HTML / PDF)'}
+                        </button>
+                        <button
+                            onClick={handleSaveHtml}
+                            disabled={generating || savingHtml}
+                            className="flex items-center justify-center gap-1.5 px-3.5 py-2.5 bg-zinc-950 hover:bg-zinc-800 disabled:opacity-50 text-zinc-200 text-xs font-medium rounded-lg border border-zinc-800 hover:border-zinc-700 transition-colors"
+                            title="Salvar arquivo HTML no computador"
+                        >
+                            <Download size={14} />
+                            <span>{savingHtml ? 'Salvando...' : 'Salvar HTML'}</span>
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>

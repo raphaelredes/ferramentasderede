@@ -263,6 +263,13 @@ def main():
     # Register cleanup on exit
     atexit.register(cleanup)
 
+    global pyi_splash
+    if pyi_splash:
+        try:
+            pyi_splash.update_text("Iniciando serviços do sistema...")
+        except Exception:
+            pass
+
     # Ensure the API port is free (respects NT_API_PORT override).
     try:
         api_port = int(os.environ.get("NT_API_PORT", "8000"))
@@ -463,6 +470,12 @@ def main():
 
         def openExternal(self, url):
             import webbrowser
+            if not url or not isinstance(url, str):
+                return False
+            # Never hand blob: or data: URIs to Windows ShellExecute (avoids 'Obter app para abrir link blob' dialog)
+            if url.startswith("blob:") or url.startswith("data:"):
+                print(f"openExternal: blocked unsupported scheme: {url[:20]}")
+                return False
             webbrowser.open(url)
             return True
 
@@ -510,10 +523,14 @@ def main():
                 return None
             try:
                 active_window = webview.windows[0]
+                if filename.lower().endswith('.html') or filename.lower().endswith('.htm'):
+                    filters = ('HTML Files (*.html)', 'All files (*.*)')
+                else:
+                    filters = ('CSV Files (*.csv)', 'All files (*.*)')
                 result = active_window.create_file_dialog(
                     webview.SAVE_DIALOG,
                     save_filename=filename,
-                    file_types=('CSV Files (*.csv)', 'All files (*.*)')
+                    file_types=filters
                 )
 
                 if result:
@@ -546,6 +563,18 @@ def main():
             showItemInFolder: (path) => window.pywebview.api.showItemInFolder(path),
             saveFileAs: (filename, content) => window.pywebview.api.saveFileAs(filename, content)
         };
+
+        // Guard against any component calling window.open with a blob: or data: URL
+        // which causes Windows to prompt "Obter aplicativo para abrir este blob link"
+        const _origOpen = window.open;
+        window.open = function(url, target, features) {
+            if (typeof url === 'string' && (url.startsWith('blob:') || url.startsWith('data:'))) {
+                console.warn('Blocked window.open on unsupported scheme:', url);
+                return null;
+            }
+            return _origOpen ? _origOpen.apply(this, arguments) : null;
+        };
+
         console.log("Electron Shim Initialized");
         """
         window.evaluate_js(shim_js)

@@ -119,6 +119,41 @@ function loadMtrState(): MtrState {
     return { isRunning: false, target: '', hops: [], lastRunAt: null };
 }
 
+export interface TracerouteHop {
+    hop: number;
+    ip: string;
+    hostname: string | null;
+    rtts: (number | null)[];
+    avg_ms: number | null;
+    loss: boolean;
+    asn: string;
+    as_name: string;
+    country: string;
+    raw_line?: string;
+}
+
+export interface TracerouteState extends ToolState {
+    hops: TracerouteHop[];
+}
+
+function loadTraceState(): TracerouteState {
+    try {
+        const raw = localStorage.getItem('tool_state_trace');
+        if (raw) {
+            const parsed = JSON.parse(raw);
+            return {
+                isRunning: false,
+                output: Array.isArray(parsed.output) ? parsed.output : [],
+                target: parsed.target || '8.8.8.8',
+                isOffline: !!parsed.isOffline,
+                lastRunAt: parsed.lastRunAt || null,
+                hops: Array.isArray(parsed.hops) ? parsed.hops : [],
+            };
+        }
+    } catch {}
+    return { isRunning: false, output: [], target: '8.8.8.8', isOffline: false, lastRunAt: null, hops: [] };
+}
+
 
 
 export interface PendingAction {
@@ -136,6 +171,7 @@ export interface IperfClientOptions {
     duration?: number;
     reverse?: boolean;
     udp?: boolean;
+    parallel?: number;
 }
 
 /** Options for starting the iperf server. */
@@ -155,6 +191,10 @@ export interface MtrHop {
     best: number | null;
     worst: number | null;
     jitter: number | null;
+    asn?: string;
+    as_name?: string;
+    country?: string;
+    history?: (number | null)[];
 }
 
 /** MTR runs continuously and replaces the whole hop table each cycle. */
@@ -170,7 +210,7 @@ export interface MtrState {
 interface ToolsContextType {
     // Independent States
     pingState: ToolState;
-    traceState: ToolState;
+    traceState: TracerouteState;
     iperfServerState: ToolState;
     iperfClientState: ToolState;
     mtrState: MtrState;
@@ -202,7 +242,7 @@ interface ToolsContextType {
     runPortScan: (target: string, ports: string, mode?: 'top') => Promise<void>;
 
     stopTool: (tool: 'ping' | 'traceroute' | 'scanner' | 'iperf-server' | 'iperf-client' | 'mtr' | 'ports', sessionId?: string) => void;
-    clearToolOutput: (tool: 'ping' | 'traceroute' | 'iperf-server' | 'iperf-client' | 'ports') => void;
+    clearToolOutput: (tool: 'ping' | 'traceroute' | 'iperf-server' | 'iperf-client' | 'ports' | 'mtr') => void;
     isRunning: boolean;
 
     // Completion State
@@ -216,7 +256,7 @@ const ToolsContext = createContext<ToolsContextType | undefined>(undefined);
 export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     // Independent States
     const [pingState, setPingState] = useState<ToolState>(() => loadToolState('ping', '8.8.8.8'));
-    const [traceState, setTraceState] = useState<ToolState>(() => loadToolState('trace', '8.8.8.8'));
+    const [traceState, setTraceState] = useState<TracerouteState>(loadTraceState);
     // iperf server: this machine listens; iperf client: this machine probes a remote server.
     const [iperfServerState, setIperfServerState] = useState<ToolState>(() => loadToolState('iperf_server', ''));
     const [iperfClientState, setIperfClientState] = useState<ToolState>(() => loadToolState('iperf_client', ''));
@@ -313,9 +353,16 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     useEffect(() => {
         if (!traceState.isRunning) {
-            try { localStorage.setItem('tool_state_trace', JSON.stringify({ target: traceState.target, output: traceState.output, lastRunAt: traceState.lastRunAt })); } catch {}
+            try {
+                localStorage.setItem('tool_state_trace', JSON.stringify({
+                    target: traceState.target,
+                    output: traceState.output,
+                    hops: traceState.hops,
+                    lastRunAt: traceState.lastRunAt
+                }));
+            } catch {}
         }
-    }, [traceState.target, traceState.output, traceState.isRunning, traceState.lastRunAt]);
+    }, [traceState.target, traceState.output, traceState.hops, traceState.isRunning, traceState.lastRunAt]);
 
     useEffect(() => {
         if (!portState.isRunning) {
@@ -460,7 +507,7 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     const clearToolOutput = useCallback((tool: 'ping' | 'traceroute' | 'iperf-server' | 'iperf-client' | 'ports' | 'mtr') => {
         if (tool === 'ping') setPingState(prev => ({ ...prev, output: [], isOffline: false, lastRunAt: null }));
-        if (tool === 'traceroute') setTraceState(prev => ({ ...prev, output: [], lastRunAt: null }));
+        if (tool === 'traceroute') setTraceState(prev => ({ ...prev, output: [], hops: [], lastRunAt: null }));
         if (tool === 'iperf-server') setIperfServerState(prev => ({ ...prev, output: [], lastRunAt: null }));
         if (tool === 'iperf-client') setIperfClientState(prev => ({ ...prev, output: [], lastRunAt: null }));
         if (tool === 'ports') setPortState(prev => ({ ...prev, output: [], lastRunAt: null }));
@@ -589,14 +636,14 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }, [pingState.isRunning, showToast]);
 
     const runTraceroute = useCallback(async (target: string, sourceIp?: string) => {
-        if (traceState.isRunning) return;
-
-        const now = new Date().toISOString();
-        setTraceState(prev => ({ ...prev, isRunning: true, output: [], target, lastRunAt: now }));
+        if (abortControllers.current['traceroute']) return;
         abortControllers.current['traceroute'] = new AbortController();
 
+        const now = new Date().toISOString();
+        setTraceState(prev => ({ ...prev, isRunning: true, output: [], hops: [], target, lastRunAt: now }));
+
         try {
-            const response = await fetch(`${API_BASE}/tools/traceroute`, {
+            const response = await fetch(`${API_BASE}/tools/traceroute/stream`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ target, task_id: 'traceroute', source_ip: sourceIp }),
@@ -607,12 +654,54 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
+            let buffer = '';
 
             while (true) {
                 const { done, value } = await reader.read();
                 if (done) break;
-                const text = decoder.decode(value);
-                setTraceState(prev => ({ ...prev, output: trimOutput([...prev.output, text]) }));
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+                for (const line of lines) {
+                    if (!line.trim()) continue;
+                    try {
+                        const data = JSON.parse(line);
+                        if (data.type === 'hop') {
+                            const newHop: TracerouteHop = {
+                                hop: data.hop,
+                                ip: data.ip,
+                                hostname: data.hostname,
+                                rtts: data.rtts,
+                                avg_ms: data.avg_ms,
+                                loss: data.loss,
+                                asn: data.asn,
+                                as_name: data.as_name,
+                                country: data.country,
+                                raw_line: data.raw_line,
+                            };
+                            setTraceState(prev => ({
+                                ...prev,
+                                hops: [...prev.hops, newHop],
+                                output: trimOutput([...prev.output, (data.raw_line || `${data.hop}  ${data.ip}  ${data.avg_ms ?? '*'} ms`) + '\n'])
+                            }));
+                        } else if (data.type === 'info') {
+                            setTraceState(prev => ({
+                                ...prev,
+                                output: trimOutput([...prev.output, `${data.text}\n`])
+                            }));
+                        } else if (data.type === 'error') {
+                            setTraceState(prev => ({
+                                ...prev,
+                                output: trimOutput([...prev.output, `\nErro: ${data.error}\n`])
+                            }));
+                        }
+                    } catch {
+                        setTraceState(prev => ({
+                            ...prev,
+                            output: trimOutput([...prev.output, `${line}\n`])
+                        }));
+                    }
+                }
             }
             markToolAsCompleted('traceroute');
         } catch (error: any) {
@@ -624,7 +713,7 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             setTraceState(prev => ({ ...prev, isRunning: false }));
             abortControllers.current['traceroute'] = null;
         }
-    }, [traceState.isRunning]);
+    }, [markToolAsCompleted]);
 
     const startIperfServer = useCallback(async (opts?: IperfServerOptions) => {
         // Race-free re-entrancy guard (see runMtr).
@@ -686,6 +775,7 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                     duration: opts?.duration ?? 10,
                     reverse: opts?.reverse ?? false,
                     udp: opts?.udp ?? false,
+                    parallel: opts?.parallel ?? 1,
                 }),
                 signal: abortControllers.current['iperf-client'].signal
             });
@@ -949,6 +1039,71 @@ export const ToolsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             abortControllers.current[`scanner_${sessionId}`] = null;
         }
     }, [updateScanSession, stopTool]);
+
+    // Auto-start iPerf server on launch if enabled by user
+    useEffect(() => {
+        let isMounted = true;
+        const checkAndAutostart = async () => {
+            const rawAutostart = localStorage.getItem('iperf_autostart_server');
+            let isEnabled = false;
+            try {
+                isEnabled = rawAutostart ? JSON.parse(rawAutostart) === true : false;
+            } catch {
+                isEnabled = rawAutostart === 'true';
+            }
+            if (!isEnabled) return;
+
+            let attempts = 0;
+            while (attempts < 20 && isMounted) {
+                try {
+                    const res = await fetch(`${API_BASE}/tools/iperf/status`);
+                    if (res.ok) {
+                        const data = await res.json();
+                        if (data.available && isMounted) {
+                            let port = 5201;
+                            try {
+                                const rawPort = localStorage.getItem('iperf_tool_server_port');
+                                if (rawPort) {
+                                    const parsed = JSON.parse(rawPort);
+                                    port = parseInt(parsed, 10) || 5201;
+                                }
+                            } catch {
+                                port = 5201;
+                            }
+
+                            let sourceIp: string | undefined = undefined;
+                            try {
+                                const rawSource = localStorage.getItem('iperf_tool_server_source_ip');
+                                if (rawSource) {
+                                    const parsed = JSON.parse(rawSource);
+                                    if (typeof parsed === 'string' && parsed.trim()) {
+                                        sourceIp = parsed.trim();
+                                    }
+                                }
+                            } catch {
+                                sourceIp = undefined;
+                            }
+
+                            if (!abortControllers.current['iperf-server']) {
+                                startIperfServer({ port, sourceIp });
+                            }
+                            return;
+                        }
+                    }
+                } catch {
+                    // Backend still spinning up
+                }
+                attempts++;
+                await new Promise(r => setTimeout(r, 1000));
+            }
+        };
+
+        checkAndAutostart();
+
+        return () => {
+            isMounted = false;
+        };
+    }, [startIperfServer]);
 
     return (
         <ToolsContext.Provider value={{

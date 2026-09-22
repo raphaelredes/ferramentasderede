@@ -236,13 +236,13 @@ class NetworkTools:
                     del self._active_tasks[task_id]
 
     def run_iperf_client(self, target, task_id, port=iperf.DEFAULT_IPERF_PORT,
-                         source_ip=None, duration=10, reverse=False, udp=False):
+                         source_ip=None, duration=10, reverse=False, udp=False, parallel=1):
         """Executa o iperf2 em modo cliente contra `target`, gerando a saída
         linha por linha. Registra o processo para cancelamento via `/tools/stop`.
         """
         generator = iperf.run_client(
             target, port=port, source_ip=source_ip,
-            duration=duration, reverse=reverse, udp=udp,
+            duration=duration, reverse=reverse, udp=udp, parallel=parallel,
         )
         try:
             first_yield = next(generator)
@@ -390,6 +390,30 @@ class NetworkTools:
 
         try:
             generator = traceroute_module.traceroute(target_ip, holder, source_ip=source_ip)
+            for item in generator:
+                yield item
+        finally:
+            with self._tasks_lock:
+                if task_id in self._active_tasks:
+                    del self._active_tasks[task_id]
+
+    def traceroute_structured(self, target_ip, task_id, source_ip=None, max_hops=30):
+        """Executa traceroute estruturado retornando NDJSON com ASN e RTTs por salto."""
+        class ProcessHolder:
+            def __init__(self, tools_instance, task_id):
+                self.tools = tools_instance
+                self.task_id = task_id
+
+            def __setitem__(self, key, value):
+                if key == '_current_process':
+                    with self.tools._tasks_lock:
+                        self.tools._active_tasks[self.task_id] = value
+
+        holder = ProcessHolder(self, task_id)
+        try:
+            generator = traceroute_module.traceroute_structured(
+                target_ip, holder, source_ip=source_ip, max_hops=max_hops
+            )
             for item in generator:
                 yield item
         finally:

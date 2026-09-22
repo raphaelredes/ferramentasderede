@@ -82,3 +82,42 @@ async def check_ad_time_skew(req: ADTimeSkewRequest) -> Dict[str, Any]:
     except Exception as exc:
         logging.error(f"Erro ao checar time skew para {req.target}: {exc}")
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+class ADFSMORequest(BaseModel):
+    domain: Optional[str] = Field(None, description="Nome do domínio AD (opcional)")
+
+
+class ADReplicationRequest(BaseModel):
+    dc_target: Optional[str] = Field(None, description="Nome ou IP do DC alvo (opcional)")
+
+
+@router.post("/fsmo")
+async def get_ad_fsmo(req: ADFSMORequest) -> Dict[str, Any]:
+    """Descobre e mapeia os 5 detentores de funções FSMO no Active Directory."""
+    try:
+        res = ad_tools.get_ad_fsmo_roles(domain=req.domain)
+        if not res.get("ok"):
+            raise HTTPException(status_code=500, detail=res.get("error", "Erro ao consultar FSMO"))
+        return res
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logging.error(f"Erro ao consultar FSMO: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/replication")
+async def get_ad_replication(req: ADReplicationRequest) -> Dict[str, Any]:
+    """Audita a replicação do Active Directory com repadmin /replsummary."""
+    try:
+        res = ad_tools.check_ad_replication(dc_target=req.dc_target)
+        if not res.get("ok"):
+            raise HTTPException(status_code=500, detail=res.get("error", "Erro ao auditar replicação"))
+        return res
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logging.error(f"Erro ao auditar replicação: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc))
+

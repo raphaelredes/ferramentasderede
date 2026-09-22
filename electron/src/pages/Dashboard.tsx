@@ -503,6 +503,7 @@ export default function Dashboard() {
                 onAddHost={() => setIsAddHostModalOpen(true)}
                 totalHosts={hosts.length}
                 onlineHosts={globalStats.online}
+                isLoading={loading}
             />
 
             <GroupNetworkTabs

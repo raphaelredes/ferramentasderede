@@ -1,4 +1,3 @@
-import React from 'react';
 import { Clock, RotateCcw } from 'lucide-react';
 
 interface LastExecutionBadgeProps {

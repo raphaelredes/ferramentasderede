@@ -4,9 +4,10 @@ interface DashboardHeaderProps {
     onAddHost: () => void;
     totalHosts?: number;
     onlineHosts?: number;
+    isLoading?: boolean;
 }
 
-export function DashboardHeader({ onAddHost, totalHosts, onlineHosts }: DashboardHeaderProps) {
+export function DashboardHeader({ onAddHost, totalHosts, onlineHosts, isLoading }: DashboardHeaderProps) {
     return (
         <div className="flex justify-between items-center mb-8">
             <div>
@@ -17,7 +18,9 @@ export function DashboardHeader({ onAddHost, totalHosts, onlineHosts }: Dashboar
                         <>
                             <span className="w-1 h-1 bg-zinc-600 rounded-full"></span>
                             <span className="text-sm">
-                                {totalHosts} hosts ({onlineHosts} online)
+                                {isLoading && totalHosts === 0
+                                    ? 'Sincronizando hosts...'
+                                    : `${totalHosts} hosts (${onlineHosts} online)`}
                             </span>
                         </>
                     )}

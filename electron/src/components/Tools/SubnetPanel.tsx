@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { Calculator, Binary } from 'lucide-react';
 import { API_BASE } from '../../config/api';
 import { useToast } from '../../contexts/ToastContext';
@@ -40,7 +41,7 @@ export function SubnetPanel() {
     };
 
 
-    const Cell = ({ label, value }: { label: string; value?: React.ReactNode }) => (
+    const Cell = ({ label, value }: { label: string; value?: ReactNode }) => (
         <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-3">
             <div className="text-xs text-zinc-500 mb-1">{label}</div>
             <div className="font-mono text-zinc-100">{value ?? '—'}</div>

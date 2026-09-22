@@ -134,3 +134,131 @@ def traceroute(target_ip, current_process_holder=None, source_ip=None):
             current_process_holder['_current_process'] = None
             
         logging.info(f"TRACEROUTE: Finalizado para {target_ip}")
+
+
+IPV4_RE = re.compile(r"\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b")
+
+def traceroute_structured(target_ip, current_process_holder=None, source_ip=None, max_hops=30):
+    """Executa traceroute com emissão de eventos JSON estruturados por salto (NDJSON).
+
+    Enriquece cada salto descoberto com:
+    - RTTs individuais e RTT médio
+    - ASN (Sistema Autônomo BGP) via Team Cymru
+    - Nome da Operadora / Provedor
+    - Código do País
+    """
+    import json
+    from src.network.asn_lookup import lookup_ip_asn
+
+    logging.info(f"TRACEROUTE STRUCTURED: Iniciando para {target_ip} (src={source_ip or 'auto'})")
+    hops_cap = max(1, min(int(max_hops or 30), 64))
+
+    process = None
+    try:
+        if os.name == 'nt':
+            command = ["tracert", "-h", str(hops_cap), "-w", "2500", target_ip]
+            encoding = 'cp850'
+            creationflags = subprocess.CREATE_NO_WINDOW
+        else:
+            command = ["traceroute", "-m", str(hops_cap), "-w", "3", target_ip]
+            if source_ip:
+                command = ["traceroute", "-m", str(hops_cap), "-w", "3", "-s", source_ip, target_ip]
+            encoding = 'utf-8'
+            creationflags = 0
+
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding=encoding,
+            errors='replace',
+            creationflags=creationflags
+        )
+
+        if current_process_holder is not None:
+            current_process_holder['_current_process'] = process
+
+        yield json.dumps({"type": "start", "target": target_ip, "max_hops": hops_cap}) + "\n"
+
+        hop_count = 0
+        while True:
+            line = process.stdout.readline()
+            if not line:
+                if process.poll() is not None:
+                    break
+                time.sleep(0.05)
+                continue
+
+            clean_line = line.strip()
+            if not clean_line:
+                continue
+
+            # Parse de linha de salto
+            m_hop = re.match(r"^(\d+)\s+", clean_line)
+            if m_hop:
+                hop_num = int(m_hop.group(1))
+                remainder = clean_line[m_hop.end():]
+
+                # RTTs
+                tokens = re.findall(r"(?:<\s*1|\d+)\s*ms|\*", remainder)
+                rtts = []
+                for t in tokens:
+                    if t == "*":
+                        rtts.append(None)
+                    else:
+                        val = t.replace("ms", "").replace("<", "").strip()
+                        rtts.append(float(val) if val else 0.5)
+
+                valid_rtts = [r for r in rtts if r is not None]
+                avg_rtt = round(sum(valid_rtts) / len(valid_rtts), 1) if valid_rtts else None
+
+                # IP e Hostname
+                ips = IPV4_RE.findall(remainder)
+                ip = ips[-1] if ips else None
+
+                hostname = None
+                if ip and "[" in remainder and "]" in remainder:
+                    host_match = re.search(r"([a-zA-Z0-9.-]+)\s+\[", remainder)
+                    if host_match:
+                        hostname = host_match.group(1)
+
+                # Lookup ASN se IP disponível
+                asn_info = lookup_ip_asn(ip) if ip else {"asn": "—", "as_name": "—", "country": "—"}
+
+                hop_count += 1
+                hop_data = {
+                    "type": "hop",
+                    "hop": hop_num,
+                    "ip": ip or "*",
+                    "hostname": hostname,
+                    "rtts": rtts,
+                    "avg_ms": avg_rtt,
+                    "loss": len(valid_rtts) == 0,
+                    "asn": asn_info.get("asn", "—"),
+                    "as_name": asn_info.get("as_name", "—"),
+                    "country": asn_info.get("country", "—"),
+                    "raw_line": clean_line,
+                }
+                yield json.dumps(hop_data) + "\n"
+            else:
+                # Linhas informativas do cabeçalho ou rodapé
+                yield json.dumps({"type": "info", "text": clean_line}) + "\n"
+
+        yield json.dumps({"type": "done", "target": target_ip, "total_hops": hop_count}) + "\n"
+
+    except Exception as e:
+        logging.error(f"TRACEROUTE STRUCTURED erro: {e}")
+        yield json.dumps({"type": "error", "error": str(e)}) + "\n"
+    finally:
+        if process:
+            try:
+                process.terminate()
+                time.sleep(0.05)
+                if process.poll() is None:
+                    process.kill()
+            except Exception:
+                pass
+        if current_process_holder is not None:
+            current_process_holder['_current_process'] = None
+

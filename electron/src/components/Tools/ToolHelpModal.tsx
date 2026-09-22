@@ -1,4 +1,4 @@
-﻿import React, { useEffect } from 'react';
+import { useEffect } from 'react';
 import { X, HelpCircle, CheckCircle2, Lightbulb, Cog, Shield, ArrowRight } from 'lucide-react';
 import { TOOLS_HELP_DATA } from '../../data/toolsHelpData';
 
