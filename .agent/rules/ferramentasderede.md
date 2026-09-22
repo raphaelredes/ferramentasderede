@@ -27,4 +27,6 @@ Ferramentas que operem com protocolos de rede inseguros ou com credenciais em te
 
 Ao responder dúvidas sobre comandos, funcionamento técnico ou operações do sistema, forneça sempre em primeiro lugar uma resposta direta, objetiva e resumida (o comando ou fato exato). Só detalhe camadas adicionais de arquitetura, fluxo de rede ou detalhes de implementação caso o contexto exija ou o usuário solicite expressamente.
 
+Sempre que concluir a compilação de uma nova versão ou atualizações solicitadas, sincronize imediatamente as alterações no GitHub (commit e push na branch main), publique a respectiva Release anexando o executável portátil compilado via GitHub CLI (`gh release create`), e envie expressamente na resposta o link da release e o link para download direto do binário executável (`.exe`) para atualização da página oficial.
+
 Informe no final da resposta a seguinte frase: "Regras ferramentasderede.md seguidas"
