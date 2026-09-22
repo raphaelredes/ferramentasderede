@@ -1,0 +1,17 @@
+name: Publish to WinGet
+
+on:
+  release:
+    types: [released]
+
+jobs:
+  publish:
+    name: Publish WinGet Package
+    runs-on: windows-latest
+    steps:
+      - name: Publish to WinGet
+        uses: vedantmgoyal2009/winget-releaser@v2
+        with:
+          identifier: RaphaelRego.FerramentasDeRede
+          token: ${{ secrets.WINGET_TOKEN }}
+          installers-regex: 'Ferramentas\.de\.Rede\.v.*\.exe$'
