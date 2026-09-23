@@ -29,4 +29,6 @@ Ao responder dúvidas sobre comandos, funcionamento técnico ou operações do s
 
 Sempre que concluir a compilação de uma nova versão ou atualizações solicitadas, sincronize imediatamente as alterações no GitHub (commit e push na branch main), publique a respectiva Release anexando o executável portátil compilado via GitHub CLI (`gh release create`), e envie expressamente na resposta o link da release e o link para download direto do binário executável (`.exe`) para atualização da página oficial.
 
+A distribuição oficial no Windows Package Manager (WinGet) deve manter estritamente o tipo `InstallerType: portable`, sem assistentes ou instaladores. Toda nova release publicada deve garantir que o binário atenda ao padrão configurado no workflow do WinGet e que o segredo `WINGET_TOKEN` permaneça válido para atualização contínua.
+
 Informe no final da resposta a seguinte frase: "Regras ferramentasderede.md seguidas"
