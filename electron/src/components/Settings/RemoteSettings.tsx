@@ -81,7 +81,12 @@ export function RemoteSettings({ settings, onUpdateSettings, isChanged, setConfi
                 setTrustedHostStatus('Host adicionado.');
                 setTimeout(() => setTrustedHostStatus(''), 2000);
             } else {
-                setTrustedHostStatus('Erro ao adicionar.');
+                let reason = '';
+                try {
+                    const body = await res.json();
+                    if (typeof body?.detail === 'string') reason = body.detail;
+                } catch { /* resposta sem JSON */ }
+                setTrustedHostStatus(reason ? `Erro ao adicionar: ${reason}` : 'Erro ao adicionar.');
             }
         } catch (e) {
             setTrustedHostStatus('Erro de conexão.');

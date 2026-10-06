@@ -637,33 +637,134 @@ class WinRMHandler:
                 yield f"ERRO FINAL: {s_err}\n"
             self.ps.streams.error.clear()
 
+    # O cliente WinRM do Windows persiste TrustedHosts no valor REG_SZ
+    # 'trusted_hosts' (minúsculo, com underscore) — é o que Set-Item
+    # WSMan:\localhost\Client\TrustedHosts grava. Qualquer outro nome é ignorado.
+    _WSMAN_CLIENT_KEY = r"SOFTWARE\Microsoft\Windows\CurrentVersion\WSMAN\Client"
+    _TRUSTED_HOSTS_VALUE = "trusted_hosts"
+    # Última falha ao gravar (mensagem amigável) — consumida pela API para exibir ao usuário.
+    last_trusted_hosts_error = ""
+
     @staticmethod
     def get_trusted_hosts():
         """Retorna a lista atual de TrustedHosts via Registry (evita PowerShell/AV)."""
         try:
             import winreg
-            key_path = r"SOFTWARE\Microsoft\Windows\CurrentVersion\WSMAN\Client"
-            # OpenKey defaults to KEY_READ
-            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path) as key:
-                value, type_ = winreg.QueryValueEx(key, "TrustedHosts")
-                return value
+            access = winreg.KEY_READ | winreg.KEY_WOW64_64KEY
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, WinRMHandler._WSMAN_CLIENT_KEY, 0, access) as key:
+                value, type_ = winreg.QueryValueEx(key, WinRMHandler._TRUSTED_HOSTS_VALUE)
+                return value or ""
         except FileNotFoundError:
+            # Chave/valor inexistente: WinRM cliente nunca foi configurado neste computador.
             return ""
         except Exception as e:
             logging.error(f"Erro ao obter TrustedHosts via Registry: {e}")
             return ""
 
     @staticmethod
-    def set_trusted_hosts(value):
-        """Define o valor de TrustedHosts via Registry (evita PowerShell/AV)."""
+    def _write_trusted_hosts_registry(value):
+        """Grava o valor diretamente no Registry, criando a chave se ainda não existir."""
+        import winreg
+        access = winreg.KEY_SET_VALUE | winreg.KEY_WOW64_64KEY
+        with winreg.CreateKeyEx(winreg.HKEY_LOCAL_MACHINE, WinRMHandler._WSMAN_CLIENT_KEY, 0, access) as key:
+            winreg.SetValueEx(key, WinRMHandler._TRUSTED_HOSTS_VALUE, 0, winreg.REG_SZ, value)
+
+    @staticmethod
+    def _set_trusted_hosts_elevated(value):
+        """Grava o valor via reg.exe elevado (prompt UAC) quando o app não roda como administrador.
+
+        HKLM exige elevação e o app é distribuído sem manifesto de admin
+        (uac_admin=False), então usuários comuns/administradores sem token
+        elevado precisam autorizar via UAC. Janela oculta (SW_HIDE); o único
+        elemento visível é o diálogo UAC do próprio Windows.
+        """
+        import re as _re
+        import ctypes
+        from ctypes import wintypes
+
+        # Mesma allowlist de _is_safe_trusted_value, aceitando lista separada por vírgula.
+        if not isinstance(value, str) or len(value) > 4096 or not _re.fullmatch(r"[A-Za-z0-9._\-*, ]*", value):
+            WinRMHandler.last_trusted_hosts_error = "Valor inválido para TrustedHosts."
+            return False
+
+        class SHELLEXECUTEINFOW(ctypes.Structure):
+            _fields_ = [
+                ("cbSize", wintypes.DWORD), ("fMask", wintypes.ULONG), ("hwnd", wintypes.HWND),
+                ("lpVerb", wintypes.LPCWSTR), ("lpFile", wintypes.LPCWSTR),
+                ("lpParameters", wintypes.LPCWSTR), ("lpDirectory", wintypes.LPCWSTR),
+                ("nShow", ctypes.c_int), ("hInstApp", wintypes.HINSTANCE),
+                ("lpIDList", ctypes.c_void_p), ("lpClass", wintypes.LPCWSTR),
+                ("hkeyClass", wintypes.HKEY), ("dwHotKey", wintypes.DWORD),
+                ("hIconOrMonitor", wintypes.HANDLE), ("hProcess", wintypes.HANDLE),
+            ]
+
+        SEE_MASK_NOCLOSEPROCESS = 0x00000040
+        SW_HIDE = 0
+        reg_exe = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "reg.exe")
+        params = (f'add "HKLM\\{WinRMHandler._WSMAN_CLIENT_KEY}" /v {WinRMHandler._TRUSTED_HOSTS_VALUE} '
+                  f'/t REG_SZ /d "{value}" /f /reg:64')
+
+        sei = SHELLEXECUTEINFOW()
+        sei.cbSize = ctypes.sizeof(SHELLEXECUTEINFOW)
+        sei.fMask = SEE_MASK_NOCLOSEPROCESS
+        sei.lpVerb = "runas"
+        sei.lpFile = reg_exe
+        sei.lpParameters = params
+        sei.nShow = SW_HIDE
+
+        shell32 = ctypes.windll.shell32
+        kernel32 = ctypes.windll.kernel32
+        kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+
+        if not shell32.ShellExecuteExW(ctypes.byref(sei)):
+            err = ctypes.GetLastError()
+            if err == 1223:  # ERROR_CANCELLED
+                WinRMHandler.last_trusted_hosts_error = "Elevação (UAC) negada pelo usuário."
+            else:
+                WinRMHandler.last_trusted_hosts_error = f"Falha ao solicitar elevação (erro {err})."
+            logging.error(f"TrustedHosts elevado: ShellExecuteEx falhou ({err}).")
+            return False
+
+        exit_code = wintypes.DWORD(1)
         try:
-            import winreg
-            key_path = r"SOFTWARE\Microsoft\Windows\CurrentVersion\WSMAN\Client"
-            # Precisamos de acesso de escrita
-            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path, 0, winreg.KEY_SET_VALUE) as key:
-                winreg.SetValueEx(key, "TrustedHosts", 0, winreg.REG_SZ, value)
+            kernel32.WaitForSingleObject(sei.hProcess, 60000)
+            kernel32.GetExitCodeProcess(sei.hProcess, ctypes.byref(exit_code))
+        finally:
+            kernel32.CloseHandle(sei.hProcess)
+
+        if exit_code.value != 0:
+            WinRMHandler.last_trusted_hosts_error = f"reg.exe elevado retornou código {exit_code.value}."
+            logging.error(WinRMHandler.last_trusted_hosts_error)
+            return False
+        return True
+
+    @staticmethod
+    def set_trusted_hosts(value):
+        """Define o valor de TrustedHosts via Registry (evita PowerShell/AV).
+
+        Tenta gravar direto; se faltar permissão (processo sem elevação), solicita
+        elevação via UAC. Em caso de falha, ``last_trusted_hosts_error`` descreve o motivo.
+        """
+        WinRMHandler.last_trusted_hosts_error = ""
+        try:
+            WinRMHandler._write_trusted_hosts_registry(value)
             return True
+        except PermissionError as e:
+            logging.warning(f"Sem permissão para gravar TrustedHosts ({e}); solicitando elevação UAC.")
+            if WinRMHandler._set_trusted_hosts_elevated(value):
+                # Confirma que o valor realmente foi gravado.
+                if (WinRMHandler.get_trusted_hosts() or "") == (value or ""):
+                    return True
+                WinRMHandler.last_trusted_hosts_error = "O Windows não confirmou a gravação do TrustedHosts."
+                logging.error(WinRMHandler.last_trusted_hosts_error)
+                return False
+            if not WinRMHandler.last_trusted_hosts_error:
+                WinRMHandler.last_trusted_hosts_error = "Permissão negada. Execute o app como administrador."
+            return False
         except Exception as e:
+            WinRMHandler.last_trusted_hosts_error = f"Erro ao gravar no Registro: {e}"
             logging.error(f"Erro ao definir TrustedHosts via Registry: {e}")
             return False
 
@@ -695,7 +796,7 @@ class WinRMHandler:
         if ip in hosts:
             return True # Já está na lista
 
-        new_value = f"{current}, {ip}" if current else ip
+        new_value = f"{current},{ip}" if current else ip
         return WinRMHandler.set_trusted_hosts(new_value)
 
     @staticmethod
@@ -711,7 +812,7 @@ class WinRMHandler:
         hosts = [h.strip() for h in current.split(',') if h.strip()]
         if ip in hosts:
             hosts.remove(ip)
-            new_value = ", ".join(hosts)
+            new_value = ",".join(hosts)
             return WinRMHandler.set_trusted_hosts(new_value)
         return True
 

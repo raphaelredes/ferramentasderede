@@ -201,7 +201,8 @@ def add_trusted_host(host: str):
     if WinRMHandler.add_trusted_host(host):
         return {"status": "success", "message": f"Added {host} to TrustedHosts."}
     else:
-        raise HTTPException(status_code=500, detail="Failed to add TrustedHost.")
+        reason = WinRMHandler.last_trusted_hosts_error or "Failed to add TrustedHost."
+        raise HTTPException(status_code=500, detail=reason)
 
 @router.delete("/settings/trusted-hosts")
 def remove_trusted_host_endpoint(host: Optional[str] = None):

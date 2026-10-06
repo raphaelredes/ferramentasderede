@@ -17,6 +17,17 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
     {
+        version: '1.5.1',
+        date: '2026-10-06',
+        title: 'Correção do Cadastro de Hosts Confiáveis (TrustedHosts) em Outros Computadores',
+        changes: [
+            { kind: 'fix', text: 'Hosts Confiáveis agora são lidos e gravados no valor correto do Registro do Windows (trusted_hosts), o mesmo usado pelo WinRM — antes o app usava um valor ignorado pelo sistema.' },
+            { kind: 'fix', text: 'Criação automática da chave WSMAN\\Client quando inexistente (computadores onde o WinRM cliente nunca foi configurado).' },
+            { kind: 'fix', text: 'Quando o app não está elevado, a gravação solicita permissão via UAC (janela oculta) em vez de falhar silenciosamente.' },
+            { kind: 'ui', text: 'A tela de Hosts Confiáveis exibe o motivo real da falha (ex.: elevação negada) em vez de apenas "Erro ao adicionar.".' },
+        ],
+    },
+    {
         version: '1.5.0',
         date: '2026-09-22',
         title: 'Auditoria de Postura SNMP (NIST/CISA), MTR com Jitter RFC 1889, Traceroute BGP ASN, HTTP Waterfall & OWASP, TLS Chain e AD FSMO',
