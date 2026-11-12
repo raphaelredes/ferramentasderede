@@ -1,4 +1,4 @@
-﻿# Python
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
@@ -45,8 +45,11 @@ cover/
 *.mo
 *.pot
 
-# Django stuff:
+# Application runtime data & logs
+data/logs/
+data/
 *.log
+
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
@@ -313,3 +316,5 @@ electron/build/
 *.db
 key.key
 nul
+
+file_version_info.txt

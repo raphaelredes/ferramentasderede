@@ -10,7 +10,6 @@ from .core.local_commands import LocalCommands
 from .core.remote_commands import RemoteCommands
 from .core.winrm_handler import WinRMError, ConnectionError, ConnectTimeout, WinRMHandler
 from .core.local_handler import LocalHandler
-from .core.native_wmi import NativeWMIHandler
 from .core.user_session_manager import UserSessionManager
 
 class SystemTools:
@@ -62,33 +61,12 @@ class SystemTools:
         )
 
     def get_remote_system_info_raw(self, target_ip, username, password):
-        # 1. Tentar WMI Nativo primeiro (Bypass TrustedHosts)
-        if target_ip not in ["127.0.0.1", "localhost"]:
-            try:
-                wmi = NativeWMIHandler(target_ip, username, password)
-                # Tenta conectar e buscar info
-                info = wmi.get_system_info_raw()
-                if info and "error" not in info and info.get("OS"):
-                    logging.info(f"Using Native WMI for System Info on {target_ip}")
-                    return info
-            except Exception as e:
-                logging.warning(f"Native WMI failed for System Info: {e}")
-
-        # 2. Fallback para WinRM (Original)
+        # Executa diretamente via WinRM/PSRP (HTTP 5985), evitando chamadas COM/DCOM
+        # (WbemScripting.SWbemLocator) que causam timeouts multi-domínio e alertas de EDR/AV.
         return self._execute_winrm_command(target_ip, username, password, 
             lambda cmd: cmd.get_system_info_raw())
 
     def get_remote_services(self, target_ip, username, password):
-        if target_ip not in ["127.0.0.1", "localhost"]:
-            try:
-                wmi = NativeWMIHandler(target_ip, username, password)
-                services = wmi.get_services()
-                if services:
-                    logging.info(f"Using Native WMI for Services on {target_ip}")
-                    return services
-            except Exception as e:
-                logging.warning(f"Native WMI failed for Services: {e}")
-
         return self._execute_winrm_command(target_ip, username, password, 
             lambda cmd: cmd.get_remote_services())
             

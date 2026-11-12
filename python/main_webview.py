@@ -468,6 +468,14 @@ def main():
                         print(f"Error launching TeamViewer: {e}")
             return False
 
+        def launchHopToDesk(self, id):
+            try:
+                from src.system.core.hoptodesk_manager import HopToDeskManager
+                return HopToDeskManager.launch_local(id)
+            except Exception as e:
+                print(f"Error launching HopToDesk: {e}")
+                return False
+
         def openExternal(self, url):
             import webbrowser
             if not url or not isinstance(url, str):
@@ -559,6 +567,7 @@ def main():
             launchRdp: (ip) => window.pywebview.api.launchRdp(ip),
             launchMsra: (ip, askCredentials) => window.pywebview.api.launchMsra(ip, askCredentials),
             launchTeamViewer: (id) => window.pywebview.api.launchTeamViewer(id),
+            launchHopToDesk: (id) => window.pywebview.api.launchHopToDesk(id),
             openExternal: (url) => window.pywebview.api.openExternal(url),
             showItemInFolder: (path) => window.pywebview.api.showItemInFolder(path),
             saveFileAs: (filename, content) => window.pywebview.api.saveFileAs(filename, content)

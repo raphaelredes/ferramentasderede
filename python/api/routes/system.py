@@ -259,38 +259,42 @@ def system_info(request: SystemInfoRequest, x_temp_auth: str = Header(default=No
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro interno no servidor: {str(e)}")
 
-    # Update host with current user and TeamViewer ID if available
+    # Persist fields returned by get_system_info.ps1 directly to DB (MAC, Domain, CurrentUser,
+    # LastBootUpTime, TeamViewerID, SystemDiskFreeGB) without needing a separate /host-probe call.
     if isinstance(result, dict):
-        updates_needed = False
         try:
-            from api.routes.network import get_hosts_list, save_hosts_list, host_manager_instance
-            
-            # We need to fetch fresh list or use manager directly
-            # Using manager directly is better for atomic updates but we need the object first
-            current_hosts = get_hosts_list()
-            target_host = next((h for h in current_hosts if h.address == request.target_ip), None)
-            
-            if target_host:
-                if "CurrentUser" in result and result["CurrentUser"] != "N/A":
-                    target_host.current_user = result["CurrentUser"]
-                    updates_needed = True
-                
-                if "TeamViewerID" in result and result["TeamViewerID"] != "N/A" and result["TeamViewerID"] != "Unknown":
-                    target_host.teamviewer_id = result["TeamViewerID"]
-                    updates_needed = True
-                
-                if updates_needed:
-                    # Persist using HostManager
-                    # Re-construct dict for update
-                    host_data = {
-                        'ip': target_host.address,
-                        'current_user': target_host.current_user,
-                        'teamviewer_id': target_host.teamviewer_id
-                    }
-                    # We can use update_host_details or update_hosts. update_hosts expects full list or list of dicts.
-                    # Let's use save_hosts_list helper which handles the conversion
-                    save_hosts_list(current_hosts)
-                    
+            from src.core.database import db as _db
+            updates = {}
+            mac = result.get("MACAddress")
+            if mac and mac != "N/A":
+                updates['mac'] = mac
+            dom = result.get("Domain")
+            if dom and dom != "N/A":
+                updates['domain'] = dom
+            cu = result.get("CurrentUser")
+            if cu and cu not in ("N/A", "Error"):
+                updates['current_user'] = cu
+            lb = result.get("LastBootUpTime")
+            if lb and lb != "N/A":
+                updates['last_boot'] = lb
+            tv = result.get("TeamViewerID")
+            if tv and tv not in ("N/A", "Unknown"):
+                updates['teamviewer_id'] = str(tv)
+            htd = result.get("HopToDeskID")
+            if htd and htd not in ("N/A", "Unknown"):
+                updates['hoptodesk_id'] = str(htd)
+            elif htd == "N/A":
+                updates['hoptodesk_id'] = None
+            disks = result.get("Disks")
+            if isinstance(disks, list):
+                for d in disks:
+                    if isinstance(d, dict) and str(d.get("DeviceID", "")).upper().startswith("C"):
+                        free_gb = d.get("Free_GB")
+                        if isinstance(free_gb, (int, float)):
+                            updates['system_disk_free_gb'] = float(free_gb)
+                        break
+            if updates:
+                _db.update_host_fields(request.target_ip, updates)
         except Exception as e:
             logging.exception(f"Erro ao atualizar informações do host: {e}")
 
@@ -565,6 +569,145 @@ def get_teamviewer_id(request: SystemInfoRequest, x_temp_auth: str = Header(defa
 
     return StreamingResponse(event_generator(), media_type="application/x-ndjson")
 
+
+class HopToDeskDeployRequest(BaseModel):
+    target_ip: str
+    username: Optional[str] = None
+    password: Optional[str] = None
+    credential_id: Optional[str] = None
+    target_location: Optional[str] = "public"
+    target_user: Optional[str] = None
+
+    @field_validator("target_ip")
+    @classmethod
+    def _target_ip_must_be_safe(cls, v: str) -> str:
+        return _validate_target_ip(v)
+
+
+class HopToDeskLaunchRequest(BaseModel):
+    target_id: Optional[str] = None
+
+
+@router.post("/hoptodesk/deploy")
+def deploy_hoptodesk(request: HopToDeskDeployRequest, x_temp_auth: str = Header(default=None)):
+    """Baixa o HopToDesk localmente (se necessário), implanta no host remoto e obtém o ID."""
+    try:
+        username, password = _resolve_credentials(request)
+    except HTTPException as he:
+        def err_gen():
+            yield json.dumps({"status": "error", "code": "CREDENTIALS_UNAVAILABLE", "message": he.detail}).encode('utf-8') + b"\n"
+        return StreamingResponse(err_gen(), media_type="application/x-ndjson")
+
+    def event_generator():
+        from src.system.core.hoptodesk_manager import HopToDeskManager
+        from src.system.core.winrm_handler import WinRMHandler
+        from src.core.database import db as _db
+
+        handler = None
+        try:
+            handler = WinRMHandler(request.target_ip, username, password)
+            conn_res = handler.connect()
+            if "error" in conn_res:
+                yield json.dumps({"status": "error", "message": conn_res["error"], "code": conn_res.get("code")}).encode('utf-8') + b"\n"
+                return
+
+            for evt in HopToDeskManager.deploy_and_get_id(
+                handler,
+                request.target_ip,
+                username,
+                password,
+                target_location=request.target_location or "public",
+                target_user=request.target_user
+            ):
+                if evt.get("status") == "success" and evt.get("data"):
+                    _db.update_host_fields(request.target_ip, {'hoptodesk_id': str(evt['data'])})
+                yield json.dumps(evt).encode('utf-8') + b"\n"
+
+        except Exception as e:
+            yield json.dumps({"status": "error", "message": str(e)}).encode('utf-8') + b"\n"
+        finally:
+            if handler:
+                handler.close()
+
+    return StreamingResponse(event_generator(), media_type="application/x-ndjson")
+
+
+@router.post("/hoptodesk/launch")
+def launch_hoptodesk(request: HopToDeskLaunchRequest):
+    """Inicia o HopToDesk localmente conectando ao ID especificado."""
+    from src.system.core.hoptodesk_manager import HopToDeskManager
+    success = HopToDeskManager.launch_local(request.target_id)
+    if success:
+        return {"status": "success", "message": f"HopToDesk iniciado para {request.target_id}"}
+    return {"status": "error", "message": "Não foi possível iniciar o HopToDesk localmente."}
+
+@router.post("/user-profiles")
+def get_user_profiles_route(request: SystemInfoRequest, x_temp_auth: str = Header(default=None)):
+    r"""Lista todas as pastas de usuários de C:\Users no host remoto (filtrando public/default)."""
+    try:
+        user, pwd = _resolve_credentials(request)
+    except HTTPException as he:
+        return {"status": "error", "message": he.detail, "profiles": []}
+
+    from src.system.core.winrm_handler import WinRMHandler
+    handler = None
+    try:
+        handler = WinRMHandler(request.target_ip, user, pwd)
+        conn = handler.connect()
+        if "error" in conn:
+            return {"status": "error", "message": conn["error"], "profiles": []}
+
+        ps_script = r'''
+        $baseDir = "$env:SystemDrive\Users"
+        if (-not (Test-Path $baseDir)) {
+            $regBase = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList' -ErrorAction SilentlyContinue).ProfilesDirectory
+            if ($regBase) { $baseDir = [System.Environment]::ExpandEnvironmentVariables($regBase) }
+        }
+
+        $list = [System.Collections.Generic.List[PSCustomObject]]::new()
+        $seen = @{}
+
+        if (Test-Path $baseDir) {
+            $dirs = Get-ChildItem -Path $baseDir -Directory -Force -ErrorAction SilentlyContinue
+            foreach ($d in $dirs) {
+                $n = $d.Name
+                $lower = $n.ToLower()
+                if ($lower -eq 'public' -or $lower -eq 'público' -or $lower -eq 'publico' -or $lower -eq 'all users') { continue }
+                if ($lower -eq 'default' -or $lower.StartsWith('default')) { continue }
+                if ($lower -eq 'systemprofile' -or $lower -eq 'localservice' -or $lower -eq 'networkservice') { continue }
+
+                # Garantir rigorosamente que a pasta esteja DENTRO exclusivamente de C:\Users
+                $parentPath = (Split-Path -Parent $d.FullName).TrimEnd('\')
+                if ($parentPath.ToLower() -ne $baseDir.TrimEnd('\').ToLower()) { continue }
+
+                if (-not $seen.ContainsKey($lower)) {
+                    $seen[$lower] = $true
+                    $list.Add([PSCustomObject]@{ Username = $n; Path = $d.FullName; DesktopPath = Join-Path $d.FullName "Desktop" })
+                }
+            }
+        }
+
+        @($list | Sort-Object Username) | ConvertTo-Json -Compress
+        '''
+        res = handler.execute_script(ps_script)
+        out = "\n".join(res.get("output", [])).strip()
+        profiles = []
+        if out:
+            try:
+                parsed = json.loads(out)
+                if isinstance(parsed, dict):
+                    profiles = [parsed]
+                elif isinstance(parsed, list):
+                    profiles = parsed
+            except Exception:
+                profiles = []
+        return {"status": "success", "profiles": profiles}
+    except Exception as e:
+        return {"status": "error", "message": str(e), "profiles": []}
+    finally:
+        if handler:
+            handler.close()
+
 @router.post("/sessions")
 def list_sessions(request: SystemInfoRequest, x_temp_auth: str = Header(default=None)):
     """Lista sessões de usuários conectados."""
@@ -761,3 +904,337 @@ def test_connection(request: TestConnectionRequest, x_temp_auth: str = Header(de
         logs = log_capture_string.getvalue()
         
     return {"result": result, "logs": logs}
+
+
+class EnableRemoteWinRMRequest(BaseModel):
+    target_ip: str
+    username: str = ""
+    password: str = ""
+    credential_id: Optional[str] = None
+
+    @field_validator("target_ip")
+    @classmethod
+    def _target_ip_must_be_safe(cls, v: str) -> str:
+        return _validate_target_ip(v)
+
+
+@router.post("/winrm/enable-remote")
+def enable_remote_winrm_route(request: EnableRemoteWinRMRequest):
+    """Tenta habilitar o serviço WinRM remotamente no host alvo usando credenciais administrativas."""
+    try:
+        user = request.username
+        pwd = request.password
+        if request.credential_id:
+            from api.routes.security import vault
+            if vault.is_unlocked:
+                cred = vault.get_credential(request.credential_id)
+                if cred:
+                    user = cred.get("username", user)
+                    pwd = cred.get("password", pwd)
+
+        if not user or not pwd:
+            return {"status": "error", "message": "Credenciais administrativas não fornecidas."}
+
+        from src.system.core.local_commands import LocalCommands
+        cmd = LocalCommands(request.target_ip)
+        success, message = cmd.enable_remote_winrm(user, pwd)
+        if success:
+            return {"status": "success", "message": message}
+        return {"status": "error", "message": message}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+
+class HopToDeskRemoveRequest(BaseModel):
+    target_ip: str
+    username: Optional[str] = None
+    password: Optional[str] = None
+    credential_id: Optional[str] = None
+
+    @field_validator("target_ip")
+    @classmethod
+    def _target_ip_must_be_safe(cls, v: str) -> str:
+        return _validate_target_ip(v)
+
+
+@router.post("/hoptodesk/remove")
+def remove_hoptodesk_route(request: HopToDeskRemoveRequest):
+    """Remove o executavel do HopToDesk e para/desinstala o servico no host remoto."""
+    try:
+        user, pwd = _resolve_credentials(request)
+    except HTTPException as he:
+        return {"status": "error", "message": he.detail}
+
+    from src.system.core.winrm_handler import WinRMHandler
+    handler = WinRMHandler(request.target_ip, user, pwd)
+    conn = handler.connect()
+    if "error" in conn:
+        return {"status": "error", "message": conn["error"]}
+
+    ps_script = r'''
+    Stop-Service -Name "HopToDesk" -Force -ErrorAction SilentlyContinue
+    cmd.exe /c "sc.exe delete HopToDesk" 2>$null | Out-Null
+    Stop-Process -Name "*hoptodesk*" -Force -ErrorAction SilentlyContinue
+    $paths = @(
+        "C:\Users\Public\Desktop\HopToDesk.exe",
+        "$env:ProgramFiles\HopToDesk\HopToDesk.exe",
+        "${env:ProgramFiles(x86)}\HopToDesk\HopToDesk.exe",
+        "C:\ProgramData\HopToDesk\HopToDesk.exe"
+    )
+    foreach ($p in $paths) {
+        if (Test-Path $p) { Remove-Item -Path $p -Force -ErrorAction SilentlyContinue }
+    }
+    try {
+        $uDirs = Get-ChildItem "C:\Users" -Directory -ErrorAction SilentlyContinue
+        foreach ($u in $uDirs) {
+            $chk = Join-Path $u.FullName "Desktop\HopToDesk.exe"
+            if (Test-Path $chk) { Remove-Item -Path $chk -Force -ErrorAction SilentlyContinue }
+        }
+    } catch {}
+    Write-Output "REMOVED"
+    '''
+    res = handler.execute_script(ps_script)
+    _db.update_host_fields(request.target_ip, {"hoptodesk_id": None})
+    return {"status": "success", "message": "HopToDesk removido com sucesso do host remoto."}
+
+
+class RemoteAppActionRequest(BaseModel):
+    target_ip: str
+    username: Optional[str] = None
+    password: Optional[str] = None
+    credential_id: Optional[str] = None
+    app_name: str
+
+    @field_validator("target_ip")
+    @classmethod
+    def _target_ip_must_be_safe(cls, v: str) -> str:
+        return _validate_target_ip(v)
+
+
+@router.post("/remote-app/start")
+def start_remote_app(request: RemoteAppActionRequest, x_temp_auth: str = Header(default=None)):
+    """Inicia o aplicativo especificado (hoptodesk ou teamviewer) no host remoto."""
+    try:
+        username, password = _resolve_credentials(request)
+    except HTTPException as he:
+        return {"status": "error", "message": he.detail}
+
+    from src.system.core.winrm_handler import WinRMHandler
+    handler = None
+    try:
+        handler = WinRMHandler(request.target_ip, username, password)
+        conn = handler.connect()
+        if "error" in conn:
+            return {"status": "error", "message": conn["error"]}
+
+        app = request.app_name.lower().strip()
+        if app == "hoptodesk":
+            ps_script = r'''
+            # 1. Verificar se o processo ja esta em execucao
+            $proc = Get-Process -Name "*hoptodesk*" -ErrorAction SilentlyContinue
+            if ($proc) {
+                Write-Output "ALREADY_RUNNING"
+                exit
+            }
+
+            # 2. Localizar o executavel portátil copiado
+            $candidate = $null
+            if (Test-Path 'C:\Users\Public\Desktop\HopToDesk.exe') {
+                $candidate = 'C:\Users\Public\Desktop\HopToDesk.exe'
+            }
+            if (-not $candidate) {
+                try {
+                    $uDirs = Get-ChildItem "C:\Users" -Directory -Force -ErrorAction SilentlyContinue
+                    foreach ($u in $uDirs) {
+                        foreach ($sub in @("Desktop\HopToDesk.exe", "Downloads\HopToDesk.exe", "AppData\Local\HopToDesk\HopToDesk.exe")) {
+                            $chk = Join-Path $u.FullName $sub
+                            if (Test-Path $chk) { $candidate = $chk; break }
+                        }
+                        if ($candidate) { break }
+                    }
+                } catch {}
+            }
+            if (-not $candidate) {
+                foreach ($sp in @("$env:ProgramFiles\HopToDesk\HopToDesk.exe", "${env:ProgramFiles(x86)}\HopToDesk\HopToDesk.exe", "C:\ProgramData\HopToDesk\HopToDesk.exe")) {
+                    if ($sp -and (Test-Path $sp)) { $candidate = $sp; break }
+                }
+            }
+            if (-not $candidate) {
+                Write-Output "NOT_INSTALLED"
+                exit
+            }
+
+            # 3. Detectar usuarios interativos ativos (console / sessoes graficas abertas)
+            $usersToLaunch = [System.Collections.Generic.List[string]]::new()
+            try {
+                $cs = (Get-CimInstance Win32_ComputerSystem).UserName
+                if ($cs -and (-not $usersToLaunch.Contains($cs))) { $usersToLaunch.Add($cs) }
+            } catch {}
+
+            try {
+                $explorers = Get-CimInstance Win32_Process -Filter "Name = 'explorer.exe'" -ErrorAction SilentlyContinue
+                foreach ($exp in $explorers) {
+                    $o = Invoke-CimMethod -InputObject $exp -MethodName GetOwner -ErrorAction SilentlyContinue
+                    if ($o -and $o.Domain -and $o.User) {
+                        $fullU = "$($o.Domain)\$($o.User)"
+                        if (-not $usersToLaunch.Contains($fullU)) { $usersToLaunch.Add($fullU) }
+                    }
+                }
+            } catch {}
+
+            # 4. Iniciar diretamente no desktop interativo do usuario via schtasks.exe (imune a restrições DCOM do WinRM)
+            $taskName = "HopToDesk_Start_" + (Get-Random)
+            $taskCreated = $false
+
+            foreach ($uName in $usersToLaunch) {
+                if (-not $uName) { continue }
+                $createCmd = "schtasks /create /tn `"$taskName`" /tr `"\`"$candidate\`"`" /sc ONCE /st 23:59 /it /ru `"$uName`" /rl HIGHEST /f"
+                $null = cmd.exe /c $createCmd 2>&1
+                if ($LASTEXITCODE -eq 0) {
+                    $taskCreated = $true
+                    break
+                }
+            }
+
+            if (-not $taskCreated) {
+                $createCmd = "schtasks /create /tn `"$taskName`" /tr `"\`"$candidate\`"`" /sc ONCE /st 23:59 /it /rl HIGHEST /f"
+                $null = cmd.exe /c $createCmd 2>&1
+                if ($LASTEXITCODE -eq 0) {
+                    $taskCreated = $true
+                }
+            }
+
+            if ($taskCreated) {
+                $null = cmd.exe /c "schtasks /run /tn `"$taskName`"" 2>&1
+                Start-Sleep -Seconds 2
+                $null = cmd.exe /c "schtasks /delete /tn `"$taskName`" /f" 2>&1
+            } else {
+                Start-Process -FilePath $candidate -WindowStyle Normal -ErrorAction SilentlyContinue
+            }
+
+            # 5. Confirmar se o processo esta ativo (aguarda ate 5 segundos)
+            $isRunning = $false
+            for ($chk = 0; $chk -lt 5; $chk++) {
+                $p = Get-Process -Name "*hoptodesk*" -ErrorAction SilentlyContinue
+                if ($p) { $isRunning = $true; break }
+                Start-Sleep -Seconds 1
+            }
+
+            if ($isRunning) { Write-Output "STARTED" } else { Write-Output "FAILED" }
+            '''
+        elif app == "teamviewer":
+            ps_script = r'''
+            $svc = Get-Service -Name "TeamViewer" -ErrorAction SilentlyContinue
+            if ($svc) {
+                if ($svc.Status -ne "Running") {
+                    Start-Service -Name "TeamViewer" -ErrorAction SilentlyContinue
+                    Start-Sleep -Seconds 1
+                }
+                $svc = Get-Service -Name "TeamViewer" -ErrorAction SilentlyContinue
+                if ($svc.Status -eq "Running") {
+                    Write-Output "STARTED"
+                    exit
+                }
+            }
+            $proc = Get-Process -Name "*teamviewer*" -ErrorAction SilentlyContinue
+            if ($proc) {
+                Write-Output "ALREADY_RUNNING"
+                exit
+            }
+            $candidate = $null
+            foreach ($p in @("$env:ProgramFiles\TeamViewer\TeamViewer.exe", "${env:ProgramFiles(x86)}\TeamViewer\TeamViewer.exe")) {
+                if (Test-Path $p) { $candidate = $p; break }
+            }
+            if ($candidate) {
+                Start-Process -FilePath $candidate -ErrorAction SilentlyContinue
+                Start-Sleep -Seconds 1
+                if (Get-Process -Name "*teamviewer*" -ErrorAction SilentlyContinue) {
+                    Write-Output "STARTED"
+                } else {
+                    Write-Output "FAILED"
+                }
+            } else {
+                Write-Output "NOT_INSTALLED"
+            }
+            '''
+        else:
+            return {"status": "error", "message": f"Aplicativo desconhecido: {app}"}
+
+        res = handler.execute_script(ps_script)
+        out = "".join(res.get("output", [])).strip()
+        if "STARTED" in out or "ALREADY_RUNNING" in out:
+            return {"status": "success", "running": True, "message": f"{app.capitalize()} em execução no host!"}
+        elif "NOT_INSTALLED" in out:
+            return {"status": "not_installed", "running": False, "message": f"{app.capitalize()} não está instalado no host remoto."}
+        else:
+            return {"status": "error", "running": False, "message": f"Não foi possível iniciar {app.capitalize()} no host."}
+
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+    finally:
+        if handler:
+            handler.close()
+
+
+class ConnectivityDiagRequest(BaseModel):
+    targets: list[str] | str
+    username: Optional[str] = ""
+    password: Optional[str] = ""
+    credential_id: Optional[str] = None
+
+
+@router.post("/connectivity-diag")
+def connectivity_diag_route(request: ConnectivityDiagRequest):
+    """Stream em tempo real (NDJSON) de Auditoria Multi-Host de Wi-Fi, Enlaces LAN e 802.1x."""
+    from src.system.core.wifi_diag_manager import parse_targets, stream_connectivity_diagnostic
+
+    parsed_targets = parse_targets(request.targets)
+    if not parsed_targets:
+        raise HTTPException(
+            status_code=400,
+            detail="Informe ao menos um Hostname ou Endereço IPv4 válido (ex: 1.1.1.1, host.example.com).",
+        )
+
+    eff_user = (request.username or "").strip()
+    eff_pass = request.password or ""
+
+    if not eff_user or not eff_pass:
+        from api.routes.security import vault
+        if request.credential_id and request.credential_id != "auto":
+            if not vault.is_unlocked:
+                raise HTTPException(
+                    status_code=401,
+                    detail="Cofre de Credenciais bloqueado. Desbloqueie o cofre na aba Segurança ou informe usuário e senha manualmente.",
+                )
+            cred = vault.get_credential(request.credential_id)
+            if not cred:
+                raise HTTPException(status_code=404, detail="Credencial selecionada não encontrada no Cofre.")
+            eff_user = cred.get("username", "")
+            eff_pass = cred.get("password", "")
+        elif vault.is_unlocked:
+            all_creds = vault.get_all_credentials()
+            if all_creds:
+                eff_user = all_creds[0].get("username", "")
+                eff_pass = all_creds[0].get("password", "")
+
+        if not eff_user or not eff_pass:
+            raise HTTPException(
+                status_code=400,
+                detail="Credenciais administrativas são obrigatórias para auditar interfaces e Wi-Fi via WinRM. Desbloqueie o Cofre de Credenciais ou informe usuário/senha manualmente.",
+            )
+
+    return StreamingResponse(
+        stream_connectivity_diagnostic(
+            targets=parsed_targets,
+            username=eff_user,
+            password=eff_pass,
+        ),
+        media_type="application/x-ndjson",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+

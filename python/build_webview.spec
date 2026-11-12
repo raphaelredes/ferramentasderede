@@ -29,6 +29,51 @@ def _read_version_from_package_json():
         return '0.0.0-dev'
 APP_VERSION = _read_version_from_package_json()
 
+def _generate_version_file(version_str):
+    import re
+    parts = [int(p) for p in re.findall(r'\d+', version_str)[:4]]
+    while len(parts) < 4:
+        parts.append(0)
+    v_tuple = tuple(parts)
+    content = f"""# UTF-8
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers={v_tuple},
+    prodvers={v_tuple},
+    mask=0x3f,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0)
+  ),
+  kids=[
+    StringFileInfo(
+      [
+        StringTable(
+          '041604B0',
+          [StringStruct('CompanyName', 'Raphael Rego'),
+           StringStruct('FileDescription', 'Ferramentas de Rede'),
+           StringStruct('FileVersion', '{version_str}'),
+           StringStruct('InternalName', 'Ferramentas de Rede'),
+           StringStruct('LegalCopyright', 'Raphael Rego'),
+           StringStruct('OriginalFilename', 'Ferramentas.de.Rede.v{version_str}.exe'),
+           StringStruct('ProductName', 'Ferramentas de Rede'),
+           StringStruct('ProductVersion', '{version_str}')]
+        )
+      ]
+    ),
+    VarFileInfo([VarStruct('Translation', [1046, 1200])])
+  ]
+)
+"""
+    v_file = os.path.join(os.path.abspath('.'), 'file_version_info.txt')
+    with open(v_file, 'w', encoding='utf-8') as vf:
+        vf.write(content)
+    return v_file
+
+VERSION_FILE = _generate_version_file(APP_VERSION)
+
 frontend_dist = '../electron/dist'
 
 # Ship package.json inside the bundle so settings.APP_VERSION can resolve at
@@ -282,6 +327,7 @@ exe = EXE(
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
+    version=VERSION_FILE,
     entitlements_file=None,
     icon='assets\\logo_fixed.ico',
     uac_admin=False,

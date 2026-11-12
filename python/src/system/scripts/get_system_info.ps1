@@ -175,26 +175,171 @@ try {
         return "N/A"
     }
     try { $tvId = Get-TeamViewerID } catch {}
+
+    # 9. HopToDesk ID Retrieval (Localizacao abrangente de binarios locais/instalados e captura de stdout GUI)
+    $htdId = "N/A"
+    function Get-HopToDeskID {
+        $candidatePaths = [System.Collections.Generic.List[string]]::new()
+
+        # 1. Processo em execucao
+        try {
+            $proc = Get-Process -Name "*hoptodesk*" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Path -First 1
+            if ($proc -and (Test-Path $proc)) { $candidatePaths.Add($proc) }
+        } catch {}
+
+        # 2. Registro HKCR (protocol handler hoptodesk://)
+        try {
+            $regCmd = (Get-ItemProperty -Path "Registry::HKEY_CLASSES_ROOT\hoptodesk\shell\open\command" -ErrorAction SilentlyContinue).'(default)'
+            if ($regCmd -and $regCmd -match '([a-zA-Z]:\\[^"]+\.exe)') {
+                $p = $matches[1]
+                if (Test-Path $p) { $candidatePaths.Add($p) }
+            }
+        } catch {}
+
+        # 3. Caminhos padrao e ProgramFiles
+        $staticPaths = @(
+            "C:\Users\Public\Desktop\HopToDesk.exe",
+            "$env:ProgramFiles\HopToDesk\HopToDesk.exe",
+            "${env:ProgramFiles(x86)}\HopToDesk\HopToDesk.exe",
+            "C:\ProgramData\HopToDesk\HopToDesk.exe"
+        )
+        foreach ($sp in $staticPaths) {
+            if ($sp -and (Test-Path $sp)) { $candidatePaths.Add($sp) }
+        }
+
+        # 4. Desktops e Downloads de usuarios
+        try {
+            $userDirs = Get-ChildItem "C:\Users" -Directory -ErrorAction SilentlyContinue
+            foreach ($u in $userDirs) {
+                $pathsToTest = @(
+                    "$($u.FullName)\Desktop\HopToDesk.exe",
+                    "$($u.FullName)\Downloads\HopToDesk.exe",
+                    "$($u.FullName)\AppData\Local\HopToDesk\HopToDesk.exe",
+                    "$($u.FullName)\AppData\Roaming\HopToDesk\HopToDesk.exe"
+                )
+                foreach ($pt in $pathsToTest) {
+                    if (Test-Path $pt -ErrorAction SilentlyContinue) {
+                        $candidatePaths.Add($pt)
+                    }
+                }
+            }
+        } catch {}
+
+        # 5. Executar via cmd.exe /c para capturar o stdout de aplicativo GUI do Windows
+        $tested = @{}
+        foreach ($exe in $candidatePaths) {
+            if ($tested.ContainsKey($exe.ToLower())) { continue }
+            $tested[$exe.ToLower()] = $true
+
+            try {
+                $raw = cmd.exe /c "`"$exe`" --get-id" 2>$null
+                if ($raw -and $raw -match '^\s*(\d{7,12})\s*$') {
+                    return $matches[1]
+                }
+            } catch {}
+        }
+        return "N/A"
+    }
+    try { $htdId = Get-HopToDeskID } catch {}
+
+    # Verificar se TeamViewer esta em execucao (servico ou processo)
+    $tvRunning = $false
+    try {
+        $tvSvc = Get-Service -Name "TeamViewer" -ErrorAction SilentlyContinue
+        if ($tvSvc -and $tvSvc.Status -eq "Running") { $tvRunning = $true }
+    } catch {}
+    if (-not $tvRunning) {
+        try {
+            $tvRunning = [bool](Get-Process -Name "*teamviewer*" -ErrorAction SilentlyContinue)
+        } catch {}
+    }
+
+    # Verificar se HopToDesk esta em execucao (servico Windows, processo ativo ou CIM)
+    $htdRunning = $false
+    try {
+        $htdSvc = Get-Service -Name "HopToDesk" -ErrorAction SilentlyContinue
+        if ($htdSvc -and $htdSvc.Status -eq "Running") { $htdRunning = $true }
+    } catch {}
+    if (-not $htdRunning) {
+        try {
+            $procs = Get-Process -Name "*hoptodesk*" -ErrorAction SilentlyContinue
+            if ($procs -and $procs.Count -gt 0) { $htdRunning = $true }
+            elseif ($procs) { $htdRunning = $true }
+        } catch {}
+    }
+    if (-not $htdRunning) {
+        try {
+            $cim = Get-CimInstance Win32_Process -Filter "Name LIKE '%hoptodesk%'" -ErrorAction SilentlyContinue
+            if ($cim) { $htdRunning = $true }
+        } catch {}
+    }
     
+    $htdInstalled = [bool]($htdId -ne "N/A" -or $htdRunning)
+
+    # 10. Listar perfis de usuários exclusivamente em C:\Users (filtrando public/default)
+    $userProfiles = @()
+    try {
+        $baseDir = "$env:SystemDrive\Users"
+        if (-not (Test-Path $baseDir)) {
+            $regBase = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList' -ErrorAction SilentlyContinue).ProfilesDirectory
+            if ($regBase) { $baseDir = [System.Environment]::ExpandEnvironmentVariables($regBase) }
+        }
+
+        $profList = [System.Collections.Generic.List[PSCustomObject]]::new()
+        $seenProfs = @{}
+
+        if (Test-Path $baseDir) {
+            $dirs = Get-ChildItem -Path $baseDir -Directory -Force -ErrorAction SilentlyContinue
+            foreach ($d in $dirs) {
+                $n = $d.Name
+                $lower = $n.ToLower()
+                # Regra: exceto publico, public, all users, default ou qualquer um que comece como Default
+                if ($lower -eq 'public' -or $lower -eq 'público' -or $lower -eq 'publico' -or $lower -eq 'all users') { continue }
+                if ($lower -eq 'default' -or $lower.StartsWith('default')) { continue }
+                if ($lower -eq 'systemprofile' -or $lower -eq 'localservice' -or $lower -eq 'networkservice') { continue }
+
+                # Garantir rigorosamente que a pasta esteja DENTRO exclusivamente de C:\Users
+                $parentPath = (Split-Path -Parent $d.FullName).TrimEnd('\')
+                if ($parentPath.ToLower() -ne $baseDir.TrimEnd('\').ToLower()) { continue }
+
+                if (-not $seenProfs.ContainsKey($lower)) {
+                    $seenProfs[$lower] = $true
+                    $profList.Add([PSCustomObject]@{
+                        Username    = $n
+                        Path        = $d.FullName
+                        DesktopPath = Join-Path $d.FullName "Desktop"
+                    })
+                }
+            }
+        }
+
+        $userProfiles = @($profList | Sort-Object Username)
+    } catch {}
+
     $result = @{
-        OS             = $osInfo.OS
-        OS_Version     = $osInfo.OS_Version
-        InstallDate    = $osInfo.InstallDate
-        LastBootUpTime = $osInfo.LastBootUpTime
-        CPU            = $cpuInfo
-        RAM_GB         = $ramGB
-        Disks          = $disks
-        SubnetMask     = $networkInfo.SubnetMask
-        Gateway        = $networkInfo.Gateway
-        DNSServers     = $networkInfo.DNSServers
-        DHCPServer     = $networkInfo.DHCPServer
-        Interface      = $networkInfo.Interface
-        LinkSpeed      = $networkInfo.LinkSpeed
-        MACAddress     = $networkInfo.MACAddress
-        Uptime         = $uptime
-        CurrentUser    = $currentUser
-        TeamViewerID   = $tvId
-        Domain         = $domain
+        OS                 = $osInfo.OS
+        OS_Version         = $osInfo.OS_Version
+        InstallDate        = $osInfo.InstallDate
+        LastBootUpTime     = $osInfo.LastBootUpTime
+        CPU                = $cpuInfo
+        RAM_GB             = $ramGB
+        Disks              = $disks
+        SubnetMask         = $networkInfo.SubnetMask
+        Gateway            = $networkInfo.Gateway
+        DNSServers         = $networkInfo.DNSServers
+        DHCPServer         = $networkInfo.DHCPServer
+        Interface          = $networkInfo.Interface
+        LinkSpeed          = $networkInfo.LinkSpeed
+        MACAddress         = $networkInfo.MACAddress
+        Uptime             = $uptime
+        CurrentUser        = $currentUser
+        TeamViewerID       = $tvId
+        TeamViewerRunning  = $tvRunning
+        HopToDeskID        = $htdId
+        HopToDeskRunning   = $htdRunning
+        HopToDeskInstalled = $htdInstalled
+        UserProfiles       = $userProfiles
+        Domain             = $domain
     }
             
     $result | ConvertTo-Json -Depth 3 -Compress

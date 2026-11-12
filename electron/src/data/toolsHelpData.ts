@@ -457,5 +457,27 @@ export const TOOLS_HELP_DATA: Record<string, ToolHelpInfo> = {
             'Use a caixa de busca para filtrar rapidamente por portas (ex: 443, 3389) ou por processos (ex: chrome.exe, java.exe).',
         ],
         protocolsOrPorts: 'Sockets TCP / UDP do Windows'
+    },
+    'wifi-diag': {
+        id: 'wifi-diag',
+        title: 'Interfaces Ativas (Cabo, Wi-Fi & 802.1x)',
+        category: 'diag',
+        categoryLabel: 'Diagnóstico',
+        summary: 'Auditoria multi-host via WinRM que identifica em tempo real quais conexões estão em funcionamento (Cabo Ethernet, Wi-Fi / WLAN ou Modo Híbrido), qualidade de sinal e certificados 802.1x.',
+        howItWorks: [
+            'Fase 1 (Pré-checagem Rápida): Resolve nomes/IPs nos domínios cadastrados e verifica alcance para não travar a fila em hosts desligados.',
+            'Fase 2 (Auditoria WinRM Concorrente): Coleta estado WLAN (SSID, Sinal %, BSSID, Canal, Segurança), placas Ethernet (velocidade, IP e teste real de Gateway) e certificados 802.1x em Cert:\\LocalMachine.',
+            'Visão Executiva por Host: Lista os hosts com pílulas objetivas das conexões ativas e oferece o botão "Resumo das Conexões" para abrir o detalhamento completo focado apenas no host selecionado.',
+        ],
+        useCases: [
+            'Identificar estações em "Modo Híbrido" (Cabo e Wi-Fi ativos simultaneamente).',
+            'Diagnosticar problemas em redes Wi-Fi corporativas autenticadas via 802.1x / RADIUS (certificado ausente, expirado ou sem chave privada).',
+            'Verificar remotamente em lote qual SSID, banda e qualidade de sinal os notebooks estão utilizando.',
+        ],
+        tips: [
+            'Informe múltiplos hosts separados por vírgula, ponto e vírgula ou espaço (ex: host01.example.com, 1.1.1.1).',
+            'Clique em "Resumo das Conexões" em qualquer host para inspecionar placas, gateway e perfil Wi-Fi sem poluir a listagem principal.',
+        ],
+        protocolsOrPorts: 'WinRM (TCP 5985) + WLAN / IEEE 802.1X'
     }
 };

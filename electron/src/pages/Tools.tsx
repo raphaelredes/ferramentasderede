@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Terminal as TerminalIcon, Network as NetworkIcon, Activity, Gauge, GitBranch, DoorOpen, Globe, Zap, Ruler, Globe2, Lock, Calculator, Clock, Router, Stethoscope, Compass, Wrench, ShieldAlert, FolderGit2, AlertTriangle, HelpCircle } from 'lucide-react';
+import { Terminal as TerminalIcon, Network as NetworkIcon, Activity, Gauge, GitBranch, DoorOpen, Globe, Zap, Ruler, Globe2, Lock, Calculator, Clock, Router, Stethoscope, Compass, Wrench, ShieldAlert, FolderGit2, AlertTriangle, HelpCircle, Cable } from 'lucide-react';
 import { clsx } from 'clsx';
 import { NetworkScanner } from '../components/Tools/NetworkScanner';
 import { IperfPanel } from '../components/Tools/IperfPanel';
@@ -20,6 +20,7 @@ import { AdToolsPanel } from '../components/Tools/AdToolsPanel';
 import { LldpCdpPanel } from '../components/Tools/LldpCdpPanel';
 import { SmbSharePanel } from '../components/Tools/SmbSharePanel';
 import { ArpConflictPanel } from '../components/Tools/ArpConflictPanel';
+import { ConnectivityDiagPanel } from '../components/Tools/ConnectivityDiagPanel';
 import { DiagnosticToolRunner } from '../components/Tools/DiagnosticToolRunner';
 import { TraceroutePanel } from '../components/Tools/TraceroutePanel';
 import { ToolHelpModal } from '../components/Tools/ToolHelpModal';
@@ -33,7 +34,7 @@ import { API_BASE } from '../config/api';
 
 // Tool identifiers across all categories.
 type ToolId =
-    | 'ping' | 'traceroute' | 'mtr' | 'tcp-ping' | 'pmtu'
+    | 'ping' | 'traceroute' | 'mtr' | 'tcp-ping' | 'pmtu' | 'wifi-diag'
     | 'scanner' | 'ports' | 'ptr-sweep' | 'lldp' | 'smb' | 'arp'
     | 'ad'
     | 'dns' | 'tls'
@@ -51,6 +52,7 @@ const TOOL_CATEGORIES: ToolCategory[] = [
             { id: 'mtr', label: 'MTR', icon: <GitBranch size={16} /> },
             { id: 'tcp-ping', label: 'TCP Ping', icon: <Zap size={16} /> },
             { id: 'pmtu', label: 'Path MTU', icon: <Ruler size={16} /> },
+            { id: 'wifi-diag', label: 'Interfaces Ativas', icon: <Cable size={16} /> },
         ],
     },
     {
@@ -290,6 +292,7 @@ export function Tools() {
                 {activeTab === 'mtr' && <MtrPanel />}
                 {activeTab === 'tcp-ping' && <TcpPingPanel />}
                 {activeTab === 'pmtu' && <PmtuPanel />}
+                {activeTab === 'wifi-diag' && <ConnectivityDiagPanel />}
                 {activeTab === 'scanner' && (
                     <NetworkScanner onAddHost={handleAddHost} existingHosts={existingHosts} />
                 )}

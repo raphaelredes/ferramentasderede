@@ -55,6 +55,7 @@ export interface Host {
     group?: string;
     monitoring?: boolean;
     teamviewer_id?: string;
+    hoptodesk_id?: string;
     vendor?: string;
     ports?: number[];
     stats?: HostStatistics;
@@ -107,6 +108,11 @@ export interface SystemInfo {
     Interface?: string;
     LinkSpeed?: string;
     MACAddress?: string;
+    TeamViewerID?: string;
+    TeamViewerRunning?: boolean;
+    HopToDeskID?: string;
+    HopToDeskRunning?: boolean;
+    UserProfiles?: Array<{ Username: string; Path: string; DesktopPath: string }>;
 }
 
 export interface Service {

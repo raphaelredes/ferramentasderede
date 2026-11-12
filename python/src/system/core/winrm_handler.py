@@ -34,13 +34,17 @@ def _append_log(path, text):
         pass
 
 class WinRMHandler:
-    def __init__(self, target_ip, username, password, target_hostname=None):
+    def __init__(self, target_ip, username, password, target_hostname=None, target_domain=None):
         self.target_ip = target_ip
         self.username = username
         self.password = password
-        resolved_fqdn, resolved_domain = self._resolve_target_fqdn_and_domain(target_ip)
-        self.target_hostname = target_hostname or resolved_fqdn
-        self.target_domain = resolved_domain
+        if target_hostname and ("." in target_hostname or target_domain is not None):
+            self.target_hostname = target_hostname
+            self.target_domain = target_domain or (target_hostname.split(".", 1)[1] if "." in target_hostname else None)
+        else:
+            resolved_fqdn, resolved_domain = self._resolve_target_fqdn_and_domain(target_ip)
+            self.target_hostname = target_hostname or resolved_fqdn
+            self.target_domain = target_domain or resolved_domain
         self.wsman = None
         self.pool = None
         self.ps = None  # Objeto PowerShell persistente
@@ -268,21 +272,16 @@ class WinRMHandler:
         return f"***{tail}"
 
     def _username_variants(self):
-        """Build the ordered list of username variants to try.
+        """Build a concise, ordered list of username variants to try (max 3).
 
-        Heuristics:
-          - Always try the user-provided value first.
-          - If user@domain: also try domain\\user and netbios\\user.
-          - If domain\\user with FQDN: also try user@domain AND netbios\\user (essential for NTLM).
-          - If domain\\user with NetBIOS: also try user@fqdn using candidate domains.
-          - If target_domain is known and differs from provided domain: also try target_domain variants.
-          - If bare 'user': try target_domain variants, then candidate domains.
+        Avoids generating excessive credential combinations that trigger EDR/AV
+        behavioral heuristics (brute-force / lateral movement detection).
         """
         seen = set()
         variants = []
 
         def add(u):
-            if u and u not in seen:
+            if u and u not in seen and len(variants) < 3:
                 seen.add(u)
                 variants.append(u)
 
@@ -292,49 +291,32 @@ class WinRMHandler:
 
         if "@" in self.username:
             user_part, domain_part = self.username.split("@", 1)
-            add(f"{domain_part}\\{user_part}")
             if "." in domain_part:
                 add(f"{domain_part.split('.')[0]}\\{user_part}")
-            # Se o alvo está em outro domínio, tenta variantes no domínio do alvo
-            if tgt_domain and domain_part.lower() != tgt_domain.lower():
-                add(f"{tgt_domain}\\{user_part}")
-                add(f"{tgt_domain.split('.')[0]}\\{user_part}")
-                add(f"{user_part}@{tgt_domain}")
-            add(user_part)
+            add(f"{domain_part}\\{user_part}")
         elif "\\" in self.username:
             domain_part, user_part = self.username.split("\\", 1)
             if "." in domain_part:
-                # FQDN\user -> UPN (user@domain) and NetBIOS (netbios\user)
-                add(f"{user_part}@{domain_part}")
                 add(f"{domain_part.split('.')[0]}\\{user_part}")
+                add(f"{user_part}@{domain_part}")
             else:
-                # NetBIOS\user -> try UPN with candidate DNS domains
                 for cd in candidate_domains:
                     if "." in cd and cd.lower().startswith(domain_part.lower()):
                         add(f"{user_part}@{cd}")
-                # Also try UPN with raw domain_part
-                add(f"{user_part}@{domain_part}")
-            # Se o alvo está em outro domínio, tenta variantes no domínio do alvo
-            if tgt_domain and domain_part.lower() not in (tgt_domain.lower(), tgt_domain.split(".")[0].lower()):
-                add(f"{tgt_domain}\\{user_part}")
-                add(f"{tgt_domain.split('.')[0]}\\{user_part}")
-                add(f"{user_part}@{tgt_domain}")
-            add(user_part)
+                        break
+                if tgt_domain and domain_part.lower() not in (tgt_domain.lower(), tgt_domain.split(".")[0].lower()):
+                    add(f"{tgt_domain.split('.')[0]}\\{user_part}")
         else:
             # Bare username
             if tgt_domain:
                 add(f"{tgt_domain.split('.')[0]}\\{self.username}")
                 add(f"{self.username}@{tgt_domain}")
-                add(f"{tgt_domain}\\{self.username}")
             for cd in candidate_domains:
                 if "." in cd:
-                    netbios = cd.split('.')[0]
-                    add(f"{netbios}\\{self.username}")
+                    add(f"{cd.split('.')[0]}\\{self.username}")
                     add(f"{self.username}@{cd}")
-                    add(f"{cd}\\{self.username}")
                 else:
                     add(f"{cd}\\{self.username}")
-                    add(f"{self.username}@{cd}")
 
         return variants
 
@@ -347,7 +329,6 @@ class WinRMHandler:
         the lifetime of the websocket / handler instance.
         """
         last_result = None
-        had_qualified_auth_fail = False
         variants = self._username_variants()
         for variant in variants:
             if variant != self.username:
@@ -360,11 +341,6 @@ class WinRMHandler:
             last_result = result
             # Don't keep retrying variants if the failure isn't auth-related (e.g. host down/port closed).
             if result.get("code") not in (None, "AUTH_FAILED", "CROSS_DOMAIN_AUTH"):
-                break
-            # If we already failed with a qualified form, avoid retrying bare form
-            if "\\" in variant or "@" in variant:
-                had_qualified_auth_fail = True
-            if had_qualified_auth_fail and len(variants) <= 2:
                 break
 
         return last_result or {"error": "Falha ao conectar.", "code": "UNKNOWN"}
@@ -413,10 +389,13 @@ class WinRMHandler:
         return ("UNKNOWN", f"{exc_name}: {exc}")
 
     def _try_connect(self, username, password):
-        """Tenta conectar com um conjunto específico de credenciais."""
+        """Tenta conectar com um conjunto específico de credenciais via SPNEGO (Negotiate)."""
         errors = []
         codes = []
-        auth_methods = ['negotiate', 'ntlm']
+        # 'negotiate' (SPNEGO) automatically handles Kerberos and seamlessly falls back
+        # to NTLMv2 within the same handshake. Avoiding redundant NTLM / hostname connection
+        # loops prevents EDR/AV behavioral heuristics from flagging rapid auth attempts.
+        auth_methods = ['negotiate']
 
         for method in auth_methods:
             try:
@@ -427,7 +406,7 @@ class WinRMHandler:
                     "username": username,
                     "password": password,
                     "ssl": False,
-                    "connection_timeout": 20,
+                    "connection_timeout": 15,
                     "auth": method,  # pypsrp parameter is 'auth', NOT 'auth_method'!
                 }
                 if self.target_hostname:
@@ -461,17 +440,17 @@ class WinRMHandler:
                 codes.append(code)
             self.pool = None
 
-        # Se conectar por IP com negotiate e ntlm falhou e tivermos hostname de domínio resolvido, tenta conectar direto pelo hostname
-        if self.target_hostname and self.target_hostname != self.target_ip:
+        # Se falhou com CROSS_DOMAIN_AUTH (ex: SPN Kerberos inválido pelo override), tenta NTLM direto uma única vez
+        if codes and codes[0] == "CROSS_DOMAIN_AUTH":
             try:
-                logging.info(f"Tentando fallback WinRM via hostname: {self.target_hostname} com negotiate (User: {self._mask_username(username)})")
+                logging.info(f"Tentando fallback NTLM direto para {self.target_ip} (User: {self._mask_username(username)})")
                 wsman = WSMan(
-                    server=self.target_hostname,
+                    server=self.target_ip,
                     username=username,
                     password=password,
                     ssl=False,
                     connection_timeout=15,
-                    auth='negotiate'
+                    auth='ntlm'
                 )
                 pool = RunspacePool(wsman, configuration_name='Microsoft.PowerShell')
                 pool.open()
@@ -479,7 +458,7 @@ class WinRMHandler:
                 self.wsman = wsman
                 self.pool = pool
                 self.ps = ps
-                logging.info(f"Conexão WinRM bem sucedida via hostname: {self.target_hostname}")
+                logging.info(f"Conexão WinRM bem sucedida via NTLM direto para {self.target_ip}")
                 return {"success": True}
             except Exception as e:
                 try:
@@ -490,22 +469,16 @@ class WinRMHandler:
                     if 'wsman' in locals() and wsman: wsman.close()
                 except Exception:
                     pass
-                code, friendly = self._classify_error(e, f"hostname:{self.target_hostname}")
-                logging.warning(f"WinRM falhou via hostname ({self.target_hostname}): {e}")
-                errors.append(f"hostname ({self.target_hostname}): {friendly}")
+                code, friendly = self._classify_error(e, "ntlm")
+                logging.warning(f"WinRM falhou (ntlm) [{code}]: {e}")
+                errors.append(f"ntlm: {friendly}")
                 codes.append(code)
             self.pool = None
 
-        # Se falhou e não é localhost, verifica se é problema de TrustedHosts
-        if self.target_ip not in ["127.0.0.1", "localhost"]:
-            current_trusted = WinRMHandler.get_trusted_hosts()
-            logging.info(f"Verificando TrustedHosts. Atual: '{current_trusted}', Alvo: '{self.target_ip}'")
-            if current_trusted != "*":
-                trusted_list = [h.strip() for h in current_trusted.split(',') if h.strip()]
-                if self.target_ip not in trusted_list:
-                    logging.warning(f"IP {self.target_ip} não está em TrustedHosts ({current_trusted}).")
-                    return {"error": "TRUSTED_HOSTS_REQUIRED", "code": "TRUSTED_HOSTS_REQUIRED",
-                            "detail": "O IP alvo não está na lista de TrustedHosts."}
+        # Nota arquitetural: pypsrp realiza conexões HTTP/SOAP puras em Python e NÃO utiliza
+        # a lista TrustedHosts do cliente WSMan do Windows (HKLM\...\WSMAN\Client\trusted_hosts).
+        # Portanto, nunca retornamos TRUSTED_HOSTS_REQUIRED nem modificamos o Registro durante
+        # conexões de dados, evitando falsos positivos de movimentação lateral em antivírus/EDR.
 
         # Hierarchy: If any attempt proved the target was reachable and rejected auth,
         # the primary code must reflect authentication failure, NOT network unreachable!
@@ -670,98 +643,24 @@ class WinRMHandler:
             winreg.SetValueEx(key, WinRMHandler._TRUSTED_HOSTS_VALUE, 0, winreg.REG_SZ, value)
 
     @staticmethod
-    def _set_trusted_hosts_elevated(value):
-        """Grava o valor via reg.exe elevado (prompt UAC) quando o app não roda como administrador.
-
-        HKLM exige elevação e o app é distribuído sem manifesto de admin
-        (uac_admin=False), então usuários comuns/administradores sem token
-        elevado precisam autorizar via UAC. Janela oculta (SW_HIDE); o único
-        elemento visível é o diálogo UAC do próprio Windows.
-        """
-        import re as _re
-        import ctypes
-        from ctypes import wintypes
-
-        # Mesma allowlist de _is_safe_trusted_value, aceitando lista separada por vírgula.
-        if not isinstance(value, str) or len(value) > 4096 or not _re.fullmatch(r"[A-Za-z0-9._\-*, ]*", value):
-            WinRMHandler.last_trusted_hosts_error = "Valor inválido para TrustedHosts."
-            return False
-
-        class SHELLEXECUTEINFOW(ctypes.Structure):
-            _fields_ = [
-                ("cbSize", wintypes.DWORD), ("fMask", wintypes.ULONG), ("hwnd", wintypes.HWND),
-                ("lpVerb", wintypes.LPCWSTR), ("lpFile", wintypes.LPCWSTR),
-                ("lpParameters", wintypes.LPCWSTR), ("lpDirectory", wintypes.LPCWSTR),
-                ("nShow", ctypes.c_int), ("hInstApp", wintypes.HINSTANCE),
-                ("lpIDList", ctypes.c_void_p), ("lpClass", wintypes.LPCWSTR),
-                ("hkeyClass", wintypes.HKEY), ("dwHotKey", wintypes.DWORD),
-                ("hIconOrMonitor", wintypes.HANDLE), ("hProcess", wintypes.HANDLE),
-            ]
-
-        SEE_MASK_NOCLOSEPROCESS = 0x00000040
-        SW_HIDE = 0
-        reg_exe = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "reg.exe")
-        params = (f'add "HKLM\\{WinRMHandler._WSMAN_CLIENT_KEY}" /v {WinRMHandler._TRUSTED_HOSTS_VALUE} '
-                  f'/t REG_SZ /d "{value}" /f /reg:64')
-
-        sei = SHELLEXECUTEINFOW()
-        sei.cbSize = ctypes.sizeof(SHELLEXECUTEINFOW)
-        sei.fMask = SEE_MASK_NOCLOSEPROCESS
-        sei.lpVerb = "runas"
-        sei.lpFile = reg_exe
-        sei.lpParameters = params
-        sei.nShow = SW_HIDE
-
-        shell32 = ctypes.windll.shell32
-        kernel32 = ctypes.windll.kernel32
-        kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
-        kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
-        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-
-        if not shell32.ShellExecuteExW(ctypes.byref(sei)):
-            err = ctypes.GetLastError()
-            if err == 1223:  # ERROR_CANCELLED
-                WinRMHandler.last_trusted_hosts_error = "Elevação (UAC) negada pelo usuário."
-            else:
-                WinRMHandler.last_trusted_hosts_error = f"Falha ao solicitar elevação (erro {err})."
-            logging.error(f"TrustedHosts elevado: ShellExecuteEx falhou ({err}).")
-            return False
-
-        exit_code = wintypes.DWORD(1)
-        try:
-            kernel32.WaitForSingleObject(sei.hProcess, 60000)
-            kernel32.GetExitCodeProcess(sei.hProcess, ctypes.byref(exit_code))
-        finally:
-            kernel32.CloseHandle(sei.hProcess)
-
-        if exit_code.value != 0:
-            WinRMHandler.last_trusted_hosts_error = f"reg.exe elevado retornou código {exit_code.value}."
-            logging.error(WinRMHandler.last_trusted_hosts_error)
-            return False
-        return True
-
-    @staticmethod
     def set_trusted_hosts(value):
-        """Define o valor de TrustedHosts via Registry (evita PowerShell/AV).
+        """Define o valor de TrustedHosts via Registry (sem processos ocultos ou UAC).
 
-        Tenta gravar direto; se faltar permissão (processo sem elevação), solicita
-        elevação via UAC. Em caso de falha, ``last_trusted_hosts_error`` descreve o motivo.
+        Grava diretamente caso o aplicativo tenha permissão administrativa.
+        Nunca invoca reg.exe elevado com SW_HIDE para evitar detecção comportamental
+        de antivírus/EDR (como Kaspersky PDM:Trojan.Win32.Generic).
         """
         WinRMHandler.last_trusted_hosts_error = ""
         try:
             WinRMHandler._write_trusted_hosts_registry(value)
             return True
         except PermissionError as e:
-            logging.warning(f"Sem permissão para gravar TrustedHosts ({e}); solicitando elevação UAC.")
-            if WinRMHandler._set_trusted_hosts_elevated(value):
-                # Confirma que o valor realmente foi gravado.
-                if (WinRMHandler.get_trusted_hosts() or "") == (value or ""):
-                    return True
-                WinRMHandler.last_trusted_hosts_error = "O Windows não confirmou a gravação do TrustedHosts."
-                logging.error(WinRMHandler.last_trusted_hosts_error)
-                return False
-            if not WinRMHandler.last_trusted_hosts_error:
-                WinRMHandler.last_trusted_hosts_error = "Permissão negada. Execute o app como administrador."
+            logging.warning(f"Sem permissão para gravar TrustedHosts ({e}).")
+            WinRMHandler.last_trusted_hosts_error = (
+                "Permissão negada ao gravar no Registro (HKLM). "
+                "As conexões integradas do aplicativo não exigem TrustedHosts; "
+                "para configurar o cliente nativo do Windows, execute o aplicativo como Administrador."
+            )
             return False
         except Exception as e:
             WinRMHandler.last_trusted_hosts_error = f"Erro ao gravar no Registro: {e}"
@@ -817,25 +716,18 @@ class WinRMHandler:
         return True
 
 class TemporaryTrustedHosts:
-    """Context Manager para adicionar temporariamente um IP aos TrustedHosts."""
+    """Context Manager no-op mantido por compatibilidade.
+
+    O cliente pypsrp conecta diretamente via HTTP/SOAP em Python puro e não lê
+    a chave HKLM\\...\\WSMAN\\Client\\trusted_hosts do Windows. Modificar essa chave
+    temporariamente a cada requisição causava bloqueio comportamental em antivírus
+    corporativos (Kaspersky PDM:Trojan.Win32.Generic).
+    """
     def __init__(self, ip):
         self.ip = ip
-        self.added = False
 
     def __enter__(self):
-        # Verifica se já é confiável
-        current = WinRMHandler.get_trusted_hosts()
-        if current == "*" or self.ip in [h.strip() for h in current.split(',') if h.strip()]:
-            self.added = False
-            return self
-
-        # Tenta adicionar
-        if WinRMHandler.add_trusted_host(self.ip):
-            self.added = True
-        else:
-            logging.error(f"Falha ao adicionar {self.ip} aos TrustedHosts temporariamente.")
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        if self.added:
-            WinRMHandler.remove_trusted_host(self.ip)
+        pass

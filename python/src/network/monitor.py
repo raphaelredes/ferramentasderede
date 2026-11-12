@@ -598,10 +598,24 @@ class HostMonitor:
                 last_ping_ok = bool(result['online'])
                 in_smart_offline = stats.get('is_smart_offline', False)
                 cons_ok = stats.get('consecutive_successes', 0)
+                cons_fail = stats.get('consecutive_failures', 0)
                 was_online = stats.get('online', False)
-                # Estável: já estava online e respondeu agora -> mantém online
-                # Recuperando: estava offline e tem ≥2 ok consecutivos -> online
-                stats['online'] = last_ping_ok and not in_smart_offline and (was_online or cons_ok >= 2)
+
+                # Limiar ideal contra oscilação/jitter de rede (Flapping Prevention):
+                # - Transição para OFFLINE: requer 3 pings perdidos consecutivos (ou smart-offline).
+                #   Um ou dois pings perdidos isolados NÃO derrubam o host para offline.
+                # - Transição para ONLINE: requer 2 pings respondidos com sucesso consecutivos.
+                OFFLINE_CONSECUTIVE_FAILURES_THRESHOLD = 3
+                ONLINE_CONSECUTIVE_SUCCESSES_THRESHOLD = 2
+
+                if in_smart_offline or cons_fail >= OFFLINE_CONSECUTIVE_FAILURES_THRESHOLD:
+                    stats['online'] = False
+                elif cons_ok >= ONLINE_CONSECUTIVE_SUCCESSES_THRESHOLD:
+                    stats['online'] = True
+                else:
+                    # Na janela de histerese (1 ou 2 falhas em host online, ou 1 sucesso em host offline):
+                    # preserva o estado anterior estável
+                    stats['online'] = was_online
 
                 # Track the online -> offline transition so the UI can show
                 # "offline desde". We only stamp the moment the host *flips*

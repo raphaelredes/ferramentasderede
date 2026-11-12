@@ -1,8 +1,6 @@
 import { useState, useCallback } from 'react';
 import { SystemInfo, Service, LogEntry, Session } from '../types';
 import { API_BASE } from '../config/api';
-import { resolveTeamViewerId } from '../utils/teamviewer';
-import { probeHost } from '../utils/hostProbe';
 
 export function useHostData(ip: string | undefined) {
     const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
@@ -10,6 +8,7 @@ export function useHostData(ip: string | undefined) {
     const [logs, setLogs] = useState<LogEntry[]>([]);
     const [sessions, setSessions] = useState<Session[]>([]);
     const [teamViewerId, setTeamViewerId] = useState<string | null>(null);
+    const [hoptodeskId, setHoptodeskId] = useState<string | null>(null);
     const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -20,6 +19,7 @@ export function useHostData(ip: string | undefined) {
         logs: LogEntry[];
         sessions: Session[];
         teamViewerId: string;
+        hoptodeskId: string;
     }>) => {
         if (!ip) return;
         const cacheKey = `host_details_${ip}`;
@@ -44,6 +44,7 @@ export function useHostData(ip: string | undefined) {
                 if (data.logs) setLogs(data.logs);
                 if (data.sessions) setSessions(data.sessions);
                 if (data.teamViewerId) setTeamViewerId(data.teamViewerId);
+                if (data.hoptodeskId) setHoptodeskId(data.hoptodeskId);
                 if (data.timestamp) setLastUpdated(new Date(data.timestamp));
                 return !!data.systemInfo;
             } catch (e) {
@@ -92,37 +93,23 @@ export function useHostData(ip: string | undefined) {
                 setSystemInfo(dataInfo);
                 saveToCache({ systemInfo: dataInfo });
 
-                // Fire opportunistic host-probe in background. /system/info
-                // already returns most of these fields but doesn't persist all
-                // of them (only current_user + teamviewer_id today). The probe
-                // endpoint persists MAC + domain + last_boot + disk free, so
-                // the painel can show this stable data even without opening
-                // the detail page again. Fire-and-forget — no UI dependency.
-                probeHost({
-                    targetIp: ip,
-                    username: user,
-                    password: pass,
-                    tempAuth,
-                }).catch(() => undefined);
-
-                // Fetch TeamViewer ID via the shared helper. We pass the same
-                // creds used for /system/info — if /info worked, /teamviewer
-                // should too unless TeamViewer just isn't installed. Errors
-                // are swallowed silently here so a missing TV doesn't blow up
-                // the whole detail page; the only one we surface is
-                // TRUSTED_HOSTS_REQUIRED so the caller can prompt the gate.
-                const tvResult = await resolveTeamViewerId({
-                    targetIp: ip,
-                    username: user,
-                    password: pass,
-                    persistOnHost: ip,
-                    tempAuth,
-                });
-                if (tvResult.ok) {
-                    setTeamViewerId(tvResult.id);
-                    saveToCache({ teamViewerId: tvResult.id });
-                } else if (tvResult.code === 'TRUSTED_HOSTS_REQUIRED') {
-                    throw new Error('TRUSTED_HOSTS_REQUIRED');
+                // /system/info already returns TeamViewerID and persists MAC, Domain,
+                // CurrentUser, LastBootUpTime, SystemDiskFreeGB and TeamViewerID on the
+                // backend. Avoid spawning redundant /system/host-probe and /system/teamviewer
+                // WinRM connections right after /system/info, which reduces network load
+                // and prevents EDR/AV behavioral heuristics from flagging rapid sessions.
+                if (dataInfo?.TeamViewerID && dataInfo.TeamViewerID !== 'N/A' && dataInfo.TeamViewerID !== 'Unknown') {
+                    const tvId = String(dataInfo.TeamViewerID);
+                    setTeamViewerId(tvId);
+                    saveToCache({ teamViewerId: tvId });
+                }
+                if (dataInfo?.HopToDeskID && dataInfo.HopToDeskID !== 'N/A' && dataInfo.HopToDeskID !== 'Unknown') {
+                    const htdId = String(dataInfo.HopToDeskID);
+                    setHoptodeskId(htdId);
+                    saveToCache({ hoptodeskId: htdId });
+                } else if (dataInfo?.HopToDeskID === 'N/A') {
+                    setHoptodeskId(null);
+                    saveToCache({ hoptodeskId: '' });
                 }
             }
 
@@ -243,10 +230,13 @@ export function useHostData(ip: string | undefined) {
 
     return {
         systemInfo,
+        setSystemInfo,
         services,
         logs,
         sessions,
         teamViewerId,
+        hoptodeskId,
+        setHoptodeskId,
         lastUpdated,
         loading,
         error,

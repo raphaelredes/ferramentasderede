@@ -28,6 +28,7 @@ interface ElectronBridge {
   launchRdp: (ip: string) => Promise<boolean>
   launchMsra: (ip: string, askCredentials?: boolean) => Promise<boolean>
   launchTeamViewer: (id?: string) => Promise<boolean>
+  launchHopToDesk: (id?: string) => Promise<boolean>
   openExternal: (url: string) => Promise<boolean>
   getLocalDomain: () => Promise<string>
   showItemInFolder: (path: string) => Promise<boolean>

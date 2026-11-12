@@ -89,6 +89,7 @@ class HostManager:
                     'vendor': h.get('vendor'),
                     'type': h.get('type'),
                     'teamviewer_id': h.get('teamviewer_id'),
+                    'hoptodesk_id': h.get('hoptodesk_id'),
                     'last_checked': h.get('last_checked'),
                     'last_status': bool(h.get('last_status')) if h.get('last_status') is not None else None,
                     # host-probe opportunistic data (Sprint 4)
@@ -123,6 +124,7 @@ class HostManager:
                     'vendor': h.get('vendor'),
                     'type': h.get('type'),
                     'teamviewer_id': h.get('teamviewer_id'),
+                    'hoptodesk_id': h.get('hoptodesk_id'),
                     'last_checked': h.get('last_checked'),
                     'last_status': h.get('last_status')
                 })
@@ -246,7 +248,8 @@ class HostManager:
             'monitoring': new_host_data.get('monitoring', True),
             'vendor': new_host_data.get('vendor'),
             'type': new_host_data.get('type'),
-            'teamviewer_id': new_host_data.get('teamviewer_id')
+            'teamviewer_id': new_host_data.get('teamviewer_id'),
+            'hoptodesk_id': new_host_data.get('hoptodesk_id')
         }
         
         if db.save_host(db_host):
@@ -383,6 +386,7 @@ class HostManager:
                 'vendor': h.get('vendor'),
                 'type': h.get('type'),
                 'teamviewer_id': h.get('teamviewer_id'),
+                'hoptodesk_id': h.get('hoptodesk_id'),
                 'last_checked': h.get('last_checked'),
                 'last_status': h.get('last_status'),
                 # Columns added after the initial schema. Forwarding them is

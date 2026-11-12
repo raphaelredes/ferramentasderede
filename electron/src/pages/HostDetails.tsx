@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
     ArrowLeft, RefreshCw, Copy, Check, Terminal,
-    Monitor, Power, Lock, MessageSquare, X, AlertCircle
+    Monitor, Power, Lock, MessageSquare, X, AlertCircle, Wrench
 } from 'lucide-react';
 import { HostInfoTab } from '../components/HostDetails/HostInfoTab';
 import { HostHistoryTab } from '../components/HostDetails/HostHistoryTab';
@@ -41,7 +41,8 @@ export const HostDetails: React.FC = () => {
     const [activeTab, setActiveTab] = useState('info');
     const [credentials, setCredentials] = useState<{ username: string, password: string } | null>(null);
     const [testCredentials, setTestCredentials] = useState<{ username: string, password: string } | null>(null);
-    const [authContext, setAuthContext] = useState<'main' | 'test' | 'service' | 'power'>('main');
+    const [authContext, setAuthContext] = useState<'main' | 'test' | 'service' | 'power' | 'enable_winrm'>('main');
+    const [isEnablingWinRm, setIsEnablingWinRm] = useState(false);
     const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
     const [isTestConnectionModalOpen, setIsTestConnectionModalOpen] = useState(false);
     const [pendingServiceAction, setPendingServiceAction] = useState<{ name: string, action: string, startupType?: string } | null>(null);
@@ -91,15 +92,19 @@ export const HostDetails: React.FC = () => {
 
     const {
         systemInfo,
+        setSystemInfo,
         services,
         logs,
         sessions,
         teamViewerId,
+        hoptodeskId,
+        setHoptodeskId,
         lastUpdated,
         loading,
         error,
         fetchData,
         loadFromCache,
+        saveToCache,
     } = useHostData(ip);
 
     useEffect(() => {
@@ -171,9 +176,17 @@ export const HostDetails: React.FC = () => {
         }
     };
 
+    const fetchSessions = useCallback(async () => {
+        if (credentials) {
+            await handleFetchData(credentials.username, credentials.password, false, 'sessions');
+        }
+    }, [credentials]);
+
     useEffect(() => {
         if (credentials) {
-            handleFetchData(credentials.username, credentials.password);
+            // Ao abrir a aba Informações, carrega também as sessões em background para estarem prontas no modal
+            const tabsToFetch = activeTab === 'info' ? ['info', 'sessions'] : [activeTab];
+            handleFetchData(credentials.username, credentials.password, false, tabsToFetch);
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeTab, credentials]);
@@ -481,6 +494,44 @@ export const HostDetails: React.FC = () => {
         }
     };
 
+    const triggerEnableRemoteWinRm = async (user: string, pass: string) => {
+        if (!ip) return;
+        setIsEnablingWinRm(true);
+        showToast("Tentando configurar e habilitar o WinRM no host alvo...", "info");
+        try {
+            const res = await fetch(`${API_BASE}/system/winrm/enable-remote`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    target_ip: ip,
+                    username: user,
+                    password: pass
+                })
+            });
+            const data = await res.json().catch(() => ({}));
+            if (res.ok && data.status === 'success') {
+                showToast(data.message || "WinRM habilitado com sucesso no host!", "success");
+                setCredentials({ username: user, password: pass });
+                handleFetchData(user, pass);
+            } else {
+                showToast(data.message || "Falha ao habilitar WinRM remotamente.", "error");
+            }
+        } catch (e: any) {
+            showToast(`Erro na configuração remota do WinRM: ${e.message}`, "error");
+        } finally {
+            setIsEnablingWinRm(false);
+        }
+    };
+
+    const handleEnableRemoteWinRm = () => {
+        if (credentials?.username && credentials?.password) {
+            triggerEnableRemoteWinRm(credentials.username, credentials.password);
+        } else {
+            setAuthContext('enable_winrm');
+            setIsAuthModalOpen(true);
+        }
+    };
+
     const isHostOnline = currentHost?.stats?.online;
     const hostLatency = currentHost?.stats?.latency;
 
@@ -693,7 +744,25 @@ export const HostDetails: React.FC = () => {
                                 <p>{error}</p>
                             )}
                         </div>
-                        <div className="pt-2 flex items-center gap-3">
+                        <div className="pt-2 flex flex-wrap items-center gap-3">
+                            {Boolean(
+                                error && (
+                                    error.toLowerCase().includes('winrm parece desabilitado') ||
+                                    error.toLowerCase().includes('enable-psremoting') ||
+                                    error.toLowerCase().includes('5985') ||
+                                    error.includes('WINRM_DISABLED')
+                                )
+                            ) && (
+                                <button
+                                    onClick={handleEnableRemoteWinRm}
+                                    disabled={isEnablingWinRm}
+                                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold transition-colors flex items-center gap-2 shadow-lg shadow-emerald-900/30 disabled:opacity-50"
+                                    title="Habilitar serviço WinRM e regras de firewall remotamente no host alvo"
+                                >
+                                    {isEnablingWinRm ? <RefreshCw size={14} className="animate-spin text-white" /> : <Wrench size={14} />}
+                                    {isEnablingWinRm ? "Configurando WinRM no Alvo..." : "Configurar WinRM Remotamente"}
+                                </button>
+                            )}
                             <button
                                 onClick={() => {
                                     setAuthContext('main');
@@ -741,7 +810,25 @@ export const HostDetails: React.FC = () => {
                             <HostInfoTab
                                 systemInfo={systemInfo}
                                 teamViewerId={teamViewerId || currentHost?.teamviewer_id || null}
+                                hoptodeskId={hoptodeskId || currentHost?.hoptodesk_id || null}
+                                targetIp={ip}
+                                credentials={credentials}
+                                sessions={sessions}
+                                onFetchSessions={fetchSessions}
                                 formatDate={formatDate}
+                                onHoptodeskResolved={(id, running = true) => {
+                                    setHoptodeskId(id);
+                                    if (systemInfo) {
+                                        const updated = {
+                                            ...systemInfo,
+                                            HopToDeskID: id,
+                                            HopToDeskRunning: running
+                                        };
+                                        setSystemInfo(updated);
+                                        saveToCache({ systemInfo: updated, hoptodeskId: id });
+                                    }
+                                }}
+                                onRequestCredentials={() => setIsAuthModalOpen(true)}
                             />
                         )}
                         {activeTab === 'services' && (
@@ -782,6 +869,7 @@ export const HostDetails: React.FC = () => {
                     authContext === 'test' ? "Autenticação para Teste WinRM" :
                     authContext === 'service' ? "Autenticação para Serviço" :
                     authContext === 'power' ? "Autenticação para Ação de Energia" :
+                    authContext === 'enable_winrm' ? "Credenciais Administrativas para Configurar WinRM" :
                     "Autenticação Necessária"
                 }
                 initialDomain={currentHost?.domain || localDomain || ''}
@@ -798,10 +886,16 @@ export const HostDetails: React.FC = () => {
                         setCredentials({ username, password });
                         setIsAuthModalOpen(false);
                         handleExecutePowerAction();
+                    } else if (authContext === 'enable_winrm') {
+                        setCredentials({ username, password });
+                        setIsAuthModalOpen(false);
+                        triggerEnableRemoteWinRm(username, password);
                     } else {
                         setCredentials({ username, password });
                         setIsAuthModalOpen(false);
-                        handleFetchData(username, password, false, ['info', 'services', 'logs', 'sessions']);
+                        // O useEffect em [activeTab, credentials] já dispara handleFetchData
+                        // para a aba ativa assim que credentials é atualizado, evitando
+                        // conexões WinRM duplicadas simultâneas que acionam alertas de EDR/AV.
                     }
                 }}
             />

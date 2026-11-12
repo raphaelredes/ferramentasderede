@@ -90,6 +90,7 @@ class DatabaseManager:
                         vendor TEXT,
                         type TEXT,
                         teamviewer_id TEXT,
+                        hoptodesk_id TEXT,
                         last_checked TEXT,
                         last_status BOOLEAN,
                         current_user TEXT,                 -- last known interactive user (host-probe)
@@ -149,6 +150,7 @@ class DatabaseManager:
                 'vendor': 'TEXT',
                 'type': 'TEXT',
                 'teamviewer_id': 'TEXT',
+                'hoptodesk_id': 'TEXT',
                 'last_checked': 'TEXT',
                 'last_status': 'BOOLEAN',
                 'domain': 'TEXT',
@@ -287,7 +289,7 @@ class DatabaseManager:
     # that went through the slow path.
     _WRITE_COLUMNS = [
         'address', 'hostname', 'domain', 'mac', 'description', 'group_name',
-        'tags', 'ports', 'monitoring', 'vendor', 'type', 'teamviewer_id',
+        'tags', 'ports', 'monitoring', 'vendor', 'type', 'teamviewer_id', 'hoptodesk_id',
         'last_checked', 'last_status',
         'resolved_ip',
         'current_user', 'last_boot', 'system_disk_free_gb',
@@ -323,6 +325,7 @@ class DatabaseManager:
             host.get('vendor'),
             host.get('type'),
             str(host.get('teamviewer_id')) if host.get('teamviewer_id') is not None else None,
+            str(host.get('hoptodesk_id')) if host.get('hoptodesk_id') is not None else None,
             host.get('last_checked'),
             host.get('last_status'),
             host.get('resolved_ip'),
@@ -411,7 +414,7 @@ class DatabaseManager:
             return False
         allowed = {
             'hostname', 'domain', 'mac', 'description', 'group_name',
-            'monitoring', 'vendor', 'type', 'teamviewer_id',
+            'monitoring', 'vendor', 'type', 'teamviewer_id', 'hoptodesk_id',
             'last_checked', 'last_status',
             'current_user', 'last_boot', 'system_disk_free_gb',
             'resolved_ip',

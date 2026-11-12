@@ -38,10 +38,17 @@ def _is_safe_username(value: str) -> bool:
 def run_powershell_command(command):
     """Executa um comando PowerShell localmente."""
     try:
+        creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000) if os.name == 'nt' else 0
+        startupinfo = None
+        if os.name == 'nt':
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= getattr(subprocess, "STARTF_USESHOWWINDOW", 0x00000001)
+            startupinfo.wShowWindow = 0
         process = subprocess.run(
             ["powershell", "-Command", command],
             capture_output=True, text=True, encoding='utf-8', errors='replace',
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+            creationflags=creation_flags,
+            startupinfo=startupinfo
         )
         return {
             "success": process.returncode == 0,
@@ -161,3 +168,125 @@ class LocalCommands:
         except Exception as e:
             logging.error(f"Exceção ao habilitar WinRM remotamente via PsExec: {e}")
             return False, f"Exceção ao executar PsExec para habilitar WinRM: {e}"
+    def enable_remote_winrm(self, username, password):
+        """Habilita WinRM no host remoto usando Agendador de Tarefas nativo (schtasks), SCM (sc.exe) ou PsExec."""
+        target = str(self.target_ip).strip()
+        if not target:
+            return False, "Endereço ou IP de destino inválido."
+        if not _is_safe_username(username):
+            return False, "Nome de usuário contém caracteres inválidos."
+
+        logging.info(f"Tentando habilitar WinRM remotamente em {target} com usuário {username}")
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= getattr(subprocess, "STARTF_USESHOWWINDOW", 0x00000001)
+        startupinfo.wShowWindow = 0
+        creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+
+        task_name = f"WinRM_Enable_{int(time.time())}"
+        ps_enable = (
+            "Enable-PSRemoting -Force; "
+            "Set-Service WinRM -StartupType Automatic; "
+            "netsh advfirewall firewall set rule group='Windows Remote Management' new enable=yes; "
+            "netsh advfirewall firewall add rule name='WinRM 5985' dir=in action=allow protocol=TCP localport=5985; "
+            "Start-Service WinRM -ErrorAction SilentlyContinue"
+        )
+        task_cmd = f"powershell.exe -ExecutionPolicy Bypass -Command \"{ps_enable}\""
+
+        # 1. Tentativa Principal: Agendador de Tarefas Remoto (schtasks.exe - 100% nativo do Windows, roda como SYSTEM)
+        try:
+            create_args = [
+                "schtasks.exe", "/create",
+                "/s", target,
+                "/u", username,
+                "/p", password,
+                "/ru", "SYSTEM",
+                "/tn", task_name,
+                "/tr", task_cmd,
+                "/sc", "ONCE",
+                "/st", "00:00",
+                "/f"
+            ]
+            res_create = subprocess.run(
+                create_args,
+                capture_output=True, text=True, encoding='utf-8', errors='replace',
+                check=False, creationflags=creation_flags, startupinfo=startupinfo
+            )
+
+            out_text = (res_create.stdout or "") + (res_create.stderr or "")
+            if res_create.returncode == 0 or "criada" in out_text.lower() or "created" in out_text.lower():
+                # Dispara a execução imediatamente
+                run_args = [
+                    "schtasks.exe", "/run",
+                    "/s", target,
+                    "/u", username,
+                    "/p", password,
+                    "/tn", task_name
+                ]
+                subprocess.run(
+                    run_args,
+                    capture_output=True, text=True, encoding='utf-8', errors='replace',
+                    check=False, creationflags=creation_flags, startupinfo=startupinfo
+                )
+
+                # Aguarda execução dos comandos no host remoto
+                time.sleep(4)
+
+                # Remove a tarefa temporária
+                del_args = [
+                    "schtasks.exe", "/delete",
+                    "/s", target,
+                    "/u", username,
+                    "/p", password,
+                    "/tn", task_name,
+                    "/f"
+                ]
+                subprocess.run(
+                    del_args,
+                    capture_output=True, text=True, encoding='utf-8', errors='replace',
+                    check=False, creationflags=creation_flags, startupinfo=startupinfo
+                )
+
+                # Verifica se a porta 5985 já está respondendo
+                import socket
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.settimeout(2.5)
+                try:
+                    s.connect((target, 5985))
+                    s.close()
+                    return True, "WinRM habilitado com sucesso no host remoto (porta 5985 aberta)."
+                except Exception:
+                    # Mesmo se o socket ainda demorar para responder, a tarefa foi executada no host
+                    return True, "Comando de habilitação do WinRM disparado com sucesso via Agendador de Tarefas."
+            else:
+                logging.warning(f"schtasks falhou em {target}: {out_text.strip()}")
+        except Exception as e:
+            logging.warning(f"Exceção no schtasks em {target}: {e}")
+
+        # 2. Tentativa Secundária: Service Control Manager remoto (sc.exe com IPC$ autenticado)
+        try:
+            from .hoptodesk_manager import HopToDeskManager
+            connected_ipc = False
+            try:
+                connected_ipc = HopToDeskManager._connect_smb_share(target, username, password)
+            except Exception:
+                pass
+
+            sc_config = ["sc.exe", f"\\{target}", "config", "WinRM", "start=", "auto"]
+            subprocess.run(sc_config, capture_output=True, text=True, creationflags=creation_flags, startupinfo=startupinfo)
+            sc_start = ["sc.exe", f"\\{target}", "start", "WinRM"]
+            res_sc2 = subprocess.run(sc_start, capture_output=True, text=True, creationflags=creation_flags, startupinfo=startupinfo)
+
+            if connected_ipc:
+                HopToDeskManager._disconnect_smb_share(target)
+
+            sc_out = (res_sc2.stdout or "") + (res_sc2.stderr or "")
+            if res_sc2.returncode == 0 or "running" in sc_out.lower() or "execu" in sc_out.lower():
+                return True, "Serviço WinRM iniciado com sucesso no host remoto via SCM."
+        except Exception as e:
+            logging.warning(f"SCM remoto falhou em {target}: {e}")
+
+        # 3. Tentativa Terciária: PsExec (se instalado no sistema)
+        if shutil.which("psexec.exe"):
+            return self.enable_remote_winrm_with_psexec(username, password)
+
+        return False, "Não foi possível habilitar o WinRM automaticamente. Certifique-se de que a conta possui privilégios de administrador de rede e que a porta 445 (SMB/RPC) está acessível no destino."

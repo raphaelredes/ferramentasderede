@@ -105,6 +105,7 @@ class Host(BaseModel):
     group: Optional[str] = None
     monitoring: bool = True
     teamviewer_id: Optional[str | int | float] = None
+    hoptodesk_id: Optional[str | int | float] = None
     ports: Optional[List[int]] = []
     current_user: Optional[str] = None
     # Opportunistic host-probe fields (Sprint 4: data collected for free when
@@ -122,7 +123,7 @@ class Host(BaseModel):
     # `Host(**dict)` and FastAPI request-body paths. Field validators run on
     # both, which is what we want.
 
-    @field_validator("teamviewer_id", mode="before")
+    @field_validator("teamviewer_id", "hoptodesk_id", mode="before")
     @classmethod
     def _normalize_teamviewer_id(cls, v):
         # The DB stores `teamviewer_id` as a string, but old rows occasionally
@@ -313,6 +314,7 @@ class HostUpdate(BaseModel):
     monitoring: Optional[bool] = None
     reset_stats: Optional[bool] = False
     teamviewer_id: Optional[str] = None
+    hoptodesk_id: Optional[str] = None
     ports: Optional[List[int]] = None
     # Opportunistic probe results (host-probe). All optional; senders should
     # only include keys they actually want to update.
@@ -396,6 +398,7 @@ def update_host(address: str, update: HostUpdate):
         if update.last_boot is not None: probe_field_updates['last_boot'] = update.last_boot
         if update.system_disk_free_gb is not None: probe_field_updates['system_disk_free_gb'] = update.system_disk_free_gb
         if update.teamviewer_id is not None: probe_field_updates['teamviewer_id'] = update.teamviewer_id
+        if update.hoptodesk_id is not None: probe_field_updates['hoptodesk_id'] = update.hoptodesk_id
         if probe_field_updates:
             _db.update_host_fields(canonical_address, probe_field_updates)
 
@@ -673,6 +676,7 @@ def get_hosts_list():
             group=item.get("group"),
             monitoring=item.get("monitoring", True),
             teamviewer_id=item.get("teamviewer_id"),
+            hoptodesk_id=item.get("hoptodesk_id"),
             ports=item.get("ports", []),
             current_user=item.get("current_user"),
             last_boot=item.get("last_boot"),
@@ -730,6 +734,7 @@ def save_hosts_list(hosts_list):
             'vendor': h.vendor,
             'type': h.type,
             'teamviewer_id': h.teamviewer_id,
+            'hoptodesk_id': h.hoptodesk_id,
             'last_checked': h.last_checked,
             'last_status': h.last_status,
             # Forward the columns added after the initial schema so the
@@ -767,7 +772,8 @@ def add_host(host: Host):
             'monitoring': host.monitoring,
             'vendor': host.vendor,
             'type': host.type,
-            'teamviewer_id': host.teamviewer_id
+            'teamviewer_id': host.teamviewer_id,
+            'hoptodesk_id': host.hoptodesk_id
         }
         success, message = host_manager_instance.add_host(new_host_data)
 
@@ -1531,43 +1537,21 @@ class ExternalTerminalRequest(BaseModel):
 # IP / username / password come in via env vars so they are never interpolated
 # into the script text — eliminates shell-injection and keeps the password out
 # of the process command line and PowerShell history.
-_EXTERNAL_TERMINAL_SCRIPT = r"""
-$ErrorActionPreference = 'Stop'
-$ip   = $env:NT_REMOTE_IP
-$user = $env:NT_REMOTE_USER
-$pass = $env:NT_REMOTE_PASS
-# Wipe env vars from this child process so they do not leak via Get-ChildItem env:
-Remove-Item Env:\NT_REMOTE_IP, Env:\NT_REMOTE_USER, Env:\NT_REMOTE_PASS -ErrorAction SilentlyContinue
-
-if (-not $ip -or -not $user -or -not $pass) {
-    Write-Error 'Credenciais ausentes.'
-    exit 1
-}
-
-$sec  = ConvertTo-SecureString $pass -AsPlainText -Force
-$cred = New-Object System.Management.Automation.PSCredential($user, $sec)
-Remove-Variable pass
-
-try {
-    $trusted = (Get-Item WSMan:\localhost\Client\TrustedHosts).Value
-    if ($trusted -ne '*' -and $trusted -notlike "*$ip*") {
-        Write-Host "Configurando TrustedHosts para $ip..." -ForegroundColor Yellow
-        try {
-            $newTrusted = if ($trusted) { "$trusted, $ip" } else { $ip }
-            Set-Item WSMan:\localhost\Client\TrustedHosts -Value $newTrusted -Force -ErrorAction Stop
-            Write-Host 'IP adicionado aos TrustedHosts com sucesso.' -ForegroundColor Green
-        } catch {
-            Write-Warning 'Nao foi possivel adicionar aos TrustedHosts (Requer Admin). A conexao pode falhar.'
-            Write-Warning "Erro: $_"
-        }
-    }
-} catch {
-    Write-Warning "Erro ao consultar TrustedHosts: $_"
-}
-
-Write-Host "Conectando a $ip..." -ForegroundColor Cyan
-Enter-PSSession -ComputerName $ip -Credential $cred
-""".strip()
+# Executed via -Command without -EncodedCommand and without mutating HKLM TrustedHosts
+# so endpoint security / EDR (e.g. Kaspersky System Watcher) does not flag it.
+_EXTERNAL_TERMINAL_SCRIPT = (
+    "$ErrorActionPreference = 'Stop'; "
+    "$ip = $env:NT_REMOTE_IP; "
+    "$user = $env:NT_REMOTE_USER; "
+    "$pass = $env:NT_REMOTE_PASS; "
+    "Remove-Item Env:\\NT_REMOTE_IP, Env:\\NT_REMOTE_USER, Env:\\NT_REMOTE_PASS -ErrorAction SilentlyContinue; "
+    "if (-not $ip -or -not $user -or -not $pass) { Write-Error 'Credenciais ausentes.'; exit 1 }; "
+    "$sec = ConvertTo-SecureString $pass -AsPlainText -Force; "
+    "$cred = New-Object System.Management.Automation.PSCredential($user, $sec); "
+    "Remove-Variable pass; "
+    "Write-Host \"Conectando a $ip...\" -ForegroundColor Cyan; "
+    "Enter-PSSession -ComputerName $ip -Credential $cred"
+)
 
 
 def _is_safe_remote_target(value: str) -> bool:
@@ -1593,8 +1577,6 @@ def open_external_terminal(request: ExternalTerminalRequest):
         raise HTTPException(status_code=400, detail="Credenciais inválidas.")
 
     try:
-        encoded_cmd = base64.b64encode(_EXTERNAL_TERMINAL_SCRIPT.encode("utf-16le")).decode("utf-8")
-
         # Pass IP/user/pass via env vars instead of command line so they don't
         # appear in `Get-Process` / wmic / Process Explorer.
         env = os.environ.copy()
@@ -1603,7 +1585,7 @@ def open_external_terminal(request: ExternalTerminalRequest):
         env["NT_REMOTE_PASS"] = request.password
 
         subprocess.Popen(
-            ["powershell", "-NoProfile", "-NoExit", "-EncodedCommand", encoded_cmd],
+            ["powershell", "-NoProfile", "-NoExit", "-Command", _EXTERNAL_TERMINAL_SCRIPT],
             creationflags=subprocess.CREATE_NEW_CONSOLE,
             env=env,
         )

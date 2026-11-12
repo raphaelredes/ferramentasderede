@@ -397,6 +397,34 @@ function registerIpcHandlers() {
     }
     return false
   })
+  ipcMain.handle('launch-hoptodesk', async (_event: unknown, id?: unknown) => {
+    const cleanId = typeof id === 'string' ? id.replace(/\s+/g, '') : ''
+    const appData = process.env.APPDATA || ''
+    const paths = [
+      path.join(appData, 'FerramentasDeRede', 'bin', 'HopToDesk.exe'),
+      path.join(process.env.USERPROFILE || '', 'Desktop', 'HopToDesk.exe'),
+      'C:\\Users\\Public\\Desktop\\HopToDesk.exe',
+      'C:\\Program Files\\HopToDesk\\HopToDesk.exe',
+      'C:\\Program Files (x86)\\HopToDesk\\HopToDesk.exe'
+    ]
+
+    for (const p of paths) {
+      try {
+        if (fs.existsSync(p)) {
+          const args = cleanId ? ['--connect', cleanId] : []
+          spawn(p, args)
+          return true
+        }
+      } catch (e) {
+        console.error(`Error checking path ${p}:`, e)
+      }
+    }
+    if (cleanId) {
+      shell.openExternal(`hoptodesk://${cleanId}`)
+      return true
+    }
+    return false
+  })
 
   ipcMain.handle('get-local-domain', async () => {
     return process.env.USERDNSDOMAIN || process.env.USERDOMAIN || ''

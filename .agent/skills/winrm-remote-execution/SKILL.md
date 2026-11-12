@@ -35,3 +35,19 @@ Este documento orienta o agente sobre o funcionamento e decisões de projeto na 
   `CROSS_DOMAIN_AUTH > AUTH_FAILED > TRUSTED_HOSTS_REQUIRED > WINRM_DISABLED > NETWORK_UNREACHABLE > UNKNOWN`
 - **Geração de Credenciais Cruzadas:** Em ambientes com relação de confiança entre domínios, quando o domínio do alvo difere do domínio informado pelo usuário (ou preenchido pelo modal), o handler deve testar automaticamente as formas `DOMINIO_ALVO\usuario`, `usuario@dominio_alvo` e `usuario` simples.
 
+## 6. Gravação de TrustedHosts no Registro (armadilhas confirmadas)
+- **Nome do valor:** o WinRM cliente persiste a lista em
+  `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WSMAN\Client`, valor REG_SZ
+  **`trusted_hosts`** (minúsculo, underscore), formato `a,b,c` (vírgula sem espaço).
+  Gravar em `TrustedHosts` (CamelCase) cria um valor órfão que o Windows ignora.
+- **Chave pode não existir** em PCs onde o WinRM cliente nunca foi configurado: usar
+  `winreg.CreateKeyEx(..., KEY_SET_VALUE | KEY_WOW64_64KEY)` e não apenas `OpenKey`.
+- **Elevação:** escrever em HKLM exige admin e o app é publicado com `uac_admin=False`.
+  Fallback implementado: `ShellExecuteExW(verb="runas")` sobre `reg.exe add ... /reg:64`
+  com `SW_HIDE`, seguido de leitura de confirmação. Sempre expor o motivo da falha
+  (`WinRMHandler.last_trusted_hosts_error`) até a UI; nunca devolver só "Erro ao adicionar".
+- **Teste local:** o shell do agente costuma ser admin e mascara o bug de permissão.
+  Valide também a lógica pensando num usuário sem elevação.
+- **Relevância real:** o app usa `pypsrp` (Python puro), que **não consulta** o TrustedHosts
+  do Windows. A lista só decide, após uma falha de conexão, se o modal
+  `TRUSTED_HOSTS_REQUIRED` aparece. Adicionar um host não corrige falhas de NTLM/Kerberos.

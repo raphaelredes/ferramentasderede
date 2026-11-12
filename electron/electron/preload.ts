@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('electron', {
   launchMsra: (ip: string, askCredentials?: boolean) =>
     ipcRenderer.invoke('launch-msra', ip, askCredentials),
   launchTeamViewer: (id?: string) => ipcRenderer.invoke('launch-teamviewer', id),
+  launchHopToDesk: (id?: string) => ipcRenderer.invoke('launch-hoptodesk', id),
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
   getLocalDomain: () => ipcRenderer.invoke('get-local-domain'),
   showItemInFolder: (path: string) => ipcRenderer.invoke('show-item-in-folder', path),

@@ -17,6 +17,18 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
     {
+        version: '1.5.2',
+        date: '2026-11-12',
+        title: 'Auditoria de Interfaces e Conexões Ativas (Wi-Fi/LAN/802.1X) e Implantação Automatizada do HopToDesk',
+        changes: [
+            { kind: 'feat', text: 'Auditoria de Interfaces e Conexões Ativas: Nova ferramenta em Diagnóstico para inspeção remota via WinRM identificando enlaces em uso (exclusivo Wi-Fi, exclusivo cabo ou híbrido) e detalhes de sinal, SSID e BSSID.' },
+            { kind: 'feat', text: 'Inspeção Estrita de Certificados 802.1X e Políticas RSOP: Descoberta de perfis WLAN 802.1X, configurações EAP (PEAP/MSCHAPv2, TLS), validação de servidor e identificação da autoridade raiz confiável marcada no perfil corporativo.' },
+            { kind: 'ui', text: 'Inspetor Dedicado de Certificado Digital em Popup Modal: Janela sobreposta (z-[120]) para inspeção aprofundada de Subject DN, Issuer DN, chaves, templates, números de série e impressões digitais SHA-1 sem quebras de layout.' },
+            { kind: 'ui', text: 'Seleção Automática de Credencial: Detecção inteligente de credenciais no cofre, alternando automaticamente para entrada manual quando não houver credenciais armazenadas.' },
+            { kind: 'feat', text: 'Integração e Implantação Automatizada do HopToDesk: Detecção de status de execução remota, cópia SMB automatizada e disparo interativo na sessão do usuário ativo via WinRM.' },
+        ],
+    },
+    {
         version: '1.5.1',
         date: '2026-10-06',
         title: 'Correção do Cadastro de Hosts Confiáveis (TrustedHosts) em Outros Computadores',
