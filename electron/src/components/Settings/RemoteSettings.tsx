@@ -4,6 +4,7 @@ import { Trash2 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useToast } from '../../contexts/ToastContext';
 import { HelpButton } from '../HelpButton';
+import { HostAutocompleteInput } from '../HostAutocompleteInput';
 import { API_BASE } from '../../config/api';
 
 // Interfaces (duplicated for self-containment, or could be shared)
@@ -375,14 +376,15 @@ export function RemoteSettings({ settings, onUpdateSettings, isChanged, setConfi
                 </h3>
 
                 <div className="flex gap-2">
-                    <input
-                        type="text"
+                    <HostAutocompleteInput
                         value={newTrustedHost}
-                        onChange={(e) => setNewTrustedHost(e.target.value)}
-                        placeholder="Adicionar IP ou Domínio (ex: *.empresa.local)"
-                        className="flex-1 bg-zinc-950 border border-zinc-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"
+                        onChange={setNewTrustedHost}
+                        placeholder="Adicionar IP ou Domínio (ex: 1.1.1.1 ou *.example.com)"
+                        wrapperClassName="flex-1"
+                        className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"
+                        onKeyDown={e => { if (e.key === 'Enter') handleAddTrustedHost(); }}
                     />
-                    <button onClick={() => handleAddTrustedHost()} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors">
+                    <button onClick={() => handleAddTrustedHost()} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors shrink-0">
                         Adicionar
                     </button>
                 </div>

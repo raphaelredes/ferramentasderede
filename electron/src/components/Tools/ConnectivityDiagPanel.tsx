@@ -29,6 +29,7 @@ import { useToast } from '../../contexts/ToastContext';
 import { useVault } from '../../contexts/VaultContext';
 import { usePersistedState } from '../../hooks/usePersistedState';
 import { LastExecutionBadge } from './LastExecutionBadge';
+import { HostAutocompleteInput } from '../HostAutocompleteInput';
 
 export type TileState = 'Green' | 'Blue' | 'Amber' | 'Red' | 'Neutral';
 
@@ -530,10 +531,10 @@ export function ConnectivityDiagPanel() {
                         <label className="block text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
                             Hosts ou IPs Alvo (vírgula, espaço ou ponto e vírgula)
                         </label>
-                        <input
-                            type="text"
+                        <HostAutocompleteInput
                             value={targetsInput}
-                            onChange={e => setTargetsInput(e.target.value)}
+                            onChange={setTargetsInput}
+                            multi={true}
                             onKeyDown={e => {
                                 if (e.key === 'Enter' && !isRunning) runDiagnostic();
                             }}

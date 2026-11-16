@@ -14,6 +14,7 @@ import { API_BASE } from '../../config/api';
 import { useToast } from '../../contexts/ToastContext';
 import { usePersistedState } from '../../hooks/usePersistedState';
 import { LastExecutionBadge } from './LastExecutionBadge';
+import { HostAutocompleteInput } from '../HostAutocompleteInput';
 
 interface CertChainItem {
     cn?: string | null;
@@ -156,10 +157,9 @@ export function TlsPanel() {
                     <label className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
                         Host ou FQDN
                     </label>
-                    <input
-                        type="text"
+                    <HostAutocompleteInput
                         value={host}
-                        onChange={e => setHost(e.target.value)}
+                        onChange={setHost}
                         onFocus={() => { if (host === 'www.google.com') setHost(''); }}
                         onBlur={() => {
                             if (host) {

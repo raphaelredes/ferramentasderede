@@ -10,6 +10,7 @@ import { CommandGuideModal } from '../components/Terminal/CommandGuideModal';
 import { BatchRunnerModal } from '../components/Terminal/BatchRunnerModal';
 import { SnippetsDrawer } from '../components/Terminal/SnippetsDrawer';
 import { HostPicker, MANUAL_OPTION_VALUE } from '../components/Terminal/HostPicker';
+import { HostAutocompleteInput } from '../components/HostAutocompleteInput';
 
 type LogEntry = { ts: number; level: 'info' | 'warn' | 'error'; text: string };
 
@@ -211,19 +212,49 @@ export function Terminal() {
 
             <div className="bg-zinc-900 p-4 rounded-xl border border-zinc-800 flex gap-4 items-end">
                 <div className="flex-1 grid grid-cols-1 md:grid-cols-[2fr_1fr_1fr] gap-4">
-                    <HostPicker
-                        hosts={hosts}
-                        filteredHosts={filteredHosts}
-                        selectedAddress={selectedAddress}
-                        selectedHost={selectedHost}
-                        isPickerOpen={isPickerOpen}
-                        setIsPickerOpen={setIsPickerOpen}
-                        search={search}
-                        setSearch={setSearch}
-                        busy={busy}
-                        pickHost={pickHost}
-                        pickManual={pickManual}
-                    />
+                    {selectedAddress === MANUAL_OPTION_VALUE ? (
+                        <div className="space-y-1">
+                            <div className="flex items-center justify-between">
+                                <label className="text-xs text-white">Host ou IP (Manual)</label>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setSelectedAddress('');
+                                        setIsPickerOpen(true);
+                                    }}
+                                    className="text-[11px] text-blue-400 hover:underline"
+                                >
+                                    Lista do Painel
+                                </button>
+                            </div>
+                            <HostAutocompleteInput
+                                value={connection.ip}
+                                onChange={val => setConnection(prev => ({ ...prev, ip: val }))}
+                                onSelectHost={(h) => {
+                                    pickHost(h);
+                                }}
+                                placeholder="IP ou Hostname do alvo"
+                                className="w-full bg-zinc-950 border border-zinc-700 focus:border-blue-500 focus:outline-none rounded px-3 py-2 text-sm text-zinc-300 font-mono"
+                                disabled={busy}
+                                autoFocus
+                                onKeyDown={handleKeyDown}
+                            />
+                        </div>
+                    ) : (
+                        <HostPicker
+                            hosts={hosts}
+                            filteredHosts={filteredHosts}
+                            selectedAddress={selectedAddress}
+                            selectedHost={selectedHost}
+                            isPickerOpen={isPickerOpen}
+                            setIsPickerOpen={setIsPickerOpen}
+                            search={search}
+                            setSearch={setSearch}
+                            busy={busy}
+                            pickHost={pickHost}
+                            pickManual={pickManual}
+                        />
+                    )}
 
                     {/* Username */}
                     <div className="space-y-1">

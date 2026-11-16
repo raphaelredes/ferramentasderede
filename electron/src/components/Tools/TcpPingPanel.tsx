@@ -5,6 +5,7 @@ import { useToast } from '../../contexts/ToastContext';
 import { useNetworks } from '../../hooks/useNetworks';
 import { usePersistedState } from '../../hooks/usePersistedState';
 import { LastExecutionBadge } from './LastExecutionBadge';
+import { HostAutocompleteInput } from '../HostAutocompleteInput';
 
 /**
  * TCP ping: liveness + latency via TCP handshake, for hosts that block ICMP
@@ -38,9 +39,14 @@ export function TcpPingPanel() {
             <div className="flex gap-4 items-end bg-zinc-900 p-4 rounded-xl border border-zinc-800 flex-wrap">
                 <div className="flex-1 min-w-48 space-y-2">
                     <label className="text-sm font-medium text-zinc-400">Host alvo</label>
-                    <input type="text" value={target} onChange={e => setTarget(e.target.value)} disabled={isRunning}
-                        placeholder="192.168.1.10" onKeyDown={e => { if (e.key === 'Enter' && !isRunning) start(); }}
-                        className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500 font-mono placeholder:text-zinc-500 disabled:opacity-60" />
+                    <HostAutocompleteInput
+                        value={target}
+                        onChange={setTarget}
+                        disabled={isRunning}
+                        placeholder="1.1.1.1 ou host.example.com"
+                        onKeyDown={e => { if (e.key === 'Enter' && !isRunning) start(); }}
+                        className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500 font-mono placeholder:text-zinc-500 disabled:opacity-60"
+                    />
                 </div>
                 <div className="space-y-2 w-24">
                     <label className="text-sm font-medium text-zinc-400">Porta</label>

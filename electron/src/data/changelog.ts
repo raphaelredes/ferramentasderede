@@ -17,6 +17,17 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
     {
+        version: '1.5.3',
+        date: '2026-11-16',
+        title: 'Busca Responsiva e Autocomplete de Hosts do Painel em Todas as Ferramentas',
+        changes: [
+            { kind: 'feat', text: 'Autocomplete Responsivo de Hosts do Painel (HostAutocompleteInput): Sugestão dinâmica em tempo real ao focar ou digitar nome, hostname, IP ou grupo em todas as ferramentas de diagnóstico e inspeção.' },
+            { kind: 'ui', text: 'Seleção Rápida em 1 Clique e Navegação por Teclado: Inserção direta pelo botão [IP] ou [Nome], suporte a teclas direcionais (Cima/Baixo/Enter/Esc), indicador visual de status online/offline e modo multi-alvo em Interfaces Ativas.' },
+            { kind: 'feat', text: 'Terminal Remoto (Modo Manual): Integração do campo de entrada manual com autocomplete dos hosts do painel e retorno rápido para a lista.' },
+            { kind: 'fix', text: 'Correções de interface e conformidade RFC 2606 em placeholders de entrada e disparo via Enter no painel SNMP.' },
+        ],
+    },
+    {
         version: '1.5.2',
         date: '2026-11-12',
         title: 'Auditoria de Interfaces e Conexões Ativas (Wi-Fi/LAN/802.1X) e Implantação Automatizada do HopToDesk',

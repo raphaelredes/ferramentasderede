@@ -13,6 +13,7 @@ import { API_BASE } from '../../config/api';
 import { useToast } from '../../contexts/ToastContext';
 import { usePersistedState } from '../../hooks/usePersistedState';
 import { LastExecutionBadge } from './LastExecutionBadge';
+import { HostAutocompleteInput } from '../HostAutocompleteInput';
 
 interface ADPortResult {
     port: number;
@@ -286,13 +287,13 @@ export function AdToolsPanel({ defaultSourceIp }: { defaultSourceIp?: string }) 
             {subTab === 'ports' && (
                 <div className="flex-1 flex flex-col space-y-3 min-h-0">
                     <div className="flex flex-wrap items-center gap-3 bg-zinc-900 p-3.5 rounded-xl border border-zinc-800 shrink-0">
-                        <input
-                            type="text"
+                        <HostAutocompleteInput
                             placeholder="IP ou FQDN do DC (ex: dc01.corp.local)"
                             value={dcTarget}
-                            onChange={e => setDcTarget(e.target.value)}
+                            onChange={setDcTarget}
                             onKeyDown={e => { if (e.key === 'Enter' && !loading) runPortTest(); }}
-                            className="bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-200 flex-1 min-w-[220px] focus:outline-none focus:border-blue-500 font-mono"
+                            wrapperClassName="flex-1 min-w-[220px]"
+                            className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-blue-500 font-mono"
                         />
                         <button
                             onClick={runPortTest}
@@ -377,12 +378,13 @@ export function AdToolsPanel({ defaultSourceIp }: { defaultSourceIp?: string }) 
                             onKeyDown={e => { if (e.key === 'Enter' && !loading) runSrvTest(); }}
                             className="bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-200 flex-1 min-w-[200px] focus:outline-none focus:border-blue-500 font-mono"
                         />
-                        <input
-                            type="text"
+                        <HostAutocompleteInput
                             placeholder="DNS Server opcional (ex: 10.0.0.1)"
                             value={customDns}
-                            onChange={e => setCustomDns(e.target.value)}
-                            className="bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-200 w-48 focus:outline-none focus:border-blue-500 font-mono"
+                            onChange={setCustomDns}
+                            preferredFill="ip"
+                            wrapperClassName="w-48"
+                            className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-blue-500 font-mono"
                         />
                         <button
                             onClick={runSrvTest}
@@ -437,13 +439,13 @@ export function AdToolsPanel({ defaultSourceIp }: { defaultSourceIp?: string }) 
             {subTab === 'skew' && (
                 <div className="flex-1 flex flex-col space-y-3 min-h-0">
                     <div className="flex flex-wrap items-center gap-3 bg-zinc-900 p-3.5 rounded-xl border border-zinc-800 shrink-0">
-                        <input
-                            type="text"
+                        <HostAutocompleteInput
                             placeholder="PDC Emulator ou DC (ex: dc01.corp.local)"
                             value={skewTarget}
-                            onChange={e => setSkewTarget(e.target.value)}
+                            onChange={setSkewTarget}
                             onKeyDown={e => { if (e.key === 'Enter' && !loading) runSkewTest(); }}
-                            className="bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-200 flex-1 min-w-[220px] focus:outline-none focus:border-blue-500 font-mono"
+                            wrapperClassName="flex-1 min-w-[220px]"
+                            className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-blue-500 font-mono"
                         />
                         <button
                             onClick={runSkewTest}

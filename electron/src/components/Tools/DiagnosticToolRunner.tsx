@@ -3,6 +3,7 @@ import { Play, Square, Terminal as TerminalIcon, Eraser, Activity } from 'lucide
 import { clsx } from 'clsx';
 import type { NetworkConfig } from '../../pages/Settings';
 import { LastExecutionBadge } from './LastExecutionBadge';
+import { HostAutocompleteInput } from '../HostAutocompleteInput';
 
 interface DiagnosticToolRunnerProps {
     type: 'ping' | 'traceroute';
@@ -41,10 +42,9 @@ export function DiagnosticToolRunner({
             <div className="flex flex-wrap gap-4 items-end bg-zinc-900 p-4 rounded-xl border border-zinc-800 shrink-0">
                 <div className="flex-1 space-y-2">
                     <label className="text-sm font-medium text-zinc-400">Alvo (IP ou Hostname)</label>
-                    <input
-                        type="text"
+                    <HostAutocompleteInput
                         value={target}
-                        onChange={(e) => setTarget(e.target.value)}
+                        onChange={(val) => setTarget(val)}
                         onFocus={() => { if (target === '8.8.8.8') setTarget(''); }}
                         onBlur={() => {
                             if (target) {
@@ -55,7 +55,8 @@ export function DiagnosticToolRunner({
                                 if (clean && clean !== target) setTarget(clean);
                             }
                         }}
-                        placeholder="8.8.8.8"
+                        disabled={state.isRunning}
+                        placeholder="8.8.8.8 ou google.com"
                         className={`w-full bg-zinc-950 border border-zinc-700 rounded-lg px-4 py-2 focus:outline-none focus:border-blue-500 transition-colors font-mono placeholder:text-zinc-500 ${target === '8.8.8.8' ? 'text-zinc-500' : 'text-white'}`}
                         onKeyDown={(e) => {
                             if (e.key === 'Enter' && !state.isRunning) run(target || '8.8.8.8', sourceIp || undefined);

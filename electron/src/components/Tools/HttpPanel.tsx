@@ -14,6 +14,7 @@ import { API_BASE } from '../../config/api';
 import { useToast } from '../../contexts/ToastContext';
 import { usePersistedState } from '../../hooks/usePersistedState';
 import { LastExecutionBadge } from './LastExecutionBadge';
+import { HostAutocompleteInput } from '../HostAutocompleteInput';
 
 interface SecurityHeaderItem {
     id: string;
@@ -129,10 +130,10 @@ export function HttpPanel() {
                         <label className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
                             URL do Serviço Web
                         </label>
-                        <input
-                            type="text"
+                        <HostAutocompleteInput
                             value={url}
-                            onChange={(e) => setUrl(e.target.value)}
+                            onChange={setUrl}
+                            preferredFill="url"
                             onFocus={() => { if (url === 'https://www.google.com') setUrl(''); }}
                             placeholder="https://www.google.com ou http://intranet.local"
                             onKeyDown={(e) => { if (e.key === 'Enter' && !busy) check(); }}

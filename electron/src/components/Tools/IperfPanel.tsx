@@ -12,6 +12,7 @@ import { useNetworks } from '../../hooks/useNetworks';
 import { useMonitoring } from '../../contexts/MonitoringContext';
 import { usePersistedState } from '../../hooks/usePersistedState';
 import { LastExecutionBadge } from './LastExecutionBadge';
+import { HostAutocompleteInput } from '../HostAutocompleteInput';
 
 interface IperfStatus {
     available: boolean;
@@ -534,10 +535,9 @@ export function IperfPanel() {
                                     Testar este PC (localhost)
                                 </button>
                             </div>
-                            <input
-                                type="text"
+                            <HostAutocompleteInput
                                 value={clientTarget}
-                                onChange={(e) => setClientTarget(e.target.value)}
+                                onChange={setClientTarget}
                                 disabled={iperfClientState.isRunning}
                                 placeholder="ex.: 10.10.38.10 ou srv-iperf.corp"
                                 className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-cyan-500 transition-colors font-mono text-sm disabled:opacity-60"

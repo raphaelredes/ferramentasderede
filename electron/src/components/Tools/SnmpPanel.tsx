@@ -21,6 +21,7 @@ import { API_BASE } from '../../config/api';
 import { useToast } from '../../contexts/ToastContext';
 import { usePersistedState } from '../../hooks/usePersistedState';
 import { LastExecutionBadge } from './LastExecutionBadge';
+import { HostAutocompleteInput } from '../HostAutocompleteInput';
 
 interface SnmpSystemResult {
     ok: boolean;
@@ -420,13 +421,13 @@ agentaddress 127.0.0.1:161,192.168.10.1:161
                         <label className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
                             Host (Switch / Roteador)
                         </label>
-                        <input
-                            type="text"
+                        <HostAutocompleteInput
                             value={host}
-                            onChange={e => setHost(e.target.value)}
+                            onChange={setHost}
                             onFocus={() => { if (host === '10.0.0.1') setHost(''); }}
                             placeholder="10.0.0.1 ou switch-core.local"
                             className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3.5 py-2 text-white focus:outline-none focus:border-blue-500 font-mono text-sm"
+                            onKeyDown={e => { if (e.key === 'Enter' && !busy) querySystem(); }}
                         />
                     </div>
 

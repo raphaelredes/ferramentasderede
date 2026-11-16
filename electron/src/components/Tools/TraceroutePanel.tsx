@@ -20,6 +20,7 @@ import { useToast } from '../../contexts/ToastContext';
 import { useNetworks } from '../../hooks/useNetworks';
 import { usePersistedState } from '../../hooks/usePersistedState';
 import { LastExecutionBadge } from './LastExecutionBadge';
+import { HostAutocompleteInput } from '../HostAutocompleteInput';
 
 interface TraceroutePanelProps {
     target?: string;
@@ -132,10 +133,9 @@ export function TraceroutePanel(props?: TraceroutePanelProps) {
                     <label className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
                         Alvo (IP ou Hostname)
                     </label>
-                    <input
-                        type="text"
+                    <HostAutocompleteInput
                         value={target}
-                        onChange={(e) => setTarget(e.target.value)}
+                        onChange={setTarget}
                         onFocus={() => { if (target === '8.8.8.8') setTarget(''); }}
                         onBlur={() => {
                             if (target) {

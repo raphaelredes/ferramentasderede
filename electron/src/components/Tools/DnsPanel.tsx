@@ -10,6 +10,7 @@ import { useToast } from '../../contexts/ToastContext';
 import { useNetworks } from '../../hooks/useNetworks';
 import { usePersistedState } from '../../hooks/usePersistedState';
 import { LastExecutionBadge } from './LastExecutionBadge';
+import { HostAutocompleteInput } from '../HostAutocompleteInput';
 
 // Tipos suportados na interface
 type DnsRecordType = 'AUTO' | 'ALL' | 'A' | 'AAAA' | 'CNAME' | 'MX' | 'TXT' | 'NS' | 'SOA' | 'PTR' | 'SRV' | 'CAA';
@@ -373,16 +374,13 @@ export function DnsPanel() {
                                 <span className="text-[10px] text-blue-400 font-mono font-normal">Detectado: Endereço IP</span>
                             )}
                         </label>
-                        <div className="relative">
-                            <input
-                                type="text"
-                                value={query}
-                                onChange={(e) => setQuery(e.target.value)}
-                                placeholder="ex: google.com, cloudflare.com ou 1.1.1.1"
-                                className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3.5 py-2 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors font-mono placeholder:text-zinc-500"
-                                onKeyDown={(e) => { if (e.key === 'Enter' && !busy) handleResolve(); }}
-                            />
-                        </div>
+                        <HostAutocompleteInput
+                            value={query}
+                            onChange={setQuery}
+                            placeholder="ex: google.com, cloudflare.com ou 1.1.1.1"
+                            className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3.5 py-2 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors font-mono placeholder:text-zinc-500"
+                            onKeyDown={(e) => { if (e.key === 'Enter' && !busy) handleResolve(); }}
+                        />
                     </div>
 
                     {/* Tipo de Registro */}
@@ -445,10 +443,10 @@ export function DnsPanel() {
                     <div className="flex items-center gap-3 bg-zinc-950/60 p-2.5 rounded-lg border border-zinc-800">
                         <Server size={15} className="text-blue-400 shrink-0" />
                         <label className="text-xs text-zinc-400 whitespace-nowrap">IP do Servidor DNS:</label>
-                        <input
-                            type="text"
+                        <HostAutocompleteInput
                             value={customServerIp}
-                            onChange={(e) => setCustomServerIp(e.target.value)}
+                            onChange={setCustomServerIp}
+                            preferredFill="ip"
                             placeholder="ex: 10.0.0.1 ou 1.1.1.1"
                             className="flex-1 bg-zinc-900 border border-zinc-700 rounded px-3 py-1.5 text-xs text-white font-mono focus:outline-none focus:border-blue-500"
                         />

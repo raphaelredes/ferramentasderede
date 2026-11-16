@@ -5,6 +5,7 @@ import { useToast } from '../../contexts/ToastContext';
 import { useNetworks } from '../../hooks/useNetworks';
 import { usePersistedState } from '../../hooks/usePersistedState';
 import { LastExecutionBadge } from './LastExecutionBadge';
+import { HostAutocompleteInput } from '../HostAutocompleteInput';
 
 /** Path MTU discovery — finds the largest unfragmented packet to a target. */
 export function PmtuPanel() {
@@ -29,10 +30,15 @@ export function PmtuPanel() {
             <div className="flex gap-4 items-end bg-zinc-900 p-4 rounded-xl border border-zinc-800">
                 <div className="flex-1 space-y-2">
                     <label className="text-sm font-medium text-zinc-400">Alvo (IP ou Hostname)</label>
-                    <input type="text" value={target} onChange={e => setTarget(e.target.value)} disabled={isRunning}
+                    <HostAutocompleteInput
+                        value={target}
+                        onChange={setTarget}
+                        disabled={isRunning}
                         onFocus={() => { if (target === '8.8.8.8') setTarget(''); }}
                         onKeyDown={e => { if (e.key === 'Enter' && !isRunning) start(); }}
-                        className={`w-full bg-zinc-950 border border-zinc-700 rounded-lg px-4 py-2 focus:outline-none focus:border-blue-500 font-mono disabled:opacity-60 ${target === '8.8.8.8' ? 'text-zinc-500' : 'text-white'}`} />
+                        className={`w-full bg-zinc-950 border border-zinc-700 rounded-lg px-4 py-2 focus:outline-none focus:border-blue-500 font-mono disabled:opacity-60 ${target === '8.8.8.8' ? 'text-zinc-500' : 'text-white'}`}
+                        placeholder="8.8.8.8 ou google.com"
+                    />
                 </div>
                 <div className="space-y-2 w-52">
                     <label className="text-sm font-medium text-zinc-400">Sair pela rede</label>

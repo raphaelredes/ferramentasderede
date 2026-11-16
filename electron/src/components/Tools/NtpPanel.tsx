@@ -5,6 +5,7 @@ import { API_BASE } from '../../config/api';
 import { useToast } from '../../contexts/ToastContext';
 import { usePersistedState } from '../../hooks/usePersistedState';
 import { LastExecutionBadge } from './LastExecutionBadge';
+import { HostAutocompleteInput } from '../HostAutocompleteInput';
 
 interface NtpResult {
     ok: boolean; error?: string;
@@ -50,9 +51,13 @@ export function NtpPanel() {
             <div className="flex gap-4 items-end bg-zinc-900 p-4 rounded-xl border border-zinc-800">
                 <div className="flex-1 space-y-2">
                     <label className="text-sm font-medium text-zinc-400">Servidor NTP</label>
-                    <input type="text" value={server} onChange={e => setServer(e.target.value)} placeholder="pool.ntp.org  ou  10.0.0.1 (DC)"
+                    <HostAutocompleteInput
+                        value={server}
+                        onChange={setServer}
+                        placeholder="pool.ntp.org  ou  10.0.0.1 (DC)"
                         onKeyDown={e => { if (e.key === 'Enter' && !busy) query(); }}
-                        className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500 font-mono placeholder:text-zinc-500" />
+                        className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500 font-mono placeholder:text-zinc-500"
+                    />
                 </div>
                 <button onClick={query} disabled={busy} className="flex items-center gap-2 px-4 py-2 rounded-lg font-medium bg-zinc-800 hover:bg-zinc-700 text-emerald-400 border border-emerald-900/30 hover:border-emerald-500/50 transition-colors disabled:opacity-60">
                     <Search size={18} /> Consultar

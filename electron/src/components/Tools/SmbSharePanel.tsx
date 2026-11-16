@@ -4,6 +4,7 @@ import { API_BASE } from '../../config/api';
 import { useToast } from '../../contexts/ToastContext';
 import { usePersistedState } from '../../hooks/usePersistedState';
 import { LastExecutionBadge } from './LastExecutionBadge';
+import { HostAutocompleteInput } from '../HostAutocompleteInput';
 
 interface SMBShare {
     name: string;
@@ -65,12 +66,13 @@ export function SmbSharePanel() {
             </div>
 
             <div className="flex flex-wrap items-center gap-3">
-                <input
-                    type="text"
+                <HostAutocompleteInput
                     placeholder="IP ou Hostname do alvo (ex: 192.168.1.100)"
                     value={target}
-                    onChange={e => setTarget(e.target.value)}
-                    className="bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 flex-1 min-w-[220px] focus:outline-none focus:border-blue-500"
+                    onChange={setTarget}
+                    wrapperClassName="flex-1 min-w-[220px]"
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-blue-500"
+                    onKeyDown={e => { if (e.key === 'Enter' && !loading) scanShares(); }}
                 />
                 <button
                     onClick={scanShares}

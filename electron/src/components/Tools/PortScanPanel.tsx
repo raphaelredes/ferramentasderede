@@ -5,6 +5,7 @@ import { useTools } from '../../contexts/ToolsContext';
 import { useToast } from '../../contexts/ToastContext';
 import { usePersistedState } from '../../hooks/usePersistedState';
 import { LastExecutionBadge } from './LastExecutionBadge';
+import { HostAutocompleteInput } from '../HostAutocompleteInput';
 
 /**
 
@@ -36,12 +37,11 @@ export function PortScanPanel() {
                 <div className="flex flex-wrap gap-4 items-end">
                     <div className="flex-1 min-w-[200px] space-y-1.5">
                         <label className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Host alvo (IP ou Hostname)</label>
-                        <input
-                            type="text"
+                        <HostAutocompleteInput
                             value={target}
-                            onChange={(e) => setTarget(e.target.value)}
+                            onChange={setTarget}
                             disabled={portState.isRunning}
-                            placeholder="192.168.1.10"
+                            placeholder="1.1.1.1 ou host.example.com"
                             className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3.5 py-2 text-white focus:outline-none focus:border-blue-500 transition-colors font-mono text-sm placeholder:text-zinc-500 disabled:opacity-60"
                             onKeyDown={(e) => { if (e.key === 'Enter' && !portState.isRunning) start(); }}
                         />
