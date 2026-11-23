@@ -17,6 +17,17 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
     {
+        version: '1.5.4',
+        date: '2026-11-23',
+        title: 'Hardening Completo de Segurança, Conformidade OPSEC Automatizada e Correções do Batch Runner & Terminal',
+        changes: [
+            { kind: 'security', text: 'Conformidade OPSEC & Sanitização Total: Remoção completa de quaisquer referências internas hardcoded e adição de verificador automatizado por hashes SHA-256 em hook pre-commit, script de build portátil e CI.' },
+            { kind: 'security', text: 'Integridade Binária & Proteção LPE (HopToDesk): Validação de cabeçalho PE e assinatura Authenticode em cache, download, deploy remoto e inicialização local, além de execução com privilégio /rl LIMITED.' },
+            { kind: 'security', text: 'Hardening de Relatórios, Bridges e Rede: Escape HTML anti-XSS + cabeçalhos CSP/nosniff nos relatórios, parametrização segura via variáveis de ambiente no Scanner SMB/LLDP, chaves SNMPv3 restritas à memória e mascaramento de prefixo OUI em consultas externas.' },
+            { kind: 'fix', text: 'Correções Funcionais Críticas: Reparo do Multi-Host Batch Runner (assinatura WinRMHandler e integração com o Cofre), alinhamento do Terminal Externo para /tools/terminal/external, persistência de preferências em AppData e correção da descoberta MTR no Windows.' },
+        ],
+    },
+    {
         version: '1.5.3',
         date: '2026-11-16',
         title: 'Busca Responsiva e Autocomplete de Hosts do Painel em Todas as Ferramentas',

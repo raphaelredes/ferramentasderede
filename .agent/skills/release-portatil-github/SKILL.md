@@ -25,6 +25,7 @@ Usar .NET com `UTF8Encoding($false)`:
 Conferir com `git diff` que só as linhas de versão mudaram.
 
 ## 3. Build
+- Garantir OPSEC antes de compilar: rodar `python scripts/check_opsec.py` (código de saída `0` obrigatório).
 - Preferir `cmd /c build_system.bat` na raiz (nunca usar `call` no PowerShell).
 - Se `npm install` travar (>3 min, CPU ~0) e `electron/node_modules` existir, matar a task
   e rodar: `cmd /c "cd electron && npx vite build && cd ..\python && build_exe.bat"`.
@@ -32,6 +33,7 @@ Conferir com `git diff` que só as linhas de versão mudaram.
 - Rodar o build como task em background e aguardar a notificação (sem polling).
 
 ## 4. Git + Release
+- Antes de commitar, verificar `python scripts/check_opsec.py` e `python scripts/check_opsec.py --staged` (saída `0` obrigatória).
 - `git add` apenas os arquivos alterados (nunca `git add -A`: há `dist/` e `build/`).
 - `git push` escreve em stderr: o exit code 1 do PowerShell é falso alarme se a saída
   contém `old..new  main -> main`.
@@ -41,5 +43,6 @@ Conferir com `git diff` que só as linhas de versão mudaram.
 - Conferir o workflow: `gh run list --repo raphaelredes/ferramentasderede --workflow winget.yml --limit 2`.
 
 ## 5. Resposta final obrigatória
-Link da release + link direto do .exe:
-`https://github.com/raphaelredes/ferramentasderede/releases/download/v<versão>/Ferramentas.de.Rede.v<versão>.exe`
+- Link da release: `https://github.com/raphaelredes/ferramentasderede/releases/tag/v<versão>`
+- Link direto do `.exe`: `https://github.com/raphaelredes/ferramentasderede/releases/download/v<versão>/Ferramentas.de.Rede.v<versão>.exe`
+- **Prompt pronto para copiar** destinado ao computador/agente que hospeda o site oficial (`https://www.ferramentasderede.com.br/`), contendo versão, data, link direto do `.exe`, URL da release, hash SHA-256, tamanho exato e resumo das novidades/changelog.
