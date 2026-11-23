@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Política de Segurança (Reportar Vulnerabilidade)
+    url: https://github.com/raphaelredes/ferramentasderede/blob/main/SECURITY.md
+    about: Não abra issues públicas para falhas de segurança; consulte o processo de divulgação responsável.
+  - name: Releases e Downloads Oficiais
+    url: https://github.com/raphaelredes/ferramentasderede/releases
+    about: Baixe a versão portátil mais recente antes de reportar um problema.
+  - name: Website Oficial
+    url: https://www.ferramentasderede.com.br/
+    about: Informações gerais e contatos do projeto Ferramentas de Rede.

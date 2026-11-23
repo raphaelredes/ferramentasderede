@@ -1,30 +1,26 @@
-# React + TypeScript + Vite
+# Frontend — Ferramentas de Rede
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Interface web da aplicação **Ferramentas de Rede**, construída com **React 18**, **TypeScript**, **Vite** e **Tailwind CSS**.
 
-Currently, two official plugins are available:
+Em produção, os artefatos estáticos gerados em `electron/dist/` são empacotados dentro do executável portátil Python via `python/build_webview.spec` e renderizados pelo **Microsoft Edge WebView2 (`pywebview`)**.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react/README.md) uses [Babel](https://babeljs.io/) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## Comandos Úteis
 
-## Expanding the ESLint configuration
+```powershell
+# Instalar dependências
+npm install
 
-If you are developing a production application, we recommend updating the configuration to enable type aware lint rules:
+# Checagem estrita de tipos TypeScript (deve retornar zero erros)
+npx tsc --noEmit
 
-- Configure the top-level `parserOptions` property like this:
+# Build dos ativos estáticos de produção (gera electron/dist/)
+npx vite build
 
-```js
-export default {
-  // other rules...
-  parserOptions: {
-    ecmaVersion: 'latest',
-    sourceType: 'module',
-    project: ['./tsconfig.json', './tsconfig.node.json'],
-    tsconfigRootDir: __dirname,
-  },
-}
+# Servidor de desenvolvimento Vite (porta 5173)
+npm run dev
+
+# Análise estática ESLint
+npm run lint
 ```
 
-- Replace `plugin:@typescript-eslint/recommended` to `plugin:@typescript-eslint/recommended-type-checked` or `plugin:@typescript-eslint/strict-type-checked`
-- Optionally add `plugin:@typescript-eslint/stylistic-type-checked`
-- Install [eslint-plugin-react](https://github.com/jsx-eslint/eslint-plugin-react) and add `plugin:react/recommended` & `plugin:react/jsx-runtime` to the `extends` list
+> **Atenção:** não execute `npm run build` para gerar distribuíveis. O empacotamento oficial portátil é feito na raiz do repositório via `cmd /c build_system.bat` (Python + PyInstaller + WebView2, ~44 MB). Consulte o [README principal](../README.md) e [python/BUILD_README.md](../python/BUILD_README.md).

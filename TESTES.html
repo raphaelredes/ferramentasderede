@@ -223,7 +223,7 @@ Atualizado em <strong>2026-05-06</strong>. Ambiente alvo: rede ampla com 2 domí
 <div class="test high">
   <div class="row"><span class="id">T0.1</span><span class="title">Atualizar dependências Python</span><span class="badge badge-high">obrigatório</span></div>
   <div class="step">Executar:</div>
-  <pre>cd C:\Users\raphael.rego\Desktop\ferramentasderede\python
+  <pre>cd python
 pip install -r requirements.txt</pre>
   <div class="expect">✅ <strong>Esperado:</strong> mensagem <code>Successfully installed dnspython-2.7.0</code> (ou "already satisfied" se já estava instalado).</div>
   <div class="fail">❌ Se falhar: provavelmente proxy/firewall bloqueando PyPI. Configure variável <code>HTTPS_PROXY</code> antes.</div>
@@ -235,7 +235,7 @@ pip install -r requirements.txt</pre>
   <pre>taskkill /F /IM electron.exe 2&gt;nul
 taskkill /F /IM python.exe 2&gt;nul</pre>
   <div class="step">Iniciar:</div>
-  <pre>python C:\Users\raphael.rego\Desktop\ferramentasderede\python\main.py</pre>
+  <pre>python python\main.py</pre>
   <div class="expect">✅ <strong>Esperado:</strong> Vite abre, janela do Electron sobe, dashboard carrega lista de hosts em até ~10s.</div>
   <div class="fail">❌ Se a janela ficar branca por mais de 15s: provavelmente o backend não subiu — abra <code>%TEMP%\network_tools_debug.log</code>.</div>
 </div>

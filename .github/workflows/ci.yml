@@ -60,8 +60,9 @@ jobs:
           pip install --upgrade pip
           pip install fastapi==0.117.1 'uvicorn[standard]==0.37.0' pydantic==2.11.9 \
                       cryptography==45.0.5 requests==2.32.4 psutil==7.0.0 \
-                      wakeonlan==3.1.0 mac-vendor-lookup==0.1.15 icmplib==3.0.4 \
-                      dnspython==2.7.0 pytest pytest-asyncio==0.23.5 httpx
+                      wakeonlan==3.1.0 mac-vendor-lookup==0.1.15 \
+                      dnspython==2.7.0 ntplib==0.4.0 pysnmp==7.1.27 \
+                      pytest pytest-asyncio==0.23.5 httpx
 
       - name: Compile-check all .py files
         run: |

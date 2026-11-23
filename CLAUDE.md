@@ -204,7 +204,7 @@ Se o dono pedir explicitamente para commitar, confirme antes.
 
 ## Worktrees
 
-O Claude Code pode criar worktrees em `.claude/worktrees/<nome>/` quando rodar isolado. Esse diretório está no `.gitignore`. **Trabalhe direto no diretório principal** (`C:\Users\raphael.rego\Desktop\ferramentasderede\`) — o usuário desse projeto prefere isso e não quer mais usar worktrees.
+O Claude Code pode criar worktrees em `.claude/worktrees/<nome>/` quando rodar isolado. Esse diretório está no `.gitignore`. **Trabalhe direto no diretório principal do repositório** — o mantenedor deste projeto prefere isso e não utiliza worktrees.
 
 ## Plano de testes
 
