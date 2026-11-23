@@ -12,6 +12,23 @@ from src.core.database import db
 router = APIRouter(prefix="/reports", tags=["Relatórios & Auditoria"])
 
 
+def _report_headers() -> Dict[str, str]:
+    csp = (
+        "default-src 'none'; "
+        "style-src 'unsafe-inline'; "
+        f"script-src '{report_generator.PRINT_SCRIPT_CSP_HASH}'; "
+        "base-uri 'none'; "
+        "form-action 'none'; "
+        "frame-ancestors 'none'"
+    )
+    return {
+        "Content-Type": "text/html; charset=utf-8",
+        "X-Content-Type-Options": "nosniff",
+        "Referrer-Policy": "no-referrer",
+        "Content-Security-Policy": csp,
+    }
+
+
 class ReportGenerateRequest(BaseModel):
     report_type: str = Field(..., description="Tipo do relatório: 'inventory' ou 'sla'")
     host_id: Optional[int] = Field(None, description="ID do host (para relatório de SLA)")
@@ -46,7 +63,7 @@ async def generate_report(req: ReportGenerateRequest) -> Response:
             return Response(
                 content=html_content,
                 media_type="text/html; charset=utf-8",
-                headers={"Content-Type": "text/html; charset=utf-8"}
+                headers=_report_headers()
             )
             
         elif req.report_type == "sla":
@@ -72,7 +89,7 @@ async def generate_report(req: ReportGenerateRequest) -> Response:
             return Response(
                 content=html_content,
                 media_type="text/html; charset=utf-8",
-                headers={"Content-Type": "text/html; charset=utf-8"}
+                headers=_report_headers()
             )
         else:
             raise HTTPException(status_code=400, detail=f"Tipo de relatório '{req.report_type}' inválido.")

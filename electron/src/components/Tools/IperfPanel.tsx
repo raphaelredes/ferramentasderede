@@ -152,7 +152,7 @@ export function IperfPanel() {
 
         for (const line of activeState.output) {
             // Check connected with line:
-            // [  4] local 10.10.38.14 port 5201 connected with 10.10.38.15 port 54321
+            // [  4] local 192.0.2.10 port 5201 connected with 192.0.2.20 port 54321
             const connMatch = line.match(/connected with\s+([0-9a-fA-F.:]+)\s+port\s+(\d+)/i);
             if (connMatch) {
                 connectedClient = `${connMatch[1]}:${connMatch[2]}`;
@@ -539,7 +539,7 @@ export function IperfPanel() {
                                 value={clientTarget}
                                 onChange={setClientTarget}
                                 disabled={iperfClientState.isRunning}
-                                placeholder="ex.: 10.10.38.10 ou srv-iperf.corp"
+                                placeholder="ex.: 192.0.2.10 ou iperf.example.com"
                                 className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-cyan-500 transition-colors font-mono text-sm disabled:opacity-60"
                                 onKeyDown={(e) => { if (e.key === 'Enter' && !iperfClientState.isRunning) handleRunClient(); }}
                             />

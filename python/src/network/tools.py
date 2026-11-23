@@ -450,7 +450,7 @@ class NetworkTools:
                 return all(0 <= int(o) <= 255 for o in value.split("."))
             except ValueError:
                 return False
-        return bool(_re.fullmatch(r"[A-Za-z0-9._-]+", value))
+        return bool(_re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", value))
 
     def get_local_network_info(self):
         """Obtém informações da rede local (IP, Máscara, Gateway)."""
@@ -894,7 +894,7 @@ class NetworkTools:
                 mac = ip_to_mac.get(ip_str)
                 if not mac:
                     continue
-                vendor = VendorUtils.get_vendor(mac)
+                vendor = VendorUtils.get_vendor(mac, allow_online=False)
                 update = {"status": "vendor_update", "ip": ip_str, "mac": mac, "vendor": vendor}
                 # Re-infer with the FULL signal (ports + vendor + hostname). Ports
                 # are a strong tell and take precedence inside infer_device_type,

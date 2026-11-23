@@ -105,10 +105,16 @@ class LocalCommands:
         ]
 
         try:
+            creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000) if os.name == 'nt' else 0
+            startupinfo = None
+            if os.name == 'nt':
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= getattr(subprocess, "STARTF_USESHOWWINDOW", 0x00000001)
+                startupinfo.wShowWindow = 0
             process = subprocess.run(
                 full_command,
                 capture_output=True, text=True, encoding='utf-8', errors='replace',
-                check=False, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+                check=False, creationflags=creation_flags, startupinfo=startupinfo
             )
 
             yield process.stdout + "\n", None
@@ -150,10 +156,16 @@ class LocalCommands:
         ]
 
         try:
+            creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000) if os.name == 'nt' else 0
+            startupinfo = None
+            if os.name == 'nt':
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= getattr(subprocess, "STARTF_USESHOWWINDOW", 0x00000001)
+                startupinfo.wShowWindow = 0
             process = subprocess.run(
                 full_command,
                 capture_output=True, text=True, encoding='utf-8', errors='replace',
-                check=False, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+                check=False, creationflags=creation_flags, startupinfo=startupinfo
             )
             stdout = process.stdout or ""
             stderr = process.stderr or ""
@@ -171,8 +183,8 @@ class LocalCommands:
     def enable_remote_winrm(self, username, password):
         """Habilita WinRM no host remoto usando Agendador de Tarefas nativo (schtasks), SCM (sc.exe) ou PsExec."""
         target = str(self.target_ip).strip()
-        if not target:
-            return False, "Endereço ou IP de destino inválido."
+        if not _is_safe_ip(target):
+            return False, "Endereço IP de destino inválido (use um endereço IPv4/IPv6 válido)."
         if not _is_safe_username(username):
             return False, "Nome de usuário contém caracteres inválidos."
 
@@ -271,9 +283,9 @@ class LocalCommands:
             except Exception:
                 pass
 
-            sc_config = ["sc.exe", f"\\{target}", "config", "WinRM", "start=", "auto"]
+            sc_config = ["sc.exe", f"\\\\{target}", "config", "WinRM", "start=", "auto"]
             subprocess.run(sc_config, capture_output=True, text=True, creationflags=creation_flags, startupinfo=startupinfo)
-            sc_start = ["sc.exe", f"\\{target}", "start", "WinRM"]
+            sc_start = ["sc.exe", f"\\\\{target}", "start", "WinRM"]
             res_sc2 = subprocess.run(sc_start, capture_output=True, text=True, creationflags=creation_flags, startupinfo=startupinfo)
 
             if connected_ipc:

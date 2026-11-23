@@ -215,12 +215,12 @@ def _get_l2_adapter_and_gateway(interface_ip: Optional[str] = None) -> Dict[str,
                     data["adapter_name"] = gw_info.get("InterfaceAlias")
                     data["gateway_ip"] = gw_info.get("NextHop")
 
-            # 2. Se temos o Gateway IP, resolver MAC e Fabricante OUI (com fallback online)
+            # 2. Se temos o Gateway IP, resolver MAC e Fabricante OUI estritamente offline
             if data["gateway_ip"]:
                 gw_mac = get_mac_from_arp(data["gateway_ip"])
                 if gw_mac:
                     data["gateway_mac"] = gw_mac
-                    resolved_vendor = VendorUtils.get_vendor(gw_mac, allow_online=True)
+                    resolved_vendor = VendorUtils.get_vendor(gw_mac, allow_online=False)
                     if resolved_vendor and resolved_vendor != "Desconhecido":
                         data["gateway_vendor"] = resolved_vendor
                     else:
@@ -229,14 +229,22 @@ def _get_l2_adapter_and_gateway(interface_ip: Optional[str] = None) -> Dict[str,
                     # Fingerprinting ativo do Modelo do Gateway/Switch
                     data["device_model"] = _fingerprint_device_model(data["gateway_ip"], data["gateway_vendor"])
 
-            # 3. Informações da Placa de Rede
+            # 3. Informações da Placa de Rede (nome passado via env var para evitar interpolação)
             if data["adapter_name"]:
-                adapter_cmd = f"Get-NetAdapter -Name '{data['adapter_name']}' -ErrorAction SilentlyContinue | Select-Object InterfaceDescription, LinkSpeed, MacAddress | ConvertTo-Json"
+                adapter_cmd = (
+                    "$adName = $env:NT_ADAPTER_NAME; "
+                    "Remove-Item Env:\\NT_ADAPTER_NAME -ErrorAction SilentlyContinue; "
+                    "Get-NetAdapter -Name $adName -ErrorAction SilentlyContinue | "
+                    "Select-Object InterfaceDescription, LinkSpeed, MacAddress | ConvertTo-Json"
+                )
+                adapter_env = os.environ.copy()
+                adapter_env["NT_ADAPTER_NAME"] = str(data["adapter_name"])
                 res = subprocess.run(
                     ['powershell', '-NoProfile', '-NonInteractive', '-Command', adapter_cmd],
                     capture_output=True,
                     text=True,
                     timeout=3,
+                    env=adapter_env,
                     creationflags=creation_flags,
                     startupinfo=startup_info
                 )
@@ -260,6 +268,7 @@ def capture_l2_discovery(interface_ip: Optional[str] = None, timeout_seconds: in
     start = time.time()
     
     # 1. Tentativa de escuta passiva rápida
+    sock = None
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_IP)
         if interface_ip:
@@ -289,11 +298,12 @@ def capture_l2_discovery(interface_ip: Optional[str] = None, timeout_seconds: in
     except Exception as exc:
         logging.debug(f"Socket raw listener fallback: {exc}")
     finally:
-        try:
-            sock.ioctl(socket.SIO_RCVALL, socket.RCVALL_OFF)
-            sock.close()
-        except Exception:
-            pass
+        if sock is not None:
+            try:
+                sock.ioctl(socket.SIO_RCVALL, socket.RCVALL_OFF)
+                sock.close()
+            except Exception:
+                pass
 
     # 2. Fallback de alta fidelidade: Enlace Físico, Gateway L2 & OUI
     l2 = _get_l2_adapter_and_gateway(interface_ip)

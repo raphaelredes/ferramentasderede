@@ -12,7 +12,7 @@ import sys
 # Add parent directory to path to import modules from src
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from src.config.settings import HOSTS_FILE, APP_DATA_DIR
+from src.config.settings import HOSTS_FILE, APP_DATA_DIR, UI_PREFS_FILE
 from src.system.core.local_commands import run_powershell_command
 from src.system.backup import BackupManager
 
@@ -20,7 +20,7 @@ backup_manager = BackupManager()
 
 router = APIRouter(tags=["settings"])
 
-SETTINGS_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "ui_preferences.json")
+SETTINGS_FILE = UI_PREFS_FILE
 
 # --- Models ---
 class ScannerSettings(BaseModel):

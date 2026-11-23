@@ -39,15 +39,32 @@ def _creationflags():
     return subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 
+def _startupinfo():
+    if os.name != "nt":
+        return None
+    si = subprocess.STARTUPINFO()
+    si.dwFlags |= getattr(subprocess, "STARTF_USESHOWWINDOW", 0x00000001)
+    si.wShowWindow = 0
+    return si
+
+
 def _discover_hops(target, max_hops, source_ip=None, timeout=60):
     """Run native traceroute once; return an ordered list of hop dicts:
     [{"distance": ttl, "address": ip_or_None}]. A non-responding hop yields
     address=None so the table can still show a '*' row for it."""
     if os.name == "nt":
-        # -d = no DNS (fast), -h max hops, -w per-hop wait.
+        # Windows tracert.exe `-S` só aceita endereços de origem IPv6; para IPv4
+        # rejeita ou imprime o banner de ajuda. Logamos aviso na descoberta e
+        # mantemos `-S` nos pings diretos de ciclo por salto.
         cmd = ["tracert", "-d", "-h", str(max_hops), "-w", "1500"]
         if source_ip:
-            cmd += ["-S", source_ip]   # Windows tracert source address
+            if ":" in str(source_ip):
+                cmd += ["-S", source_ip]
+            else:
+                logging.warning(
+                    "mtr: source_ip=%r solicitado, mas Windows tracert não suporta origem IPv4 na descoberta; usando rota padrão.",
+                    source_ip,
+                )
         cmd.append(target)
         encoding = "cp850"
     else:
@@ -60,7 +77,8 @@ def _discover_hops(target, max_hops, source_ip=None, timeout=60):
     try:
         result = subprocess.run(
             cmd, capture_output=True, text=True, encoding=encoding,
-            errors="replace", creationflags=_creationflags(), timeout=timeout,
+            errors="replace", creationflags=_creationflags(),
+            startupinfo=_startupinfo(), timeout=timeout,
         )
     except subprocess.TimeoutExpired:
         return []
@@ -121,6 +139,7 @@ def _ping_host(ip, count, source_ip=None):
         result = subprocess.run(
             cmd, capture_output=True, text=True, encoding=encoding,
             errors="replace", creationflags=_creationflags(),
+            startupinfo=_startupinfo(),
             timeout=(PER_PING_TIMEOUT_MS / 1000.0) * count + 3,
         )
     except subprocess.TimeoutExpired:

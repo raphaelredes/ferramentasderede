@@ -1,0 +1,11 @@
+#!/bin/sh
+set -e
+
+for cand in python python3 py; do
+    if command -v "$cand" >/dev/null 2>&1 && "$cand" -c "import sys; sys.exit(0)" >/dev/null 2>&1; then
+        exec "$cand" scripts/check_opsec.py --staged
+    fi
+done
+
+echo "[OPSEC] Erro: interpretador Python funcional nao encontrado no PATH para validar pre-commit." >&2
+exit 1

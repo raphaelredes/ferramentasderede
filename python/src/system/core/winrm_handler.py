@@ -54,8 +54,8 @@ class WinRMHandler:
         """Resolve o IP alvo para um FQDN e domínio estritamente validados por DNS direto.
 
         Garante que qualquer FQDN retornado resolva de volta para target_ip via DNS,
-        evitando contaminação de sufixo de domínio (ex: ADM-36494 resolvendo para
-        10.212.134.100 no domínio local betim.pmb quando o alvo real é 10.10.90.7 no domínio saude.betim).
+        evitando contaminação de sufixo de domínio (ex: HOST-01 resolvendo para
+        192.0.2.100 no domínio local corp.example.com quando o alvo real é 198.51.100.7 no domínio branch.example.com).
         """
         import re
         import socket
@@ -130,9 +130,7 @@ class WinRMHandler:
         except Exception:
             pass
 
-        # Domínios de confiança conhecidos da floresta / rede corporativa
-        for known in ("saude.betim", "betim.pmb", "transbetim.betim", "betim.mg", "semed.betim"):
-            add_c(known)
+        # Domínios candidatos vêm estritamente de redes configuradas, registros do host e ambiente local (sem lista hardcoded)
 
         # Todas as redes cadastradas em Configurações
         try:
@@ -177,7 +175,7 @@ class WinRMHandler:
     def _domain_for_target_ip(ip_address):
         """Look up the AD domain configured for the network this IP belongs to.
 
-        Returns the domain string (e.g. "dominio-a.local") or None if no
+        Returns the domain string (e.g. "corp.example.com") or None if no
         configured network matches or if Settings can't be loaded.
 
         Imported lazily to avoid circular imports between system and api layers.

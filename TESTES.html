@@ -360,8 +360,8 @@ Enable-WindowsOptionalFeature -Online -FeatureName "Containers-DisposableClientV
   <div class="step">Para cada rede importada, preencher (se aplicável):</div>
   <ul>
     <li><strong>Nome</strong>: ex. "Domínio A — VLAN admin"</li>
-    <li><strong>DNS server</strong>: ex. <code>10.10.0.1</code></li>
-    <li><strong>Domínio AD</strong>: ex. <code>dominio-a.local</code></li>
+    <li><strong>DNS server</strong>: ex. <code>192.0.2.1</code></li>
+    <li><strong>Domínio AD</strong>: ex. <code>corp.example.com</code></li>
   </ul>
   <div class="step">Clicar em <strong>Salvar Alterações</strong>. Recarregar a página → as redes persistem.</div>
 </div>
@@ -386,7 +386,7 @@ Enable-WindowsOptionalFeature -Online -FeatureName "Containers-DisposableClientV
   <div class="step">Suponha que <code>SERVIDOR1</code> existe nos dois domínios com IPs diferentes:</div>
   <pre>curl -X POST http://127.0.0.1:8000/network/dns/resolve ^
   -H "Content-Type: application/json" ^
-  -d "{\"name\":\"SERVIDOR1\",\"dns_server\":\"10.10.0.1\",\"domain\":\"dominio-a.local\"}"</pre>
+  -d "{\"name\":\"SERVIDOR1\",\"dns_server\":\"192.0.2.1\",\"domain\":\"corp.example.com\"}"</pre>
   <div class="expect">✅ <strong>Esperado:</strong> retorna o IP que está no <strong>DNS do Domínio A</strong>, não o do sistema.</div>
   <div class="step">Repetir trocando o <code>dns_server</code> para o do Domínio B:</div>
   <div class="expect">✅ <strong>Esperado:</strong> agora retorna o IP do <strong>Domínio B</strong>. IPs diferentes confirmam que o resolver está consultando o servidor certo.</div>
@@ -651,13 +651,13 @@ Enable-WindowsOptionalFeature -Online -FeatureName "Containers-DisposableClientV
   <div class="row"><span class="id">T5.2</span><span class="title">⭐ Auto-tentativa de variantes de username</span><span class="badge badge-new">novo</span></div>
   <div class="step">Numa máquina do Domínio B (com <code>domain</code> configurado em Configurações → Redes), tentar conectar via WinRM informando apenas o nome do usuário (sem domínio):</div>
   <ul>
-    <li>Username: <code>raphael</code> (sem qualificador)</li>
+    <li>Username: <code>operador</code> (sem qualificador)</li>
     <li>Senha: a correta para Domínio B</li>
   </ul>
-  <div class="expect">✅ <strong>Esperado:</strong> a conexão funciona. Por baixo, o app testou automaticamente <code>raphael@dominio-b.local</code> e <code>dominio-b\raphael</code>.</div>
+  <div class="expect">✅ <strong>Esperado:</strong> a conexão funciona. Por baixo, o app testou automaticamente <code>operador@branch.example.com</code> e <code>branch\operador</code>.</div>
   <div class="step">Conferir logs do backend para ver as tentativas:</div>
-  <pre>Tentando variante de username: raphael@dominio-b.local
-Tentando variante de username: dominio-b.local\raphael</pre>
+  <pre>Tentando variante de username: operador@branch.example.com
+Tentando variante de username: branch.example.com\operador</pre>
   <div class="meta">Implementação: <code>_username_variants()</code> em <code>winrm_handler.py</code> consulta o <code>domain</code> da rede do IP-alvo.</div>
 </div>
 
@@ -741,7 +741,7 @@ Tentando variante de username: dominio-b.local\raphael</pre>
 
 <div class="test new">
   <div class="row"><span class="id">T8.2</span><span class="title">host.ip é sempre IPv4 real (nunca hostname)</span><span class="badge badge-new">novo</span></div>
-  <div class="step">Cadastrar um host pelo <strong>hostname</strong> (ex: <code>ADM-12345</code>), aguardar ~10s.</div>
+  <div class="step">Cadastrar um host pelo <strong>hostname</strong> (ex: <code>host01.example.com</code>), aguardar ~10s.</div>
   <div class="expect">✅ <strong>Esperado:</strong> card e popup mostram o IPv4 resolvido na coluna "Endereço IP" (nunca o hostname). "Copiar IP" copia o IPv4. Enquanto não resolve, mostra "Resolvendo..." e o botão de copiar fica desabilitado. No <code>GET /hosts</code>, o campo <code>ip</code> vem IPv4 ou <code>null</code>.</div>
 </div>
 

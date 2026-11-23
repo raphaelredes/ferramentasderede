@@ -1,4 +1,4 @@
-
+﻿
 try {
     # 1. OS Info
     $os = Get-WmiObject Win32_OperatingSystem -ErrorAction Stop
@@ -187,16 +187,7 @@ try {
             if ($proc -and (Test-Path $proc)) { $candidatePaths.Add($proc) }
         } catch {}
 
-        # 2. Registro HKCR (protocol handler hoptodesk://)
-        try {
-            $regCmd = (Get-ItemProperty -Path "Registry::HKEY_CLASSES_ROOT\hoptodesk\shell\open\command" -ErrorAction SilentlyContinue).'(default)'
-            if ($regCmd -and $regCmd -match '([a-zA-Z]:\\[^"]+\.exe)') {
-                $p = $matches[1]
-                if (Test-Path $p) { $candidatePaths.Add($p) }
-            }
-        } catch {}
-
-        # 3. Caminhos padrao e ProgramFiles
+        # 2. Caminhos padrao confiaveis (ProgramFiles / ProgramData / Public Desktop)
         $staticPaths = @(
             "C:\Users\Public\Desktop\HopToDesk.exe",
             "$env:ProgramFiles\HopToDesk\HopToDesk.exe",
@@ -207,32 +198,16 @@ try {
             if ($sp -and (Test-Path $sp)) { $candidatePaths.Add($sp) }
         }
 
-        # 4. Desktops e Downloads de usuarios
-        try {
-            $userDirs = Get-ChildItem "C:\Users" -Directory -ErrorAction SilentlyContinue
-            foreach ($u in $userDirs) {
-                $pathsToTest = @(
-                    "$($u.FullName)\Desktop\HopToDesk.exe",
-                    "$($u.FullName)\Downloads\HopToDesk.exe",
-                    "$($u.FullName)\AppData\Local\HopToDesk\HopToDesk.exe",
-                    "$($u.FullName)\AppData\Roaming\HopToDesk\HopToDesk.exe"
-                )
-                foreach ($pt in $pathsToTest) {
-                    if (Test-Path $pt -ErrorAction SilentlyContinue) {
-                        $candidatePaths.Add($pt)
-                    }
-                }
-            }
-        } catch {}
-
-        # 5. Executar via cmd.exe /c para capturar o stdout de aplicativo GUI do Windows
+        # 3. Validar assinatura Authenticode e executar diretamente com --get-id
         $tested = @{}
         foreach ($exe in $candidatePaths) {
             if ($tested.ContainsKey($exe.ToLower())) { continue }
             $tested[$exe.ToLower()] = $true
 
             try {
-                $raw = cmd.exe /c "`"$exe`" --get-id" 2>$null
+                $sig = Get-AuthenticodeSignature -FilePath $exe -ErrorAction SilentlyContinue
+                if (-not $sig -or $sig.Status -ne 'Valid') { continue }
+                $raw = & $exe --get-id 2>$null | Out-String
                 if ($raw -and $raw -match '^\s*(\d{7,12})\s*$') {
                     return $matches[1]
                 }

@@ -126,14 +126,15 @@ class VendorUtils:
 
     @classmethod
     def lookup_vendor_online(cls, mac_address: str, timeout: float = 2.0) -> Optional[str]:
-        """Consulta online APIs REST públicas para resolver MACs novos ou não indexados."""
-        display, key = cls._normalize_mac(mac_address)
-        if not display:
+        """Consulta online APIs REST públicas usando apenas o prefixo OUI (últimos 3 octetos mascarados)."""
+        display, _ = cls._normalize_mac(mac_address)
+        if not display or len(display) < 8:
             return None
+        oui_query = f"{display[:8]}:00:00:00"
 
         # 1. Tentar api.maclookup.app (JSON, rápido e estável)
         try:
-            url = f"https://api.maclookup.app/v2/macs/{display}"
+            url = f"https://api.maclookup.app/v2/macs/{oui_query}"
             req = urllib.request.Request(url, headers={"User-Agent": "FerramentasDeRede/1.4.0"})
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 if resp.status == 200:
@@ -142,11 +143,11 @@ class VendorUtils:
                     if company and company.strip():
                         return company.strip()
         except Exception as e:
-            logging.debug(f"API maclookup.app falhou para {mac_address}: {e}")
+            logging.debug(f"API maclookup.app falhou para prefixo {oui_query}: {e}")
 
         # 2. Fallback para api.macvendors.com
         try:
-            url = f"https://api.macvendors.com/{display}"
+            url = f"https://api.macvendors.com/{oui_query}"
             req = urllib.request.Request(url, headers={"User-Agent": "FerramentasDeRede/1.4.0"})
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 if resp.status == 200:
@@ -154,12 +155,12 @@ class VendorUtils:
                     if text and "errors" not in text.lower():
                         return text
         except Exception as e:
-            logging.debug(f"API macvendors.com falhou para {mac_address}: {e}")
+            logging.debug(f"API macvendors.com falhou para prefixo {oui_query}: {e}")
 
         return None
 
     @classmethod
-    def get_vendor(cls, mac_address: str, allow_online: bool = True) -> str:
+    def get_vendor(cls, mac_address: str, allow_online: bool = False) -> str:
         """Obtém o fabricante de um endereço MAC via banco offline ou pesquisa online."""
         display, key = cls._normalize_mac(mac_address)
         if not display:

@@ -12,8 +12,8 @@ import sys
 import os
 from unittest.mock import Mock, patch, MagicMock
 
-# Configurar encoding para Windows
-if sys.platform == 'win32':
+# Configurar encoding para Windows apenas em execucao standalone (nao mutar captura do pytest)
+if __name__ == "__main__" and sys.platform == 'win32':
     import io
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')

@@ -21,6 +21,7 @@ export function Terminal() {
     const [busy, setBusy] = useState(false);
     const [log, setLog] = useState<LogEntry[]>([]);
     const [defaultCredName, setDefaultCredName] = useState<string | null>(null);
+    const [defaultCredId, setDefaultCredId] = useState<string | null>(null);
 
     const [selectedAddress, setSelectedAddress] = useState<string>('');
     const [isPickerOpen, setIsPickerOpen] = useState(false);
@@ -45,6 +46,7 @@ export function Terminal() {
                             const cred = creds.find((c: any) => c.id === data.remote.default_credential_id);
                             if (cred) {
                                 setDefaultCredName(cred.name);
+                                setDefaultCredId(cred.id ?? null);
                                 setConnection(prev => ({ ...prev, username: cred.username }));
                                 append(`Credencial padrão '${cred.name}' carregada.`, 'info');
                             }
@@ -113,16 +115,23 @@ export function Terminal() {
         setStatus(`Abrindo terminal para ${target}…`);
         append(`Iniciando PowerShell remoto em ${target}…`, 'info');
 
-        fetch(`${API_BASE}/terminal/open-external`, {
+        fetch(`${API_BASE}/tools/terminal/external`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 ip: target,
                 username: connection.username || null,
                 password: connection.password || null,
+                credential_id: (!connection.password && defaultCredId) ? defaultCredId : null,
             }),
         })
-            .then(res => res.json())
+            .then(async res => {
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    throw new Error(data.detail || data.message || `HTTP ${res.status}`);
+                }
+                return data;
+            })
             .then(data => {
                 if (data.status === 'success') {
                     append(`✓ Janela aberta com sucesso (PID ${data.pid ?? '—'}).`, 'info');

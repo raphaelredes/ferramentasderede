@@ -135,7 +135,7 @@ export function HttpPanel() {
                             onChange={setUrl}
                             preferredFill="url"
                             onFocus={() => { if (url === 'https://www.google.com') setUrl(''); }}
-                            placeholder="https://www.google.com ou http://intranet.local"
+                            placeholder="https://www.google.com ou https://www.example.com"
                             onKeyDown={(e) => { if (e.key === 'Enter' && !busy) check(); }}
                             className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-pink-500 transition-colors font-mono placeholder:text-zinc-500 text-sm"
                         />

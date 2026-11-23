@@ -37,11 +37,11 @@ Edite o arquivo `hosts.json` com seus hosts reais:
 ```json
 [
     {
-        "name": "seu-servidor.local",
+        "name": "host.example.com",
         "ip": "192.168.1.10",
         "mac": "",
         "nickname": "Servidor Principal",
-        "resolved_hostname": "seu-servidor.local",
+        "resolved_hostname": "host.example.com",
         "current_ip": "192.168.1.10"
     }
 ]

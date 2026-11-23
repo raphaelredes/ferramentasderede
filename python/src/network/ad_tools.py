@@ -179,7 +179,10 @@ def get_ad_fsmo_roles(domain: Optional[str] = None) -> Dict[str, Any]:
 
     cmd = ["netdom", "query", "fsmo"]
     if domain and domain.strip():
-        cmd.extend(["/domain:" + domain.strip()])
+        clean_domain = domain.strip()
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._\-]{0,252}", clean_domain):
+            return {"ok": False, "error": "Nome de domínio inválido."}
+        cmd.extend(["/domain:" + clean_domain])
 
     flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
     startupinfo = None
@@ -267,7 +270,10 @@ def check_ad_replication(dc_target: Optional[str] = None) -> Dict[str, Any]:
 
     cmd = ["repadmin", "/replsummary"]
     if dc_target and dc_target.strip():
-        cmd.append(dc_target.strip())
+        clean_dc = dc_target.strip()
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._\-]{0,252}", clean_dc):
+            return {"ok": False, "error": "Alvo de Domain Controller inválido."}
+        cmd.append(clean_dc)
 
     flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
     startupinfo = None

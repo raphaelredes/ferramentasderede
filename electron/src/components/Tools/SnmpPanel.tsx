@@ -1,4 +1,4 @@
-import { useState, useMemo, type ReactNode } from 'react';
+import { useState, useEffect, useMemo, type ReactNode } from 'react';
 import {
     Router,
     Search,
@@ -174,10 +174,19 @@ export function SnmpPanel() {
     const [version, setVersion] = usePersistedState('snmp_tool_version', '2c');
     const [port, setPort] = usePersistedState('snmp_tool_port', '161');
 
-    // Credenciais SNMPv3 USM
+    // Credenciais SNMPv3 USM (chaves sensíveis mantidas apenas em memória, nunca no localStorage)
     const [v3User, setV3User] = usePersistedState('snmp_tool_v3_user', 'snmpadmin');
-    const [v3AuthKey, setV3AuthKey] = usePersistedState('snmp_tool_v3_auth_key', '');
-    const [v3PrivKey, setV3PrivKey] = usePersistedState('snmp_tool_v3_priv_key', '');
+    const [v3AuthKey, setV3AuthKey] = useState('');
+    const [v3PrivKey, setV3PrivKey] = useState('');
+
+    useEffect(() => {
+        try {
+            localStorage.removeItem('snmp_tool_v3_auth_key');
+            localStorage.removeItem('snmp_tool_v3_priv_key');
+        } catch {
+            // Ignora indisponibilidade de storage
+        }
+    }, []);
     const [v3AuthProto, setV3AuthProto] = usePersistedState('snmp_tool_v3_auth_proto', 'SHA256');
     const [v3PrivProto, setV3PrivProto] = usePersistedState('snmp_tool_v3_priv_proto', 'AES');
     const [v3SecLevel, setV3SecLevel] = usePersistedState('snmp_tool_v3_sec_level', 'authPriv');
@@ -425,7 +434,7 @@ agentaddress 127.0.0.1:161,192.168.10.1:161
                             value={host}
                             onChange={setHost}
                             onFocus={() => { if (host === '10.0.0.1') setHost(''); }}
-                            placeholder="10.0.0.1 ou switch-core.local"
+                            placeholder="192.0.2.1 ou switch.example.com"
                             className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3.5 py-2 text-white focus:outline-none focus:border-blue-500 font-mono text-sm"
                             onKeyDown={e => { if (e.key === 'Enter' && !busy) querySystem(); }}
                         />

@@ -365,7 +365,7 @@ if ($hasWirelessNic -or ($wlanSvc -and $wlanSvc.Status -eq 'Running')) {
                     $pName = $matches[1].Trim()
                     if ($pName -and $pName -notmatch '^(?:Perfis|Profiles|Nenhum|None|<)') {
                         $res.WifiAllProfiles += $pName
-                        $is8021xProf = ($pName -match '802\.1x|BT-|CORP|WIFI|WLAN|ENTERPRISE|GOV|EDU')
+                        $is8021xProf = ($pName -match '802\.1x|CORP|WIFI|WLAN|ENTERPRISE|GOV|EDU')
                         if (-not $is8021xProf -and $domPrefix -and $pName -match $domPrefix) { $is8021xProf = $true }
                         if ($is8021xProf) { $res.WifiProfiles8021x += $pName }
                     }
@@ -587,14 +587,14 @@ try {
                             break
                         }
                     }
-                    $isCorpMatch = ($subj -match '802\.1x|BT-|WIFI|WLAN|RADIUS|NPS|\bNAC\b' -or $iss -match '802\.1x|BT-|WIFI|WLAN|RADIUS|NPS|\bNAC\b|-CA|CA-' -or $frnd -match '802\.1x|BT-|WIFI|WLAN')
+                    $isCorpMatch = ($subj -match '802\.1x|WIFI|WLAN|RADIUS|NPS|\bNAC\b' -or $iss -match '802\.1x|WIFI|WLAN|RADIUS|NPS|\bNAC\b|-CA|CA-' -or $frnd -match '802\.1x|WIFI|WLAN')
                     foreach ($dt in $domTokens) {
                         if ($subj -match [regex]::Escape($dt) -or $iss -match [regex]::Escape($dt)) { $isCorpMatch = $true; break }
                     }
                     if ($compToken -and $subj -match $compToken) { $isCorpMatch = $true }
                     $isMatch = ($isClientAuth -or $isCorpMatch)
                 } else {
-                    $isMatch = ($subj -match '802\.1x|BT-|WIFI|WLAN|RADIUS|NPS|\bNAC\b' -or $iss -match '802\.1x|BT-|WIFI|WLAN|RADIUS|NPS|\bNAC\b' -or $frnd -match '802\.1x|BT-|WIFI|WLAN|RADIUS')
+                    $isMatch = ($subj -match '802\.1x|WIFI|WLAN|RADIUS|NPS|\bNAC\b' -or $iss -match '802\.1x|WIFI|WLAN|RADIUS|NPS|\bNAC\b' -or $frnd -match '802\.1x|WIFI|WLAN|RADIUS')
                     if (-not $isMatch) {
                         foreach ($dt in $domTokens) {
                             if ($subj -match [regex]::Escape($dt) -or $iss -match [regex]::Escape($dt)) { $isMatch = $true; break }

@@ -629,12 +629,17 @@ def benchmark_dns_resolvers(
             "type": "public",
         })
 
-    # 3. Servidores customizados / redes do usuário
+    # 3. Servidores customizados / redes do usuário (apenas IPs válidos)
     if extra_servers:
         for ex in extra_servers:
-            ip = ex.get("ip") or ex.get("dns_server")
+            raw_ip = ex.get("ip") or ex.get("dns_server")
+            if not isinstance(raw_ip, str):
+                continue
+            ip = raw_ip.strip()
+            if not ip or not _is_ip_address(ip):
+                continue
             name = ex.get("name") or ip
-            if ip and ip not in [s["ip"] for s in servers_to_test]:
+            if ip not in [s["ip"] for s in servers_to_test]:
                 servers_to_test.append({
                     "id": f"custom_{ip}",
                     "name": f"AD/VLAN: {name}",

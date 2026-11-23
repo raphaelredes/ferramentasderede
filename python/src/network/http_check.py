@@ -8,8 +8,11 @@ import socket
 import ssl
 import time
 import logging
+import warnings
 from urllib.parse import urlparse
 from typing import Dict, Any, List, Optional
+
+_MAX_HTTP_BODY_BYTES = 2 * 1024 * 1024  # Limite de 2 MB ao baixar corpo de resposta
 
 try:
     import requests
@@ -205,14 +208,15 @@ def check(url: str, method: str = "GET", timeout: float = 10.0, verify_tls: bool
         except requests.exceptions.SSLError as ssl_err:
             # Fallback tolerante para redes corporativas com proxy/inspeção SSL ou certificados auto-assinados
             import urllib3
-            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
             try:
-                resp = session.request(
-                    m, u, timeout=timeout, verify=False,
-                    allow_redirects=True,
-                    headers=req_headers,
-                    stream=True
-                )
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", urllib3.exceptions.InsecureRequestWarning)
+                    resp = session.request(
+                        m, u, timeout=timeout, verify=False,
+                        allow_redirects=True,
+                        headers=req_headers,
+                        stream=True
+                    )
                 ssl_warning = f"Aviso de Certificado: Cadeia não verificada (Proxy corporativo ou certificado auto-assinado: {ssl_err})"
             except Exception as inner_err:
                 return {"ok": False, "error": f"Erro de Certificado SSL/TLS: {inner_err}"}
@@ -220,13 +224,30 @@ def check(url: str, method: str = "GET", timeout: float = 10.0, verify_tls: bool
         t_headers_received = time.perf_counter()
         ttfb_ms = round((t_headers_received - t_req_start) * 1000.0, 2)
 
-        # Download do corpo
+        # Download limitado do corpo (cap em 2 MB para evitar exaustão de memória)
         body_bytes = b""
         try:
-            body_bytes = resp.content
-            content_len = len(body_bytes)
+            chunks = []
+            downloaded = 0
+            for chunk in resp.iter_content(chunk_size=65536):
+                if not chunk:
+                    continue
+                remaining = _MAX_HTTP_BODY_BYTES - downloaded
+                if len(chunk) > remaining:
+                    chunks.append(chunk[:remaining])
+                    downloaded = _MAX_HTTP_BODY_BYTES
+                    break
+                chunks.append(chunk)
+                downloaded += len(chunk)
+            body_bytes = b"".join(chunks)
+            content_len = downloaded
         except Exception:
             content_len = None
+        finally:
+            try:
+                resp.close()
+            except Exception:
+                pass
 
         t_body_done = time.perf_counter()
         download_ms = round((t_body_done - t_headers_received) * 1000.0, 2)
@@ -261,8 +282,6 @@ def check(url: str, method: str = "GET", timeout: float = 10.0, verify_tls: bool
 
         # Auditoria OWASP dos cabeçalhos
         sec_audit = audit_security_headers(dict(resp.headers))
-
-        resp.close()
 
         return {
             "ok": True,

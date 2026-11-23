@@ -82,8 +82,8 @@ export function BatchRunnerModal({ isOpen, onClose, hosts }: BatchRunnerModalPro
                 })
             });
 
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            const data = await res.json();
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
             setResults(data.results || []);
             if (data.results && data.results.length > 0) {
                 setActiveResultTab(data.results[0].host);

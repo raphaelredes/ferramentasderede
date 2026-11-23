@@ -135,7 +135,7 @@ export const TOOLS_HELP_DATA: Record<string, ToolHelpInfo> = {
             'Identificar desvios de relógio acima de 5 minutos, que causam a quebra imediata da autenticação Kerberos.',
         ],
         tips: [
-            'Informe o IP de um Domain Controller específico ou o FQDN completo do domínio (ex: empresa.local).',
+            'Informe o IP de um Domain Controller específico ou o FQDN completo do domínio (ex: corp.example.com).',
             'O Kerberos permite uma tolerância máxima de 5 minutos de desvio. Qualquer valor superior causará falhas de logon.',
         ],
         protocolsOrPorts: 'Portas: 53, 88, 135, 389, 445, 464, 636, 3268, 3269 / UDP 123 (NTP)'

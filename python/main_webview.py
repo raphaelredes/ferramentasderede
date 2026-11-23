@@ -378,8 +378,7 @@ def main():
     # API to expose to frontend
     class Api:
         def open_url(self, url):
-            import webbrowser
-            webbrowser.open(url)
+            return self.openExternal(url)
             
         def getLocalDomain(self):
             import socket
@@ -404,7 +403,20 @@ def main():
                     return all(0 <= int(o) <= 255 for o in value.split("."))
                 except ValueError:
                     return False
-            return bool(re.fullmatch(r"[A-Za-z0-9._-]+", value))
+            return bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", value))
+
+        def _is_safe_external_url(self, url):
+            """Permite apenas URLs http/https bem-formadas sem caracteres de controle."""
+            from urllib.parse import urlparse
+            if not url or not isinstance(url, str) or len(url) > 2048:
+                return False
+            if any(c.isspace() or ord(c) < 32 for c in url):
+                return False
+            try:
+                parsed = urlparse(url)
+                return parsed.scheme in ("http", "https") and bool(parsed.netloc)
+            except Exception:
+                return False
 
         def launchRdp(self, ip):
             import subprocess
@@ -453,7 +465,16 @@ def main():
                 return False
 
         def launchTeamViewer(self, id):
+            import re
             import subprocess
+            clean_id = ""
+            if id is not None:
+                if not isinstance(id, str):
+                    return False
+                clean_id = re.sub(r"\s+", "", id.strip())
+                if clean_id and not re.fullmatch(r"\d{1,32}", clean_id):
+                    print("launchTeamViewer: invalid id rejected")
+                    return False
             paths = [
                 r'C:\Program Files\TeamViewer\TeamViewer.exe',
                 r'C:\Program Files (x86)\TeamViewer\TeamViewer.exe'
@@ -461,7 +482,7 @@ def main():
             for p in paths:
                 if os.path.exists(p):
                     try:
-                        args = ['-i', id] if id else []
+                        args = ['-i', clean_id] if clean_id else []
                         subprocess.Popen([p] + args)
                         return True
                     except Exception as e:
@@ -478,11 +499,8 @@ def main():
 
         def openExternal(self, url):
             import webbrowser
-            if not url or not isinstance(url, str):
-                return False
-            # Never hand blob: or data: URIs to Windows ShellExecute (avoids 'Obter app para abrir link blob' dialog)
-            if url.startswith("blob:") or url.startswith("data:"):
-                print(f"openExternal: blocked unsupported scheme: {url[:20]}")
+            if not self._is_safe_external_url(url):
+                print("openExternal: blocked unsafe URL")
                 return False
             webbrowser.open(url)
             return True

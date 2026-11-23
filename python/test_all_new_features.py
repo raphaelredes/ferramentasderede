@@ -102,7 +102,7 @@ def run_tests():
     print("\n[6/6] Testando Emissão de Relatórios Técnicos...")
     try:
         from src.utils.report_generator import generate_inventory_report_html
-        sample_hosts = [{"name": "Gateway Core", "address": "10.10.38.1", "status": "online", "latency": 1.2, "vendor": "Cisco", "type": "router"}]
+        sample_hosts = [{"name": "Gateway Core", "address": "192.0.2.1", "status": "online", "latency": 1.2, "vendor": "Cisco", "type": "router"}]
         html_report = generate_inventory_report_html(sample_hosts)
         print(f"  -> Relatório HTML gerado ({len(html_report)} bytes)")
         assert len(html_report) > 500

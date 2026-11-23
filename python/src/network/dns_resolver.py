@@ -1,6 +1,6 @@
 """DNS resolution helpers for multi-domain environments.
 
-In a network with two AD domains (e.g. dominio-a.local and dominio-b.local),
+In a network with two AD domains (e.g. corp.example.com and branch.example.com),
 the same hostname may exist on both, so we cannot trust the system resolver
 to pick the right one. This module lets us query a specific DNS server when
 we know which domain a host belongs to.

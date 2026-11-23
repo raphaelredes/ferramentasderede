@@ -1529,8 +1529,9 @@ def wake_on_lan(request: WolRequest):
 
 class ExternalTerminalRequest(BaseModel):
     ip: str
-    username: str
-    password: str
+    username: Optional[str] = None
+    password: Optional[str] = None
+    credential_id: Optional[str] = None
 
 
 # Static PowerShell launcher script.
@@ -1565,15 +1566,42 @@ def _is_safe_remote_target(value: str) -> bool:
             return all(0 <= int(o) <= 255 for o in value.split("."))
         except ValueError:
             return False
-    # Hostname: letters, digits, hyphen, dot. No spaces, no quotes, no PS metachars.
-    return bool(re.fullmatch(r"[A-Za-z0-9._-]+", value))
+    # Hostname: starts alphanumeric, then letters, digits, hyphen, dot. No leading '-'.
+    return bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", value))
 
 
 @router.post("/tools/terminal/external")
 def open_external_terminal(request: ExternalTerminalRequest):
     if not _is_safe_remote_target(request.ip):
         raise HTTPException(status_code=400, detail="Endereço de destino inválido.")
-    if not request.username or "\x00" in request.username or "\x00" in request.password:
+
+    eff_user = (request.username or "").strip()
+    eff_pass = request.password or ""
+
+    if not eff_user or not eff_pass:
+        from api.routes.security import vault
+        if request.credential_id and vault.is_unlocked:
+            cred = vault.get_credential(request.credential_id)
+            if cred:
+                eff_user = eff_user or cred.get("username", "")
+                eff_pass = eff_pass or cred.get("password", "")
+        elif vault.is_unlocked:
+            all_creds = vault.get_all_credentials(include_passwords=True)
+            chosen = None
+            if eff_user:
+                chosen = next((c for c in all_creds if c.get("username") == eff_user), None)
+            if chosen is None and all_creds:
+                chosen = all_creds[0]
+            if chosen:
+                eff_user = eff_user or chosen.get("username", "")
+                eff_pass = eff_pass or chosen.get("password", "")
+
+    if not eff_user or not eff_pass:
+        raise HTTPException(
+            status_code=400,
+            detail="Informe usuário e senha ou desbloqueie o Cofre de Credenciais.",
+        )
+    if "\x00" in eff_user or "\x00" in eff_pass:
         raise HTTPException(status_code=400, detail="Credenciais inválidas.")
 
     try:
@@ -1581,16 +1609,16 @@ def open_external_terminal(request: ExternalTerminalRequest):
         # appear in `Get-Process` / wmic / Process Explorer.
         env = os.environ.copy()
         env["NT_REMOTE_IP"] = request.ip
-        env["NT_REMOTE_USER"] = request.username
-        env["NT_REMOTE_PASS"] = request.password
+        env["NT_REMOTE_USER"] = eff_user
+        env["NT_REMOTE_PASS"] = eff_pass
 
-        subprocess.Popen(
+        proc = subprocess.Popen(
             ["powershell", "-NoProfile", "-NoExit", "-Command", _EXTERNAL_TERMINAL_SCRIPT],
             creationflags=subprocess.CREATE_NEW_CONSOLE,
             env=env,
         )
 
-        return {"status": "success", "message": "Terminal externo iniciado."}
+        return {"status": "success", "message": "Terminal externo iniciado.", "pid": proc.pid}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro ao iniciar terminal: {str(e)}")
 

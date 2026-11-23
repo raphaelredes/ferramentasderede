@@ -5,8 +5,22 @@ Produz relatórios formatados prontos para impressão (PDF via navegador)
 ou documentação corporativa para auditoria de inventário, SLA e segurança.
 """
 
+import base64
+import hashlib
+import html
 import time
 from typing import List, Dict, Any, Optional
+
+
+def _esc(value: Any) -> str:
+    """Escapa texto dinâmico para inserção segura em HTML e atributos."""
+    return html.escape("" if value is None else str(value), quote=True)
+
+
+_PRINT_SCRIPT = "document.getElementById('btn-print').addEventListener('click',function(){window.print();});"
+PRINT_SCRIPT_CSP_HASH = "sha256-" + base64.b64encode(
+    hashlib.sha256(_PRINT_SCRIPT.encode("utf-8")).digest()
+).decode("ascii")
 
 HTML_TEMPLATE_HEADER = """<!DOCTYPE html>
 <html lang="pt-BR">
@@ -54,7 +68,7 @@ HTML_TEMPLATE_HEADER = """<!DOCTYPE html>
         Documento técnico pronto para visualização e impressão
     </div>
     <div>
-        <button onclick="window.print()" class="btn-print">
+        <button type="button" id="btn-print" class="btn-print">
             🖨️ Imprimir / Salvar em PDF
         </button>
     </div>
@@ -72,11 +86,12 @@ HTML_TEMPLATE_HEADER = """<!DOCTYPE html>
     </div>
 """
 
-HTML_TEMPLATE_FOOTER = """
+HTML_TEMPLATE_FOOTER = f"""
     <div class="footer">
         Relatório gerado automaticamente pelo Ferramentas de Rede. Documento confidencial de infraestrutura.
     </div>
 </div>
+<script>{_PRINT_SCRIPT}</script>
 </body>
 </html>
 """
@@ -111,16 +126,17 @@ def generate_inventory_report_html(hosts: List[Dict[str, Any]]) -> str:
 
     rows_html = ""
     for h in hosts:
-        status = h.get("status", "unknown")
+        status = str(h.get("status") or "unknown")
         badge_class = "badge-green" if status == "online" else "badge-red"
+        latency_str = f"{h.get('latency')} ms" if h.get("latency") is not None else "-"
         rows_html += f"""
         <tr>
-            <td><strong>{h.get('name') or 'N/A'}</strong></td>
-            <td><code>{h.get('address') or h.get('ip') or 'N/A'}</code></td>
-            <td>{h.get('group_name') or h.get('group') or 'Geral'}</td>
-            <td>{h.get('vendor') or 'Desconhecido'}</td>
-            <td><span class="badge {badge_class}">{status.upper()}</span></td>
-            <td>{f"{h.get('latency')} ms" if h.get('latency') is not None else '-'}</td>
+            <td><strong>{_esc(h.get('name') or 'N/A')}</strong></td>
+            <td><code>{_esc(h.get('address') or h.get('ip') or 'N/A')}</code></td>
+            <td>{_esc(h.get('group_name') or h.get('group') or 'Geral')}</td>
+            <td>{_esc(h.get('vendor') or 'Desconhecido')}</td>
+            <td><span class="badge {badge_class}">{_esc(status.upper())}</span></td>
+            <td>{_esc(latency_str)}</td>
         </tr>
         """
 
@@ -160,39 +176,39 @@ def generate_sla_report_html(host_name: str, ip: str, metrics: Dict[str, Any]) -
     <div class="summary-grid">
         <div class="summary-card">
             <div class="label">Uptime (SLA)</div>
-            <div class="value" style="color: #34d399;">{summary.get('uptime_percent', 100)}%</div>
+            <div class="value" style="color: #34d399;">{_esc(summary.get('uptime_percent', 100))}%</div>
         </div>
         <div class="summary-card">
             <div class="label">Latência Média</div>
-            <div class="value">{summary.get('avg_latency', 0)} ms</div>
+            <div class="value">{_esc(summary.get('avg_latency', 0))} ms</div>
         </div>
         <div class="summary-card">
             <div class="label">Jitter Médio</div>
-            <div class="value">{summary.get('avg_jitter', 0)} ms</div>
+            <div class="value">{_esc(summary.get('avg_jitter', 0))} ms</div>
         </div>
         <div class="summary-card">
             <div class="label">Qualidade MOS</div>
-            <div class="value" style="color: #38bdf8;">{summary.get('mos_score', 4.5)} / 5.0</div>
+            <div class="value" style="color: #38bdf8;">{_esc(summary.get('mos_score', 4.5))} / 5.0</div>
         </div>
     </div>
     """
 
     rows_html = ""
     for p in points[-50:]:  # Últimas 50 amostras
-        is_up = p.get("is_online", True)
+        is_up = bool(p.get("is_online", True))
         badge = '<span class="badge badge-green">UP</span>' if is_up else '<span class="badge badge-red">DOWN</span>'
         rows_html += f"""
         <tr>
-            <td>{p.get('time_label', '-')}</td>
+            <td>{_esc(p.get('time_label', '-'))}</td>
             <td>{badge}</td>
-            <td>{p.get('latency_ms', '-')} ms</td>
-            <td>{p.get('jitter_ms', 0)} ms</td>
-            <td>{p.get('packet_loss', 0)}%</td>
+            <td>{_esc(p.get('latency_ms', '-'))} ms</td>
+            <td>{_esc(p.get('jitter_ms', 0))} ms</td>
+            <td>{_esc(p.get('packet_loss', 0))}%</td>
         </tr>
         """
 
     table_html = f"""
-    <h3>Amostras Recentes de Monitoramento ({host_name} - {ip})</h3>
+    <h3>Amostras Recentes de Monitoramento ({_esc(host_name)} - {_esc(ip)})</h3>
     <table>
         <thead>
             <tr>
@@ -211,8 +227,8 @@ def generate_sla_report_html(host_name: str, ip: str, metrics: Dict[str, Any]) -
 
     now_str = time.strftime("%d/%m/%Y às %H:%M:%S")
     header = HTML_TEMPLATE_HEADER.format(
-        title=f"Relatório de SLA & Latência: {host_name}",
-        generated_at=now_str,
+        title=_esc(f"Relatório de SLA & Latência: {host_name}"),
+        generated_at=_esc(now_str),
         report_type="SLA & Performance"
     )
     return header + summary_html + table_html + HTML_TEMPLATE_FOOTER

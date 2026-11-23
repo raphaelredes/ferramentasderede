@@ -229,7 +229,7 @@ export function NetworksSettings({ networks, onChange }: Props) {
                                         <label className="text-xs text-zinc-500 mb-1 block">Domínio AD</label>
                                         <input
                                             type="text"
-                                            placeholder="dominio.local (opcional)"
+                                            placeholder="corp.example.com (opcional)"
                                             value={net.domain ?? ''}
                                             onChange={e => updateNetwork(net.id, { domain: e.target.value || undefined })}
                                             className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"

@@ -83,17 +83,17 @@ export function AdToolsPanel({ defaultSourceIp }: { defaultSourceIp?: string }) 
     const [lastRunAt, setLastRunAt] = usePersistedState<string | null>('ad_tool_last_run_v2', null);
 
     // Port Matrix State
-    const [dcTarget, setDcTarget] = usePersistedState('ad_tool_dc_target', 'dc01.corp.local');
+    const [dcTarget, setDcTarget] = usePersistedState('ad_tool_dc_target', 'dc01.example.com');
     const [portResults, setPortResults, clearPortResults] = usePersistedState<ADPortResult[]>('ad_tool_port_results', []);
     const [portSummary, setPortSummary] = usePersistedState<{ total: number; open: number; status: string } | null>('ad_tool_port_summary', null);
 
     // SRV Records State
-    const [domainTarget, setDomainTarget] = usePersistedState('ad_tool_domain_target', 'corp.local');
+    const [domainTarget, setDomainTarget] = usePersistedState('ad_tool_domain_target', 'example.com');
     const [customDns, setCustomDns] = usePersistedState('ad_tool_custom_dns', '');
     const [srvResults, setSrvResults, clearSrvResults] = usePersistedState<ADSRVResult[]>('ad_tool_srv_results', []);
 
     // Time Skew State
-    const [skewTarget, setSkewTarget] = usePersistedState('ad_tool_skew_target', 'dc01.corp.local');
+    const [skewTarget, setSkewTarget] = usePersistedState('ad_tool_skew_target', 'dc01.example.com');
     const [skewResult, setSkewResult, clearSkewResult] = usePersistedState<any>('ad_tool_skew_result', null);
 
     // FSMO & Replication State
@@ -288,7 +288,7 @@ export function AdToolsPanel({ defaultSourceIp }: { defaultSourceIp?: string }) 
                 <div className="flex-1 flex flex-col space-y-3 min-h-0">
                     <div className="flex flex-wrap items-center gap-3 bg-zinc-900 p-3.5 rounded-xl border border-zinc-800 shrink-0">
                         <HostAutocompleteInput
-                            placeholder="IP ou FQDN do DC (ex: dc01.corp.local)"
+                            placeholder="IP ou FQDN do DC (ex: dc01.example.com)"
                             value={dcTarget}
                             onChange={setDcTarget}
                             onKeyDown={e => { if (e.key === 'Enter' && !loading) runPortTest(); }}
@@ -372,14 +372,14 @@ export function AdToolsPanel({ defaultSourceIp }: { defaultSourceIp?: string }) 
                     <div className="flex flex-wrap items-center gap-3 bg-zinc-900 p-3.5 rounded-xl border border-zinc-800 shrink-0">
                         <input
                             type="text"
-                            placeholder="Domínio AD (ex: corp.local)"
+                            placeholder="Domínio AD (ex: example.com)"
                             value={domainTarget}
                             onChange={e => setDomainTarget(e.target.value)}
                             onKeyDown={e => { if (e.key === 'Enter' && !loading) runSrvTest(); }}
                             className="bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-200 flex-1 min-w-[200px] focus:outline-none focus:border-blue-500 font-mono"
                         />
                         <HostAutocompleteInput
-                            placeholder="DNS Server opcional (ex: 10.0.0.1)"
+                            placeholder="DNS Server opcional (ex: 192.0.2.1)"
                             value={customDns}
                             onChange={setCustomDns}
                             preferredFill="ip"
@@ -440,7 +440,7 @@ export function AdToolsPanel({ defaultSourceIp }: { defaultSourceIp?: string }) 
                 <div className="flex-1 flex flex-col space-y-3 min-h-0">
                     <div className="flex flex-wrap items-center gap-3 bg-zinc-900 p-3.5 rounded-xl border border-zinc-800 shrink-0">
                         <HostAutocompleteInput
-                            placeholder="PDC Emulator ou DC (ex: dc01.corp.local)"
+                            placeholder="PDC Emulator ou DC (ex: dc01.example.com)"
                             value={skewTarget}
                             onChange={setSkewTarget}
                             onKeyDown={e => { if (e.key === 'Enter' && !loading) runSkewTest(); }}

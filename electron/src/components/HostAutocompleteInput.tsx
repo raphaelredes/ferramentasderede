@@ -23,7 +23,7 @@ export interface HostAutocompleteInputProps {
     onFocus?: (e: React.FocusEvent<HTMLInputElement>) => void;
     /**
      * When true, supports comma/space-separated multi-host targets
-     * (e.g. for ConnectivityDiagPanel: "host1, 10.200.5.113").
+     * (e.g. for ConnectivityDiagPanel: "host1.example.com, 192.0.2.113").
      */
     multi?: boolean;
     /**

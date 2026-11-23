@@ -15,7 +15,7 @@ const IPV4_RE = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
  *   3. `host.address` — only when it's already an IPv4 literal.
  *
  * Each candidate is validated against the IPv4 shape so a hostname (e.g.
- * `srv01.acme.local`) never leaks into the "IP" column of the card / popup.
+ * `srv01.example.com`) never leaks into the "IP" column of the card / popup.
  *
  * When the backend can't resolve the host's IPv4 yet (newly added, DNS down),
  * this returns null and the UI should render a "Resolvendo..." / "Não

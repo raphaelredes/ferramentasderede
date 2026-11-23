@@ -398,7 +398,7 @@ function registerIpcHandlers() {
     return false
   })
   ipcMain.handle('launch-hoptodesk', async (_event: unknown, id?: unknown) => {
-    const cleanId = typeof id === 'string' ? id.replace(/\s+/g, '') : ''
+    const cleanId = typeof id === 'string' ? id.replace(/\D+/g, '').slice(0, 32) : ''
     const appData = process.env.APPDATA || ''
     const paths = [
       path.join(appData, 'FerramentasDeRede', 'bin', 'HopToDesk.exe'),

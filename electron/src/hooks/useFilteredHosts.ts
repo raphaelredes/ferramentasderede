@@ -78,7 +78,7 @@ export function useFilteredHosts({
 
             if (sortBy === 'ip') {
                 // Prefer the resolved IPv4 over `address` — hosts cadastrados por
-                // nome têm `address` = hostname, e splitting "srv01.acme.local"
+                // nome têm `address` = hostname, e splitting "srv01.example.com"
                 // by "." gives [NaN, NaN, ...] so the NaN comparisons (always
                 // false) leave their relative order undefined. Fall back to
                 // 0.0.0.0 so hostname-only hosts cluster at the top instead of

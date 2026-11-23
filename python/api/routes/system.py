@@ -11,6 +11,7 @@ import os
 import contextlib
 import logging
 import io
+import threading
 
 
 # Strict allowlist for target_ip. Accepts IPv4 literal OR a clean DNS
@@ -881,12 +882,19 @@ def configure_trusted_hosts():
 
 @router.post("/test-connection")
 def test_connection(request: TestConnectionRequest, x_temp_auth: str = Header(default=None)):
-    """Testa a conexão WinRM e retorna logs detalhados."""
+    """Testa a conexão WinRM e retorna logs detalhados apenas da requisição atual."""
     log_capture_string = io.StringIO()
     ch = logging.StreamHandler(log_capture_string)
     ch.setLevel(logging.DEBUG)
-    
-    # Capturar logs do root logger
+    req_tid = threading.get_ident()
+
+    class _ThreadLocalFilter(logging.Filter):
+        def filter(self, record: logging.LogRecord) -> bool:
+            return record.thread == req_tid
+
+    ch.addFilter(_ThreadLocalFilter())
+
+    # Capturar logs emitidos por esta thread durante o teste
     logger = logging.getLogger()
     logger.addHandler(ch)
     
@@ -959,7 +967,7 @@ class HopToDeskRemoveRequest(BaseModel):
 
 
 @router.post("/hoptodesk/remove")
-def remove_hoptodesk_route(request: HopToDeskRemoveRequest):
+def remove_hoptodesk_route(request: HopToDeskRemoveRequest, x_temp_auth: str = Header(default=None)):
     """Remove o executavel do HopToDesk e para/desinstala o servico no host remoto."""
     try:
         user, pwd = _resolve_credentials(request)
@@ -967,14 +975,18 @@ def remove_hoptodesk_route(request: HopToDeskRemoveRequest):
         return {"status": "error", "message": he.detail}
 
     from src.system.core.winrm_handler import WinRMHandler
-    handler = WinRMHandler(request.target_ip, user, pwd)
-    conn = handler.connect()
-    if "error" in conn:
-        return {"status": "error", "message": conn["error"]}
+    from src.core.database import db as _db
+    handler = None
+    try:
+        with get_trusted_hosts_context(request.target_ip, x_temp_auth):
+            handler = WinRMHandler(request.target_ip, user, pwd)
+            conn = handler.connect()
+            if "error" in conn:
+                return {"status": "error", "message": conn["error"]}
 
-    ps_script = r'''
+            ps_script = r'''
     Stop-Service -Name "HopToDesk" -Force -ErrorAction SilentlyContinue
-    cmd.exe /c "sc.exe delete HopToDesk" 2>$null | Out-Null
+    & sc.exe delete HopToDesk 2>$null | Out-Null
     Stop-Process -Name "*hoptodesk*" -Force -ErrorAction SilentlyContinue
     $paths = @(
         "C:\Users\Public\Desktop\HopToDesk.exe",
@@ -994,9 +1006,14 @@ def remove_hoptodesk_route(request: HopToDeskRemoveRequest):
     } catch {}
     Write-Output "REMOVED"
     '''
-    res = handler.execute_script(ps_script)
-    _db.update_host_fields(request.target_ip, {"hoptodesk_id": None})
-    return {"status": "success", "message": "HopToDesk removido com sucesso do host remoto."}
+            handler.execute_script(ps_script)
+            _db.update_host_fields(request.target_ip, {"hoptodesk_id": None})
+            return {"status": "success", "message": "HopToDesk removido com sucesso do host remoto."}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+    finally:
+        if handler:
+            handler.close()
 
 
 class RemoteAppActionRequest(BaseModel):
@@ -1038,22 +1055,10 @@ def start_remote_app(request: RemoteAppActionRequest, x_temp_auth: str = Header(
                 exit
             }
 
-            # 2. Localizar o executavel portátil copiado
+            # 2. Localizar o executavel portátil em caminhos confiáveis
             $candidate = $null
             if (Test-Path 'C:\Users\Public\Desktop\HopToDesk.exe') {
                 $candidate = 'C:\Users\Public\Desktop\HopToDesk.exe'
-            }
-            if (-not $candidate) {
-                try {
-                    $uDirs = Get-ChildItem "C:\Users" -Directory -Force -ErrorAction SilentlyContinue
-                    foreach ($u in $uDirs) {
-                        foreach ($sub in @("Desktop\HopToDesk.exe", "Downloads\HopToDesk.exe", "AppData\Local\HopToDesk\HopToDesk.exe")) {
-                            $chk = Join-Path $u.FullName $sub
-                            if (Test-Path $chk) { $candidate = $chk; break }
-                        }
-                        if ($candidate) { break }
-                    }
-                } catch {}
             }
             if (-not $candidate) {
                 foreach ($sp in @("$env:ProgramFiles\HopToDesk\HopToDesk.exe", "${env:ProgramFiles(x86)}\HopToDesk\HopToDesk.exe", "C:\ProgramData\HopToDesk\HopToDesk.exe")) {
@@ -1062,6 +1067,11 @@ def start_remote_app(request: RemoteAppActionRequest, x_temp_auth: str = Header(
             }
             if (-not $candidate) {
                 Write-Output "NOT_INSTALLED"
+                exit
+            }
+            $sig = Get-AuthenticodeSignature -FilePath $candidate -ErrorAction SilentlyContinue
+            if (-not $sig -or $sig.Status -ne 'Valid') {
+                Write-Output "INVALID_SIGNATURE"
                 exit
             }
 
@@ -1083,14 +1093,14 @@ def start_remote_app(request: RemoteAppActionRequest, x_temp_auth: str = Header(
                 }
             } catch {}
 
-            # 4. Iniciar diretamente no desktop interativo do usuario via schtasks.exe (imune a restrições DCOM do WinRM)
+            # 4. Iniciar diretamente no desktop interativo do usuario via schtasks.exe com privilegio limitado
             $taskName = "HopToDesk_Start_" + (Get-Random)
             $taskCreated = $false
+            $trArg = "`"$candidate`""
 
             foreach ($uName in $usersToLaunch) {
-                if (-not $uName) { continue }
-                $createCmd = "schtasks /create /tn `"$taskName`" /tr `"\`"$candidate\`"`" /sc ONCE /st 23:59 /it /ru `"$uName`" /rl HIGHEST /f"
-                $null = cmd.exe /c $createCmd 2>&1
+                if (-not $uName -or $uName -notmatch '^[A-Za-z0-9._\\@-]+$') { continue }
+                & schtasks.exe /create /tn $taskName /tr $trArg /sc ONCE /st 23:59 /it /ru $uName /rl LIMITED /f 2>&1 | Out-Null
                 if ($LASTEXITCODE -eq 0) {
                     $taskCreated = $true
                     break
@@ -1098,17 +1108,16 @@ def start_remote_app(request: RemoteAppActionRequest, x_temp_auth: str = Header(
             }
 
             if (-not $taskCreated) {
-                $createCmd = "schtasks /create /tn `"$taskName`" /tr `"\`"$candidate\`"`" /sc ONCE /st 23:59 /it /rl HIGHEST /f"
-                $null = cmd.exe /c $createCmd 2>&1
+                & schtasks.exe /create /tn $taskName /tr $trArg /sc ONCE /st 23:59 /it /rl LIMITED /f 2>&1 | Out-Null
                 if ($LASTEXITCODE -eq 0) {
                     $taskCreated = $true
                 }
             }
 
             if ($taskCreated) {
-                $null = cmd.exe /c "schtasks /run /tn `"$taskName`"" 2>&1
+                & schtasks.exe /run /tn $taskName 2>&1 | Out-Null
                 Start-Sleep -Seconds 2
-                $null = cmd.exe /c "schtasks /delete /tn `"$taskName`" /f" 2>&1
+                & schtasks.exe /delete /tn $taskName /f 2>&1 | Out-Null
             } else {
                 Start-Process -FilePath $candidate -WindowStyle Normal -ErrorAction SilentlyContinue
             }
@@ -1213,7 +1222,7 @@ def connectivity_diag_route(request: ConnectivityDiagRequest):
             eff_user = cred.get("username", "")
             eff_pass = cred.get("password", "")
         elif vault.is_unlocked:
-            all_creds = vault.get_all_credentials()
+            all_creds = vault.get_all_credentials(include_passwords=True)
             if all_creds:
                 eff_user = all_creds[0].get("username", "")
                 eff_pass = all_creds[0].get("password", "")

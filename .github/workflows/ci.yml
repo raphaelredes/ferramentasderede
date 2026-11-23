@@ -64,6 +64,9 @@ jobs:
                       dnspython==2.7.0 ntplib==0.4.0 pysnmp==7.1.27 \
                       pytest pytest-asyncio==0.23.5 httpx
 
+      - name: OPSEC & Privacy Leak Guard
+        run: python ../scripts/check_opsec.py
+
       - name: Compile-check all .py files
         run: |
           python -m compileall -q api src main_webview.py main.py 2>&1 | tee compile.log

@@ -17,6 +17,14 @@ echo  Ferramentas de Rede - Build Portatil
 echo ===========================================
 echo.
 
+echo [0/3] Verificando conformidade OPSEC e privacidade...
+python scripts\check_opsec.py
+if %ERRORLEVEL% NEQ 0 (
+    echo [ERRO] Verificacao OPSEC reprovada. Remova dados privados antes de compilar.
+    exit /b %ERRORLEVEL%
+)
+echo.
+
 echo [1/3] Instalando dependencias do Frontend...
 cd electron
 call npm install

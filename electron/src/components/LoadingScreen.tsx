@@ -42,7 +42,7 @@ export const LoadingScreen: React.FC<LoadingScreenProps> = ({ onComplete }) => {
                 setStatusText('Verificando integridade da API...');
                 setProgress(25);
                 updateStep('backend', 'running');
-                await fetch(`${API_BASE}/monitoring/status`).catch(() => null);
+                await fetch(`${API_BASE}/`).catch(() => null);
                 updateStep('backend', 'done');
 
                 // Step 2: Database & Hosts Cache Pre-warming
@@ -66,7 +66,7 @@ export const LoadingScreen: React.FC<LoadingScreenProps> = ({ onComplete }) => {
                 setStatusText('Carregando cofres e matriz de segurança...');
                 setProgress(80);
                 updateStep('security', 'running');
-                await fetch(`${API_BASE}/vault/status`).catch(() => null);
+                await fetch(`${API_BASE}/security/status`).catch(() => null);
                 updateStep('security', 'done');
 
                 // Step 5: Pre-load lazy route chunks in background for 0ms tab transitions

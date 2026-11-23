@@ -26,8 +26,8 @@ Este documento orienta o agente sobre o funcionamento e decisões de projeto na 
 - **Elevação Efêmera:** O backend usa `TemporaryTrustedHosts` para injetar o IP no registro da máquina local durante a operação e limpá-lo imediatamente após a conclusão, garantindo segurança e transparência.
 
 ## 4. Validação Estrita de FQDN e Prevenção de Suffix Bleed (Resolução de Nomes)
-- **Problema do Nome Curto (NetBIOS/PTR):** Quando o DNS reverso ou o banco retorna um nome curto (ex: `ADM-36494`), qualquer tentativa de conexão direta ou override de hostname faz o Windows resolver o nome anexando o sufixo DNS primário do computador do operador (ex: `betim.pmb`), atingindo potencialmente outra máquina ou um IP inacessível.
-- **Validação de FQDN:** O backend deve sempre testar os domínios candidatos (redes cadastradas, domínios confiados da floresta como `saude.betim`, `betim.pmb`) concatenando `f"{hostname}.{dominio}"` e conferindo se a resolução direta bate exatamente com o IP alvo (`socket.gethostbyname(fqdn) == target_ip`).
+- **Problema do Nome Curto (NetBIOS/PTR):** Quando o DNS reverso ou o banco retorna um nome curto (ex: `HOST-01`), qualquer tentativa de conexão direta ou override de hostname faz o Windows resolver o nome anexando o sufixo DNS primário do computador do operador (ex: `corp.example.com`), atingindo potencialmente outra máquina ou um IP inacessível.
+- **Validação de FQDN:** O backend deve sempre testar os domínios candidatos (redes cadastradas no SQLite, sufixos da interface e busca LDAP/GC quando configurada) concatenando `f"{hostname}.{dominio}"` e conferindo se a resolução direta bate exatamente com o IP alvo (`socket.gethostbyname(fqdn) == target_ip`), validando domínios como `corp.example.com` ou `branch.example.com`.
 - **Descarte de Hostname Inválido:** Se o nome curto ou FQDN resolver para um IP diferente do alvo, ele deve ser sumariamente descartado para conexões e SPN Kerberos, prevenindo timeouts de 15 segundos em máquinas erradas.
 
 ## 5. Hierarquia de Erros e Variantes Cross-Domain

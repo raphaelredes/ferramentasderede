@@ -139,7 +139,7 @@ export function useHostActions() {
     };
 
     const updateHost = async (address: string, updates: Partial<Host> & { reset_stats?: boolean }) => {
-        // URL-encode the path segment so an `address` like "10.10.38.16" or
+        // URL-encode the path segment so an `address` like "192.0.2.16" or
         // a hostname with a dot doesn't get reinterpreted by the router. The
         // backend now also accepts case-insensitive lookups and falls back to
         // `host.ip` when the URL doesn't match `host.address`, so callers

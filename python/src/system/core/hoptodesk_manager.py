@@ -78,6 +78,52 @@ class HopToDeskManager:
             return {"online": False, "error": str(e)}
 
     @classmethod
+    def _verify_pe_authenticode(cls, exe_path: Path) -> bool:
+        """Verifica se o arquivo possui cabeçalho PE ('MZ') e assinatura Authenticode válida."""
+        try:
+            if not exe_path.is_file():
+                return False
+            with open(exe_path, "rb") as fh:
+                if fh.read(2) != b"MZ":
+                    logging.warning(f"HopToDesk: cabeçalho PE inválido em {exe_path}.")
+                    return False
+            if sys.platform != "win32":
+                return True
+
+            ps_cmd = (
+                "$p = $env:HTD_VERIFY_PATH; "
+                "Remove-Item Env:HTD_VERIFY_PATH -ErrorAction SilentlyContinue; "
+                "$s = Get-AuthenticodeSignature -LiteralPath $p -ErrorAction SilentlyContinue; "
+                "if ($s -and $s.Status -eq 'Valid') { 'VALID' } "
+                "elseif ($s) { [string]$s.Status } else { 'NONE' }"
+            )
+            env = os.environ.copy()
+            env["HTD_VERIFY_PATH"] = str(exe_path)
+            creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+            startup_info = subprocess.STARTUPINFO()
+            startup_info.dwFlags |= getattr(subprocess, "STARTF_USESHOWWINDOW", 0x00000001)
+            startup_info.wShowWindow = 0
+
+            res = subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_cmd],
+                capture_output=True,
+                text=True,
+                timeout=20,
+                env=env,
+                creationflags=creation_flags,
+                startupinfo=startup_info,
+            )
+            valid = res.returncode == 0 and res.stdout.strip() == "VALID"
+            if not valid:
+                logging.warning(
+                    f"HopToDesk: assinatura Authenticode inválida para {exe_path} ({res.stdout.strip() or res.stderr.strip()})."
+                )
+            return valid
+        except Exception as e:
+            logging.warning(f"HopToDesk: falha ao verificar assinatura Authenticode: {e}")
+            return False
+
+    @classmethod
     def ensure_local_binary(cls, force_check: bool = True) -> Dict[str, Any]:
         """
         Garante que a versão mais recente do HopToDesk.exe esteja presente na pasta bin do AppData.
@@ -86,6 +132,13 @@ class HopToDeskManager:
         exe_path = cls.get_local_exe_path()
         meta_path = cls.get_meta_path()
         local_exists = exe_path.exists() and exe_path.stat().st_size > 0
+        if local_exists and not cls._verify_pe_authenticode(exe_path):
+            logging.warning("HopToDesk em cache falhou na verificação PE/Authenticode; descartando cache.")
+            local_exists = False
+            try:
+                exe_path.unlink()
+            except Exception:
+                pass
 
         saved_meta = {}
         if meta_path.exists():
@@ -139,6 +192,8 @@ class HopToDeskManager:
             downloaded_size = temp_download_path.stat().st_size
             if downloaded_size < 1_000_000:
                 raise ValueError(f"Download incompleto do HopToDesk (apenas {downloaded_size} bytes)")
+            if not cls._verify_pe_authenticode(temp_download_path):
+                raise ValueError("Binário baixado do HopToDesk falhou na verificação de assinatura digital Authenticode")
 
             # Substituição atômica segura
             if exe_path.exists():
@@ -172,14 +227,10 @@ class HopToDeskManager:
                     temp_download_path.unlink()
                 except Exception:
                     pass
-            if local_exists:
+            if local_exists and cls._verify_pe_authenticode(exe_path):
                 logging.warning(f"HopToDesk: Falha no download ({e}), mantendo versão existente.")
                 return {"status": "cached", "path": str(exe_path), "size": exe_path.stat().st_size}
             raise RuntimeError(f"Falha ao baixar o HopToDesk: {e}")
-
-        except Exception as e:
-            logging.debug(f"Erro em _connect_smb_share: {e}")
-            return False
 
     @classmethod
     def _connect_smb_share(cls, target_ip: str, username: str, password: str) -> bool:
@@ -276,48 +327,29 @@ class HopToDeskManager:
             smb_dest_temp = rf"\\{target_ip}\C$\Users\Public\Desktop\HopToDesk.exe.tmp"
             location_desc = "Área de Trabalho Pública"
 
-        # 1. Busca abrangente por HopToDesk existente no destino (processos, registro, desktops de usuarios)
+        # 1. Busca em caminhos confiáveis por HopToDesk já instalado no destino (validado via Authenticode)
         search_script = f'''
         $candidate = $null
         try {{
             $proc = Get-Process -Name "*hoptodesk*" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Path -First 1
-            if ($proc -and (Test-Path $proc)) {{ $candidate = $proc }}
+            if ($proc -and (Test-Path $proc)) {{
+                $sigP = Get-AuthenticodeSignature -FilePath $proc -ErrorAction SilentlyContinue
+                if ($sigP -and $sigP.Status -eq 'Valid') {{ $candidate = $proc }}
+            }}
         }} catch {{}}
 
-        if (-not $candidate) {{
-            try {{
-                $regCmd = (Get-ItemProperty -Path "Registry::HKEY_CLASSES_ROOT\\hoptodesk\\shell\\open\\command" -ErrorAction SilentlyContinue).'(default)'
-                if ($regCmd -and $regCmd -match '([a-zA-Z]:\\\\[^"]+\\.exe)') {{
-                    if (Test-Path $matches[1]) {{ $candidate = $matches[1] }}
-                }}
-            }} catch {{}}
-        }}
-
         if (-not $candidate -and (Test-Path '{dest_remote_path}')) {{
-            $candidate = '{dest_remote_path}'
-        }}
-
-        if (-not $candidate -and (Test-Path 'C:\\Users\\Public\\Desktop\\HopToDesk.exe')) {{
-            $candidate = 'C:\\Users\\Public\\Desktop\\HopToDesk.exe'
+            $sigD = Get-AuthenticodeSignature -FilePath '{dest_remote_path}' -ErrorAction SilentlyContinue
+            if ($sigD -and $sigD.Status -eq 'Valid') {{ $candidate = '{dest_remote_path}' }}
         }}
 
         if (-not $candidate) {{
-            foreach ($sp in @("$env:ProgramFiles\\HopToDesk\\HopToDesk.exe", "${{env:ProgramFiles(x86)}}\\HopToDesk\\HopToDesk.exe", "C:\\ProgramData\\HopToDesk\\HopToDesk.exe")) {{
-                if ($sp -and (Test-Path $sp)) {{ $candidate = $sp; break }}
-            }}
-        }}
-
-        if (-not $candidate) {{
-            try {{
-                $uDirs = Get-ChildItem "C:\\Users" -Directory -ErrorAction SilentlyContinue
-                foreach ($u in $uDirs) {{
-                    foreach ($sub in @("Desktop\\HopToDesk.exe", "Downloads\\HopToDesk.exe", "AppData\\Local\\HopToDesk\\HopToDesk.exe", "AppData\\Roaming\\HopToDesk\\HopToDesk.exe")) {{
-                        $chk = Join-Path $u.FullName $sub
-                        if (Test-Path $chk) {{ $candidate = $chk; break }}
-                    }}
-                    if ($candidate) {{ break }}
+            foreach ($sp in @("C:\\Users\\Public\\Desktop\\HopToDesk.exe", "$env:ProgramFiles\\HopToDesk\\HopToDesk.exe", "${{env:ProgramFiles(x86)}}\\HopToDesk\\HopToDesk.exe", "C:\\ProgramData\\HopToDesk\\HopToDesk.exe")) {{
+                if ($sp -and (Test-Path $sp)) {{
+                    $sigS = Get-AuthenticodeSignature -FilePath $sp -ErrorAction SilentlyContinue
+                    if ($sigS -and $sigS.Status -eq 'Valid') {{ $candidate = $sp; break }}
                 }}
-            }} catch {{}}
+            }}
         }}
 
         if ($candidate) {{
@@ -327,17 +359,20 @@ class HopToDeskManager:
                 Copy-Item -Path $candidate -Destination '{dest_remote_path}' -Force -ErrorAction SilentlyContinue
             }}
             $targetExe = if (Test-Path '{dest_remote_path}') {{ '{dest_remote_path}' }} else {{ $candidate }}
-            $out = cmd.exe /c "`"$targetExe`" --get-id" 2>$null
-            if (-not ($out -and $out -match '^\\s*(\\d{{7,12}})\\s*$')) {{
-                $out = cmd.exe /c "`"$candidate`" --get-id" 2>$null
+            $sigT = Get-AuthenticodeSignature -FilePath $targetExe -ErrorAction SilentlyContinue
+            if ($sigT -and $sigT.Status -eq 'Valid') {{
+                $out = & $targetExe --get-id 2>$null | Out-String
+                if (-not ($out -and $out -match '^\\s*(\\d{{7,12}})\\s*$')) {{
+                    $out = & $candidate --get-id 2>$null | Out-String
+                }}
+                $id = $null
+                if ($out -and $out -match '^\\s*(\\d{{7,12}})\\s*$') {{
+                    $id = $matches[1]
+                }}
+                Write-Output "FOUND_CANDIDATE:$targetExe"
+                if ($id) {{ Write-Output "CANDIDATE_ID:$id" }}
+                exit
             }}
-            $id = $null
-            if ($out -and $out -match '^\\s*(\\d{{7,12}})\\s*$') {{
-                $id = $matches[1]
-            }}
-            Write-Output "FOUND_CANDIDATE:$targetExe"
-            if ($id) {{ Write-Output "CANDIDATE_ID:$id" }}
-            exit
         }}
         Write-Output "NOT_FOUND"
         '''
@@ -454,12 +489,17 @@ class HopToDeskManager:
             Write-Output "EXE_NOT_FOUND"
             exit
         }}
+        $sig = Get-AuthenticodeSignature -FilePath $exe -ErrorAction SilentlyContinue
+        if (-not $sig -or $sig.Status -ne 'Valid') {{
+            Write-Output "INVALID_SIGNATURE"
+            exit
+        }}
 
-        # 1. Obter ID do HopToDesk via cmd.exe /c para capturar stdout de binario GUI
+        # 1. Obter ID do HopToDesk diretamente apos validacao Authenticode
         $htdId = '{existing_id or ""}'
         if (-not $htdId) {{
             try {{
-                $rawId = cmd.exe /c "`"$exe`" --get-id" 2>$null
+                $rawId = & $exe --get-id 2>$null | Out-String
                 if ($rawId -match '^\\s*(\\d{{7,12}})\\s*$') {{
                     $htdId = $matches[1]
                 }}
@@ -498,15 +538,14 @@ class HopToDeskManager:
                 if (-not $usersToLaunch.Contains($targetUser)) {{ $usersToLaunch.Add($targetUser) }}
             }}
 
-            # Iniciar diretamente no desktop interativo do usuario via schtasks.exe (imune a restrições DCOM do WinRM)
+            # Iniciar diretamente no desktop interativo do usuario via schtasks.exe com privilegio limitado
             $taskName = "HopToDesk_Run_" + (Get-Random)
             $taskCreated = $false
-            $trArg = '\"' + $exe + '\"'
+            $trArg = "`"$exe`""
 
             foreach ($uName in $usersToLaunch) {{
-                if (-not $uName) {{ continue }}
-                $createCmd = "schtasks /create /tn `"$taskName`" /tr $trArg /sc ONCE /st 23:59 /it /ru `"$uName`" /rl HIGHEST /f"
-                $null = cmd.exe /c $createCmd 2>&1
+                if (-not $uName -or $uName -notmatch '^[A-Za-z0-9._\\\\@-]+$') {{ continue }}
+                & schtasks.exe /create /tn $taskName /tr $trArg /sc ONCE /st 23:59 /it /ru $uName /rl LIMITED /f 2>&1 | Out-Null
                 if ($LASTEXITCODE -eq 0) {{
                     $taskCreated = $true
                     break
@@ -514,17 +553,16 @@ class HopToDeskManager:
             }}
 
             if (-not $taskCreated) {{
-                $createCmd = "schtasks /create /tn `"$taskName`" /tr $trArg /sc ONCE /st 23:59 /it /rl HIGHEST /f"
-                $null = cmd.exe /c $createCmd 2>&1
+                & schtasks.exe /create /tn $taskName /tr $trArg /sc ONCE /st 23:59 /it /rl LIMITED /f 2>&1 | Out-Null
                 if ($LASTEXITCODE -eq 0) {{
                     $taskCreated = $true
                 }}
             }}
 
             if ($taskCreated) {{
-                $null = cmd.exe /c "schtasks /run /tn `"$taskName`"" 2>&1
+                & schtasks.exe /run /tn $taskName 2>&1 | Out-Null
                 Start-Sleep -Seconds 2
-                $null = cmd.exe /c "schtasks /delete /tn `"$taskName`" /f" 2>&1
+                & schtasks.exe /delete /tn $taskName /f 2>&1 | Out-Null
             }} else {{
                 Start-Process -FilePath $exe -WindowStyle Normal -ErrorAction SilentlyContinue
             }}
@@ -535,7 +573,7 @@ class HopToDeskManager:
         }} else {{
             Start-Sleep -Seconds 1
             try {{
-                $rawId2 = cmd.exe /c "`"$exe`" --get-id" 2>$null
+                $rawId2 = & $exe --get-id 2>$null | Out-String
                 if ($rawId2 -match '^\\s*(\\d{{7,12}})\\s*$') {{
                     Write-Output "HOPTODESK_ID:$($matches[1])"
                 }} else {{
@@ -583,10 +621,9 @@ class HopToDeskManager:
         """
         clean_id = "".join(filter(str.isdigit, str(target_id or "")))
 
-        # Locais possíveis do executável local
+        # Locais confiáveis do executável local (validados por Authenticode)
         candidates = [
             cls.get_local_exe_path(),
-            Path(os.path.expanduser("~/Desktop")) / "HopToDesk.exe",
             Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "HopToDesk" / "HopToDesk.exe",
             Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "HopToDesk" / "HopToDesk.exe",
             Path(r"C:\Users\Public\Desktop\HopToDesk.exe"),
@@ -594,7 +631,7 @@ class HopToDeskManager:
 
         exe_to_run = None
         for p in candidates:
-            if p.exists() and p.stat().st_size > 0:
+            if p.exists() and p.stat().st_size > 0 and cls._verify_pe_authenticode(p):
                 exe_to_run = str(p)
                 break
 

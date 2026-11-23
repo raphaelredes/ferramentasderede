@@ -509,7 +509,7 @@ export function Security() {
                                     value={newUsername}
                                     onChange={e => setNewUsername(e.target.value)}
                                     className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500"
-                                    placeholder="ex: admin@dominio.local"
+                                    placeholder="ex: admin@example.com"
                                 />
                             </div>
                             <div>

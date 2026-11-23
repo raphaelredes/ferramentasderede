@@ -514,7 +514,7 @@ export const HopToDeskDeployModal: React.FC<HopToDeskDeployModalProps> = ({
                                             type="text"
                                             value={userSearchTerm}
                                             onChange={(e) => setUserSearchTerm(e.target.value)}
-                                            placeholder="Pesquisar usuário... (ex: diego, leonidas)"
+                                            placeholder="Pesquisar usuário... (ex: operador, suporte)"
                                             className="w-full bg-zinc-900 border border-zinc-700 rounded-lg pl-9 pr-8 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-500 transition-all"
                                         />
                                         {userSearchTerm && (

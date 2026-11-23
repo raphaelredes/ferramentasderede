@@ -5,11 +5,52 @@ Descobre pastas compartilhadas em hosts remotos (incluindo compartilhamentos
 administrativos ocultos C$, ADMIN$) e testa acessibilidade.
 """
 
-import subprocess
+import json
+import logging
+import os
 import re
 import socket
-import logging
+import subprocess
 from typing import Dict, List, Any, Optional
+
+_SAFE_TARGET_RE = re.compile(
+    r"^(?:(?:\d{1,3}\.){3}\d{1,3}|[A-Za-z0-9][A-Za-z0-9._\-]{0,252})$"
+)
+
+_SMB_ENUM_PS_SCRIPT = (
+    "$target = $env:NT_SMB_TARGET; "
+    "$user = $env:NT_SMB_USER; "
+    "$pass = $env:NT_SMB_PASS; "
+    "Remove-Item Env:\\NT_SMB_TARGET, Env:\\NT_SMB_USER, Env:\\NT_SMB_PASS -ErrorAction SilentlyContinue; "
+    "try { "
+    "    $wmiParams = @{ Class = 'Win32_Share'; ComputerName = $target; ErrorAction = 'Stop' }; "
+    "    if ($user -and $pass) { "
+    "        $sec = ConvertTo-SecureString $pass -AsPlainText -Force; "
+    "        $wmiParams['Credential'] = New-Object System.Management.Automation.PSCredential($user, $sec); "
+    "    }; "
+    "    Remove-Variable pass -ErrorAction SilentlyContinue; "
+    "    $shares = Get-WmiObject @wmiParams; "
+    "    $shares | ForEach-Object { "
+    "        [PSCustomObject]@{ Name = $_.Name; Path = $_.Path; Description = $_.Description; Type = $_.Type } "
+    "    } | ConvertTo-Json "
+    "} catch { "
+    "    Remove-Variable pass -ErrorAction SilentlyContinue; "
+    "    $netView = & net.exe view \"\\\\$target\" 2>&1; "
+    "    $netView | Out-String "
+    "}"
+)
+
+
+def _is_safe_smb_target(value: str) -> bool:
+    if not isinstance(value, str):
+        return False
+    cleaned = value.strip()
+    if not cleaned or not _SAFE_TARGET_RE.match(cleaned):
+        return False
+    if re.fullmatch(r"(?:\d{1,3}\.){3}\d{1,3}", cleaned):
+        return all(0 <= int(o) <= 255 for o in cleaned.split("."))
+    return True
+
 
 def _is_port_445_open(ip: str, timeout: float = 1.0) -> bool:
     """Verifica rapidamente se a porta 445 (SMB) está acessível."""
@@ -23,57 +64,64 @@ def _is_port_445_open(ip: str, timeout: float = 1.0) -> bool:
 
 def scan_smb_shares(target_host: str, username: Optional[str] = None, password: Optional[str] = None) -> Dict[str, Any]:
     """Enumera compartilhamentos SMB disponíveis no host remoto."""
-    if not _is_port_445_open(target_host):
+    clean_target = (target_host or "").strip() if isinstance(target_host, str) else ""
+    if not _is_safe_smb_target(clean_target):
         return {
-            "target": target_host,
+            "target": clean_target,
+            "smb_available": False,
+            "error": "Endereço ou hostname de destino inválido.",
+            "shares": []
+        }
+
+    if (username and "\x00" in username) or (password and "\x00" in password):
+        return {
+            "target": clean_target,
+            "smb_available": False,
+            "error": "Credenciais contêm caracteres inválidos.",
+            "shares": []
+        }
+
+    if not _is_port_445_open(clean_target):
+        return {
+            "target": clean_target,
             "smb_available": False,
             "error": "Porta SMB (TCP 445) fechada ou inacessível.",
             "shares": []
         }
 
     shares: List[Dict[str, Any]] = []
-    
-    # Execução via PowerShell Get-SmbShare ou 'net view' nativo do Windows
+
+    # Execução via PowerShell (parâmetros via env vars, nunca interpolados no script)
     try:
-        cmd = ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command"]
-        
-        # Script seguro para listar compartilhamentos via WMI/RPC ou net view
-        ps_script = f"""
-        try {{
-            $shares = Get-WmiObject -Class Win32_Share -ComputerName '{target_host}' -ErrorAction Stop
-            $shares | ForEach-Object {{
-                [PSCustomObject]@{{
-                    Name = $_.Name
-                    Path = $_.Path
-                    Description = $_.Description
-                    Type = $_.Type
-                }}
-            }} | ConvertTo-Json
-        }} catch {{
-            $netView = net view \\\\{target_host} 2>&1
-            $netView | Out-String
-        }}
-        """
-        
+        cmd = ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", _SMB_ENUM_PS_SCRIPT]
+
+        env = os.environ.copy()
+        env["NT_SMB_TARGET"] = clean_target
+        if username and password:
+            env["NT_SMB_USER"] = username
+            env["NT_SMB_PASS"] = password
+        else:
+            env.pop("NT_SMB_USER", None)
+            env.pop("NT_SMB_PASS", None)
+
         creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
         startup_info = subprocess.STARTUPINFO()
         startup_info.dwFlags |= getattr(subprocess, "STARTF_USESHOWWINDOW", 0x00000001)
         startup_info.wShowWindow = 0
 
         proc = subprocess.run(
-            cmd + [ps_script],
+            cmd,
             capture_output=True,
             text=True,
-            timeout=8,
+            timeout=10,
+            env=env,
             creationflags=creation_flags,
             startupinfo=startup_info
         )
 
-        
         raw_output = proc.stdout.strip()
-        
+
         # Tentar fazer parse JSON se veio de WMI
-        import json
         try:
             parsed = json.loads(raw_output)
             if isinstance(parsed, dict):
@@ -98,23 +146,23 @@ def scan_smb_shares(target_host: str, username: Optional[str] = None, password: 
                         name = parts[0]
                         shares.append({
                             "name": name,
-                            "path": f"\\\\{target_host}\\{name}",
+                            "path": f"\\\\{clean_target}\\{name}",
                             "description": parts[2] if len(parts) > 2 else "",
                             "is_hidden": name.endswith("$"),
                             "type": parts[1]
                         })
 
     except Exception as exc:
-        logging.debug(f"Erro na enumeração de compartilhamentos para {target_host}: {exc}")
+        logging.debug(f"Erro na enumeração de compartilhamentos para {clean_target}: {exc}")
         return {
-            "target": target_host,
+            "target": clean_target,
             "smb_available": True,
             "error": str(exc),
             "shares": []
         }
 
     return {
-        "target": target_host,
+        "target": clean_target,
         "smb_available": True,
         "total_shares": len(shares),
         "shares": shares
