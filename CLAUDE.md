@@ -71,12 +71,17 @@ Artefato: `python\dist\Ferramentas.de.Rede.v<versão>.exe`.
 Sempre, em qualquer PR/commit:
 
 ```bash
+# OPSEC (obrigatório: saída 0 antes de commitar/buildar)
+python scripts/check_opsec.py --staged
+python scripts/check_opsec.py
+
 # Frontend
 cd electron && npx tsc --noEmit          # tem que ser zero erros
 cd electron && npx vite build            # tem que concluir limpo
 
 # Backend
 python -m py_compile <arquivos_alterados>
+cd python && pytest -v tests/test_api.py tests/test_security_and_opsec.py
 ```
 
 Se mexeu em arquivos do backend que estão importados em runtime, vale rodar `python -m api.server` localmente e fazer um `curl` rápido nos endpoints alterados.
@@ -90,6 +95,10 @@ Se mexeu em arquivos do backend que estão importados em runtime, vale rodar `py
 - **Nunca interpole input do usuário em script PowerShell**. Passe via env vars que o script remove na entrada (ver [`open_external_terminal`](python/api/routes/network.py) e [`launch-msra`](electron/electron/main.ts)).
 - **Todo handler IPC do Electron valida argumentos** com `isSafeHost` / `isSafeExternalUrl` / `isSafeShowItemPath` etc. ([electron/main.ts](electron/electron/main.ts)). Não adicione handler novo sem validador.
 - **Nunca log de senha** — nem em arquivo, nem em variável persistente. PowerShell histórico, processo command line, e dump de memória são todos vetores conhecidos.
+- **Nunca persistir segredos no `localStorage`** — senhas e chaves SNMPv3 (`v3AuthKey` / `v3PrivKey`) ficam só em memória (`useState`) ou no `SecureVault`.
+- **OPSEC estrito** — proibidos domínios privados, prefixos internos, sub-redes reais, hostnames internos ou caminhos `C:\Users\<usuario>`; exemplos devem seguir RFC 2606 (`example.com`) e RFC 5737 (`192.0.2.0/24`). O hook `.githooks/pre-commit` valida `--staged` automaticamente.
+- **Integridade de binários e relatórios** — HopToDesk exige `MZ` + Authenticode `Valid`, sem busca em `HKCR` ou `C:\Users\<usuario>\*`, e `schtasks` em `/rl LIMITED`. Relatórios HTML usam `html.escape(..., quote=True)` + CSP sem `script-src 'unsafe-inline'`.
+- **Privacidade OUI & HTTP** — `VendorUtils.get_vendor` padrão `allow_online=False` e consulta externa mascara os últimos 3 octetos (`:00:00:00`); `http_check` limita downloads a 2 MB.
 
 ### Multi-domínio / Multi-VLAN
 
@@ -128,11 +137,13 @@ Se mexeu em arquivos do backend que estão importados em runtime, vale rodar `py
 
 **Fonte única: [electron/package.json](electron/package.json)** — campo `version`. Tudo o mais deriva dela.
 
+0. Perguntar **sempre** ao usuário qual versão utilizar antes de editar.
 1. Editar `version` em `electron/package.json` (incrementar patch, minor ou major conforme escopo das mudanças).
 2. Adicionar entrada no topo do array `CHANGELOG` em [electron/src/data/changelog.ts](electron/src/data/changelog.ts). Cada mudança é tipada por `kind`: `feat | fix | perf | security | ui | refactor | docs`. **Não edite o `APP_VERSION`** — ele é importado de `package.json`. **Liste todos os commits desde a tag anterior** (`git log --oneline vX.Y.Z..HEAD`) para que o operador veja o que mudou ao clicar em "Versão X.Y.Z" no Sobre.
 3. `cd electron && npm install --package-lock-only` para sincronizar `package-lock.json`.
 4. Rebuild do portátil (`build_system.bat` ou `python/build_exe.bat`). Asset final é `python/dist/Ferramentas.de.Rede.v<versão>.exe`.
 5. Substituir o `.exe` em todos os locais de distribuição (Desktop do dono, GitHub release `gh release upload v<versão> --clobber`, etc.). Tag git nova só quando for release pública (eg. `git tag v1.2.5 && git push --tags`).
+6. Ao finalizar o release, entregar obrigatoriamente o link da release, link direto do `.exe` e um bloco de prompt pronto para copiar destinado ao agente/computador do site `https://www.ferramentasderede.com.br/` (versão, data, URL direta, URL da release, SHA-256, tamanho e changelog).
 
 Derivações automáticas:
 - Backend Python lê em runtime via `src/config/settings.py:_read_app_version()` (cai em ENV `NT_APP_VERSION` se setado, depois `electron/package.json` no checkout, depois no bundle PyInstaller).

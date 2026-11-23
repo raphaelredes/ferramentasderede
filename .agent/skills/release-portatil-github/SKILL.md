@@ -31,13 +31,18 @@ Conferir com `git diff` que só as linhas de versão mudaram.
   e rodar: `cmd /c "cd electron && npx vite build && cd ..\python && build_exe.bat"`.
 - Artefato: `python\dist\Ferramentas.de.Rede.v<versão>.exe` (~46 MB).
 - Rodar o build como task em background e aguardar a notificação (sem polling).
+- Ao concluir, coletar hash e tamanho exatos no PowerShell:
+  `(Get-FileHash "python\dist\Ferramentas.de.Rede.v<versão>.exe" -Algorithm SHA256).Hash` e
+  `(Get-Item "python\dist\Ferramentas.de.Rede.v<versão>.exe").Length`.
 
 ## 4. Git + Release
 - Antes de commitar, verificar `python scripts/check_opsec.py` e `python scripts/check_opsec.py --staged` (saída `0` obrigatória).
 - `git add` apenas os arquivos alterados (nunca `git add -A`: há `dist/` e `build/`).
+  Se `electron/src/data/changelog.ts` não entrar por regra de ignore em arquivos novos, usar explicitamente o arquivo modificado já rastreado.
 - `git push` escreve em stderr: o exit code 1 do PowerShell é falso alarme se a saída
   contém `old..new  main -> main`.
-- `gh release create v<versão> <exe> --repo raphaelredes/ferramentasderede --target main --title ... --notes ...`
+- Gravar as notas da release em arquivo temporário UTF-8 e publicar com `--notes-file` para evitar quebra de aspas e acentuação no PowerShell:
+  `gh release create v<versão> "python\dist\Ferramentas.de.Rede.v<versão>.exe" --repo raphaelredes/ferramentasderede --target main --title "Ferramentas de Rede v<versão>" --notes-file <caminho_notas.md>`
 - Verificar: `gh release view v<versão> --repo raphaelredes/ferramentasderede --json url,assets`
   (NÃO combinar `--jq` com expressões que contenham espaços no PowerShell; quebra os argumentos).
 - Conferir o workflow: `gh run list --repo raphaelredes/ferramentasderede --workflow winget.yml --limit 2`.
@@ -46,3 +51,18 @@ Conferir com `git diff` que só as linhas de versão mudaram.
 - Link da release: `https://github.com/raphaelredes/ferramentasderede/releases/tag/v<versão>`
 - Link direto do `.exe`: `https://github.com/raphaelredes/ferramentasderede/releases/download/v<versão>/Ferramentas.de.Rede.v<versão>.exe`
 - **Prompt pronto para copiar** destinado ao computador/agente que hospeda o site oficial (`https://www.ferramentasderede.com.br/`), contendo versão, data, link direto do `.exe`, URL da release, hash SHA-256, tamanho exato e resumo das novidades/changelog.
+
+Template padrão do bloco pronto para copiar:
+```text
+Atualize o site oficial Ferramentas de Rede (https://www.ferramentasderede.com.br/) para a nova versão v<versão>:
+- Versão: <versão>
+- Data da Release: <DD/MM/AAAA> (<YYYY-MM-DD>)
+- Link direto do download (.exe portátil Windows x64): https://github.com/raphaelredes/ferramentasderede/releases/download/v<versão>/Ferramentas.de.Rede.v<versão>.exe
+- Link da página da Release no GitHub: https://github.com/raphaelredes/ferramentasderede/releases/tag/v<versão>
+- Nome do arquivo: Ferramentas.de.Rede.v<versão>.exe
+- Tamanho: <bytes> bytes (~<MiB> MiB)
+- SHA-256: <SHA256>
+Resumo do Changelog:
+- <principais itens da release>
+Atualize badges, botões de download, changelog, metadados SEO/OpenGraph e valide todos os links apontando para v<versão>.
+```
